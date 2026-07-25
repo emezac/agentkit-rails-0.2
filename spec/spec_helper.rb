@@ -18,7 +18,11 @@ RSpec.configure do |config|
   config.order = :random
   Kernel.srand config.seed
 
-  config.before do
+  config.before do |example|
+    # Integration examples boot Rails and use the ActiveRecord-backed stores;
+    # rails_helper owns their setup.
+    next if example.metadata[:integration]
+
     Agentkit.reset!
     Agentkit::Flow.test_mode!
     Agentkit::Factory.reset!

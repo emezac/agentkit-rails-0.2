@@ -151,7 +151,20 @@ module Agentkit
           record
         end
 
-        def update(id, attrs) = model.where(id: id).update_all(attrs.merge(updated_at: Time.now))
+        # Two traps here, both only visible against a real database:
+        #   * `update_all` skips type casting entirely, so a vector never lands;
+        #   * even with assignment, ActiveRecord only knows the `vector` OID if
+        #     the extension existed when it built its type map. An app that
+        #     migrates and reads in the same process gets a String column and
+        #     "can't cast Array".
+        # Encoding explicitly makes the store correct either way.
+        def update(id, attrs)
+          row = model.find_by(id: id)
+          return nil if row.nil?
+
+          row.update!(encode_vector(attrs))
+          row
+        end
         def find(id)          = wrap(model.find_by(id: id))
         def all(scope = {})   = scoped(scope).map { |r| wrap(r) }
         def delete_all        = model.delete_all
@@ -211,13 +224,30 @@ module Agentkit
         end
 
         def to_columns(record)
-          record.to_h.except(:id, :metadata).merge(metadata: record.metadata)
+          encode_vector(record.to_h.except(:id, :metadata).merge(metadata: record.metadata))
+        end
+
+        # pgvector's wire format is "[0.1,0.2,…]".
+        def encode_vector(attrs)
+          value = attrs[:embedding] || attrs["embedding"]
+          return attrs unless value.is_a?(Array)
+
+          attrs.merge(embedding: "[#{value.join(',')}]")
+        end
+
+        def decode_vector(value)
+          return value unless value.is_a?(String)
+          return nil if value.empty?
+
+          value.delete_prefix("[").delete_suffix("]").split(",").map(&:to_f)
         end
 
         def wrap(row)
           return nil if row.nil?
 
-          Record.new(**row.attributes.symbolize_keys.slice(*Record::ATTRIBUTES))
+          attrs = row.attributes.symbolize_keys.slice(*Record::ATTRIBUTES)
+          attrs[:embedding] = decode_vector(attrs[:embedding])
+          Record.new(**attrs)
         end
       end
     end

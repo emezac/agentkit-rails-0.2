@@ -121,4 +121,7 @@ module Agentkit
   end
 end
 
-require_relative "agentkit/engine" if defined?(::Rails::Engine)
+# Checking for ::Rails, not ::Rails::Engine. `Rails::Engine` is only defined
+# once rails/engine has been required, which depends on the host's boot order —
+# an app that requires agentkit before it would silently get no engine at all.
+require_relative "agentkit/engine" if defined?(::Rails)

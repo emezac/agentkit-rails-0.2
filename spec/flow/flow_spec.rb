@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 # The council example from the v2 design docs, plus the regression specs for
 # the failure modes v0.1 had no way to express.
 SPEC_CALLS = Hash.new(0)

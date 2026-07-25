@@ -277,6 +277,16 @@ module Agentkit
                 config.auto_apply_delays[suggestion.suggestion_type.to_sym] ||
                 config.auto_apply_delay
         scheduler.call(delay, suggestion.id)
+      # NotImplementedError descends from ScriptError, not StandardError, so a
+      # bare `rescue` would sail right past it — which is exactly how the
+      # inline adapter took down suggest!.
+      rescue StandardError, NotImplementedError => e
+        # Some queue adapters (ActiveJob's :inline, :async) cannot schedule a
+        # job in the future. Losing the auto-apply timer is acceptable; losing
+        # the suggestion is not.
+        Telemetry.emit("hitl.auto_apply_unavailable",
+                       dims: { error_class: e.class.name, type: suggestion.suggestion_type })
+        Agentkit.logger&.warn("[AgentKit::HITL] auto-apply not scheduled: #{e.message}")
       end
 
       # Scheduling port. In Rails the engine swaps this for an ActiveJob

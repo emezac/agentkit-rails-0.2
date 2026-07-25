@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 # Regression spec for the traceability v0.1 had and an early v2 draft dropped.
 #
 # v0.1's `agentkit_agent_logs` stored the full payload plus a 500-character

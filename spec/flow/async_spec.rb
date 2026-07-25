@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 # The async path, driven by a queue the spec controls.
 #
 # This is the only honest way to test a barrier: branches must be allowed to

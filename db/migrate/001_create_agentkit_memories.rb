@@ -2,10 +2,11 @@
 
 class CreateAgentkitMemories < ActiveRecord::Migration[7.1]
   def change
-    enable_extension "pgcrypto"  unless extension_enabled?("pgcrypto")
-    enable_extension "pg_trgm"   unless extension_enabled?("pg_trgm")
-    # Optional: without it the memory layer runs at :keyword level.
-    enable_extension "vector" rescue nil
+    enable_extension "pgcrypto" unless extension_enabled?("pgcrypto")
+    enable_extension "pg_trgm"  unless extension_enabled?("pg_trgm")
+    # pgvector is optional: without it the memory layer runs at :keyword level,
+    # which is a real retrieval mode, not a degraded one.
+    enable_extension "vector" if vector_available? && !extension_enabled?("vector")
 
     create_table :agentkit_memories do |t|
       t.text    :content, null: false
@@ -44,7 +45,14 @@ class CreateAgentkitMemories < ActiveRecord::Migration[7.1]
       t.timestamps
     end
 
-    add_column :agentkit_memories, :embedding, :vector, limit: 1536 rescue nil
+    # Explicit SQL: `add_column ..., :vector, limit:` does not always carry the
+    # dimensions through, and a dimensionless vector column cannot be indexed.
+    if vector_available?
+      dims = 1536
+      execute "ALTER TABLE agentkit_memories ADD COLUMN embedding vector(#{dims});"
+    else
+      say "pgvector not available: skipping the embedding column, memory runs at :keyword level", true
+    end
 
     # Keyword retrieval path — what makes `level: :keyword` a real mode with
     # zero provider calls rather than "memory disabled".
@@ -67,6 +75,8 @@ class CreateAgentkitMemories < ActiveRecord::Migration[7.1]
               unique: true, where: "embedding_status = 'embedded'",
               name: "idx_agentkit_memories_dedupe"
 
+    return unless vector_available?
+
     # Partial HNSW: under :on_promotion most rows carry no vector, so the index
     # only covers the ones that do. Keeps recall latency flat as the table grows.
     execute <<~SQL
@@ -74,7 +84,18 @@ class CreateAgentkitMemories < ActiveRecord::Migration[7.1]
       ON agentkit_memories USING hnsw (embedding vector_cosine_ops)
       WHERE embedding IS NOT NULL;
     SQL
-  rescue StandardError => e
-    say "pgvector unavailable (#{e.message}); memory will run at :keyword level", true
+  end
+
+  private
+
+  # Checked rather than rescued: a blanket `rescue` inside a migration swallows
+  # the real error AND leaves the transaction aborted, so every later migration
+  # fails with a misleading "current transaction is aborted".
+  def vector_available?
+    return @vector_available unless @vector_available.nil?
+
+    @vector_available =
+      select_value("SELECT 1 FROM pg_available_extensions WHERE name = 'vector'").present? &&
+      defined?(::Pgvector)
   end
 end

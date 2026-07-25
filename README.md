@@ -33,7 +33,7 @@ usos en seis proyectos**. v2 está construida a partir de ese diagnóstico.
 | Sin forma de expresar paralelo/fan-in | Flow engine con barrera atómica |
 | Fábrica que medía conteos y escribía Ruby en disco | Detectores deterministas + escalera N1–N5, N5 solo emite PR |
 | A2A del kernel con 0 usos (3 proyectos escribieron el suyo) | Card generada desde el registro de Capabilities |
-| Specs con un `module RubyLLM` inventado | Puerto `:fake` real; 164 specs, cero dobles del kernel |
+| Specs con un `module RubyLLM` inventado | Puerto `:fake` real; 203 specs (166 unitarios + 37 de integración contra Postgres) |
 
 Detalle completo: `PLAN_V2.md`, `FLOW_ENGINE.md`, `MEMORY_POLICY.md`,
 `FACTORY_AND_CHAT.md` en `agentkit-rails2/`.
@@ -308,8 +308,16 @@ deterministas** (mismo texto → mismo vector), así que las aserciones de recal
 reproducibles.
 
 ```bash
-rspec        # 164 examples, 0 failures
+rspec spec/lib spec/flow spec/memory spec/factory   # 166 unit examples
+rspec spec/integration                              # 37 against real Postgres
+rspec                                               # 203 examples, 0 failures
 ```
+
+**`spec/dummy` es una app Rails de verdad** con Postgres y pgvector. Existe
+porque once defectos reales pasaron por delante de una suite unitaria en verde:
+los stores en memoria aceptan `nil` en columnas `NOT NULL`, registran los pasos
+en el `Run` gratis y nunca pierden estado al reiniciar. Probar el algoritmo no
+es probar la integración.
 
 ---
 

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 # A2A rebuilt from what the projects actually shipped: `tres` proved JSON-RPC
 # 2.0 + `.well-known/agent.json` + constant-time key comparison; `totallook`
 # proved self-service registration and quota. The kernel's own v0.1 controller

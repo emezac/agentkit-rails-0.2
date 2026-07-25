@@ -276,14 +276,23 @@ module Agentkit
                    .where(id: step.id).where.not(status: "completed")
                    .update_all(status: status, output: output || {}, finished_at: Time.now)
           return nil if closed.zero?   # redelivery: someone already closed it
+
+          step.status      = status
+          step.output      = output if output
+          step.finished_at = Time.now
           return nil if join_step.nil?
 
-          Agentkit::RunStepRecord.connection.select_value(
+          remaining = Agentkit::RunStepRecord.connection.select_value(
             Agentkit::RunStepRecord.sanitize_sql_array(
               ["UPDATE agentkit_run_steps SET pending_count = pending_count - 1 " \
                "WHERE id = ? RETURNING pending_count", join_step.id]
             )
           ).to_i
+
+          # The caller holds an in-memory copy of the barrier; without this the
+          # join reads a stale count and waits for branches that already closed.
+          join_step.pending_count = remaining
+          remaining
         end
 
         private

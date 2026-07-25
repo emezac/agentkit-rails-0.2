@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 # The ten acceptance criteria from MEMORY_POLICY.md §11.
 #
 # Every one of these targets a concrete cost problem observed in the v0.1

@@ -34,7 +34,8 @@ module Agentkit
         @store      = store
         @context    = context
         @mode       = (mode || Agentkit.config.flow.executor).to_sym
-        @flow_ctx   = FlowContext.new(input: input, run: run, context: context)
+        @flow_ctx   = FlowContext.new(input: Coder.load(input, store: store),
+                                      run: run, context: context)
         @completed  = []          # for compensation, in execution order
         @position   = 0
       end

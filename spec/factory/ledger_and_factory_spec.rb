@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 RSpec.describe Agentkit::HITL do
   def propose(agent: "SalesAgent", type: "follow_up", payload: { "body" => "hola" })
     described_class.suggest!(type: type, title: "t", source_agent: agent, payload: payload)

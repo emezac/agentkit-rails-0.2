@@ -104,8 +104,11 @@ module Agentkit
         end
 
         run = build_run(ctx, input, store)
+        # `run.input` is the coded form: both entry points then feed the
+        # executor identically, so a resumed run sees exactly what the original
+        # call saw. Passing the raw hash here would make sync and async diverge.
         result = Executor.new(definition: definition, run: run, store: store,
-                              context: ctx, input: input, mode: mode).call
+                              context: ctx, input: run.input, mode: mode).call
         decorate(result, run)
       end
 
@@ -159,7 +162,10 @@ module Agentkit
       def build_run(ctx, input, store)
         run = Run.new(
           flow_name: name, flow_version: definition.version, run_id: ctx.run_id,
-          input: input, context: ctx.to_h, tenant_key: ctx.tenant_key,
+          # Domain records travel as references and are reloaded on the other
+          # side; without this the input arrives at a worker as a plain Hash.
+          input: Coder.dump(input, store: store),
+          context: ctx.to_h, tenant_key: ctx.tenant_key,
           account_id: id_of(ctx.account), user_id: id_of(ctx.user),
           idempotency_key: definition.idempotency_fn&.call(input),
           deadline_at: definition.timeout ? Time.now + definition.timeout : nil,
@@ -229,9 +235,15 @@ module Agentkit
       Agentkit.config.flow.executor   = :sync
       Agentkit.config.flow.dispatcher = :inline
       Agentkit.config.flow.store      = :memory
-      Agentkit.config.memory.store  = :memory
-      Agentkit.config.llm.adapter   = :fake
+      Agentkit.config.memory.store    = :memory
+      Agentkit.config.llm.adapter     = :fake
       Agentkit.config.telemetry.backends = [:memory]
+      # Every port has to be pinned, not just most of them: the audit store
+      # picks ActiveRecord as soon as the model constant exists, so a unit
+      # example running in a process that has also loaded Rails would quietly
+      # start writing to the database.
+      Agentkit.config.audit.store = :memory
+      Agentkit::Audit.reset!
       LLM.reset!
       Memory.reset!
       Telemetry.reset!

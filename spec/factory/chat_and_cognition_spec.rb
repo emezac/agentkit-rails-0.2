@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "spec_helper"
+
 RSpec.describe Agentkit::Chat do
   let(:acme)    { AgentkitSpecHelpers::Company.new(1, "Acme", "saas", "latam", 120) }
   let(:offtopic) { AgentkitSpecHelpers::Company.new(2, "Ferretería Díaz", "retail", "eu", 8) }

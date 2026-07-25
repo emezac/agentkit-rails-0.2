@@ -1,5 +1,55 @@
 # Changelog
 
+## Unreleased
+
+### Fixed — found by spec/dummy, the integration suite
+
+Eleven defects that the 166-example unit suite could not see, because the
+in-memory adapters are more forgiving than Postgres and because nothing was
+booting Rails.
+
+- **Engine never loaded** when `require "agentkit"` ran before Rails existed.
+  The hook checked for `Rails::Engine`, which is only defined once
+  `rails/engine` has been required — a boot-order dependency.
+- **Rake tasks loaded from the wrong path**, so `bin/rails` refused to start.
+- **Zeitwerk could not eager-load `A2AController`**: the file name camelizes to
+  `A2aController`, so production boot raised and the engine's `a2a#rpc` route
+  pointed at a constant that did not exist.
+- **`ActiveJob::Base` resolved inside `module Agentkit`** — every job class
+  needed `::ActiveJob::Base`.
+- **The ActiveRecord flow store never registered steps on the `Run`**, leaving
+  `run.step`, `children_of` and the fan-out replay blind. This broke the entire
+  async path under ActiveRecord while the in-memory store hid it.
+- **The SQL barrier decrement did not refresh the caller's copy**, so a sync
+  fan-out read a stale `pending_count` and suspended forever.
+- **`usage: nil` written into a NOT NULL column** by any step that did not call
+  the LLM.
+- **`update_all` bypassed type casting**, so a pgvector column could never be
+  written ("can't cast Array"). Vectors are now encoded explicitly, which also
+  works when the `vector` OID is not registered on the connection.
+- **Migration 001 wrapped everything in a blanket `rescue`**, which swallowed
+  the real error and left the transaction aborted so every later migration
+  failed with a misleading message. Capability is now checked, not rescued.
+- **A dimensionless `vector` column** could not be indexed; the column is
+  created with explicit SQL.
+- **`NotImplementedError` is not a `StandardError`**, so a queue adapter that
+  cannot schedule a future job took down `HITL.suggest!` instead of just losing
+  the auto-apply timer.
+
+### Added
+
+- `spec/dummy`: a real Rails app with Postgres and pgvector, plus 37
+  integration examples covering engine boot, Zeitwerk eager-load, the three
+  ActiveRecord stores, the async barrier under out-of-order and duplicated
+  delivery, artifact offloading and resumption from the database alone.
+- `Flow::Coder` now encodes the run input too, so a domain record reaches a
+  worker as a record rather than a Hash of attributes.
+- `on_error: :continue` on a step: a non-essential failure is recorded and
+  tolerated instead of unwinding the run.
+- `HITL::Stores::ActiveRecordStore` and `ActiveRecordLedger`, wired by the
+  engine. Suggestions no longer live in a process-local Hash, where a restart
+  dropped every pending approval.
+
 ## 0.2.0 — Kernel rewrite
 
 Rebuilt from the diagnosis of six production applications running 0.1.
