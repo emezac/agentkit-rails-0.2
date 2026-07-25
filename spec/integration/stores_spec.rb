@@ -271,3 +271,53 @@ RSpec.describe "ActiveRecord adapters", :integration do
     end
   end
 end
+
+# Both telemetry backends sit behind one port, so a caller must not be able to
+# tell them apart. This pair caught a real defect: the ActiveRecord scope had no
+# ORDER BY, so `events(...).last` returned whatever Postgres felt like while the
+# in-memory backend preserved insertion order. Unit specs ran on :memory and
+# stayed green for months.
+RSpec.describe "Telemetry backend equivalence", :integration do
+  def emit_sequence(backend)
+    Agentkit.config.telemetry.backends = [backend]
+    Agentkit::Telemetry.reset!
+
+    5.times { |i| Agentkit::Telemetry.emit("order.probe", dims: { step: i }, measures: { n: i }) }
+    Agentkit::Telemetry.flush!
+    Agentkit::Telemetry.events(name: "order.probe").map { |e| e.dims[:step].to_i }
+  end
+
+  it "returns events in emission order, whichever backend is configured" do
+    in_memory = emit_sequence(:memory)
+    persisted = emit_sequence(:db)
+
+    expect(in_memory).to eq([0, 1, 2, 3, 4])
+    expect(persisted).to eq(in_memory)
+  end
+
+  # Asserted on the query rather than on returned rows, deliberately.
+  #
+  # A small, freshly-inserted table comes back in insertion order anyway, so the
+  # sequence assertions above pass with AND without the ORDER BY — they did not
+  # catch the original defect and cannot be trusted to catch a regression. An
+  # unordered scan is only *permitted* to reorder, and provoking it on demand is
+  # not something a spec can do reliably.
+  #
+  # So the invariant is stated where it is actually decidable: the SQL must ask
+  # for an order. Ties matter too — events written in one batch share
+  # occurred_at, so the primary key has to break them.
+  it "asks the database for an order rather than relying on scan luck" do
+    sql = Agentkit::EventRecord.all.order(:occurred_at, :id).to_sql
+    generated = Agentkit::Telemetry::Backends::ActiveRecordBackend
+                .new.send(:base_scope).to_sql
+
+    expect(generated).to eq(sql)
+    expect(generated).to match(/ORDER BY.*occurred_at.*,.*id/i)
+  end
+
+  # The obvious way to read "what just happened", and the one the ordering bug
+  # silently broke.
+  it "agrees on which event is the most recent" do
+    expect(emit_sequence(:db).last).to eq(emit_sequence(:memory).last)
+  end
+end

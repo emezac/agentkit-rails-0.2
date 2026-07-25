@@ -81,7 +81,15 @@ module Agentkit
         def events(name: nil, since: nil, dims: {})
           return [] unless available?
 
-          scope = Agentkit::EventRecord.all
+          # Ordered explicitly. Without it Postgres may return rows in any
+          # order, so `events(...).last` — the obvious way to read the most
+          # recent event — is nondeterministic here while the in-memory backend
+          # preserves insertion order. Two backends behind one port must not
+          # disagree about something a caller can observe.
+          #
+          # occurred_at alone is not enough: events written in the same batch
+          # share a timestamp, so the primary key breaks the tie.
+          scope = base_scope
           scope = scope.where(name: name.to_s) if name
           scope = scope.where(occurred_at: since..) if since
           scope = scope.where("dims @> ?", dims.to_json) if dims.any?
@@ -90,6 +98,10 @@ module Agentkit
                       occurred_at: r.occurred_at, run_id: r.run_id, trace_id: r.trace_id)
           end
         end
+
+        # Extracted so the ordering invariant is directly assertable — the
+        # behaviour it guards cannot be provoked on demand in a test.
+        def base_scope = Agentkit::EventRecord.all.order(:occurred_at, :id)
 
         private
 
