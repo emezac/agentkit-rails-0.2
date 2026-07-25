@@ -91,3 +91,29 @@ RSpec.describe "Engine boot", :integration do
     end
   end
 end
+
+# An app cannot boot in production if eager loading fails, and eager loading is
+# exactly what unit specs never exercise. Both of the defects this file guards
+# were invisible until a real app tried to start.
+RSpec.describe "Eager loading", :integration do
+  it "loads every constant the engine ships" do
+    expect { Rails.application.eager_load! }.not_to raise_error
+  end
+
+  # v0.2.1 renamed this to A2aController to satisfy Zeitwerk's default
+  # camelization. That worked here — the dummy declares no acronyms — and broke
+  # every host app that declares `inflect.acronym "A2A"`, which is a natural
+  # thing for an app built on this gem to do. The engine now pins the
+  # inflection so the constant does not depend on the host's configuration.
+  it "names the A2A controller the same way regardless of host inflections" do
+    expect(Agentkit::A2AController.superclass).to eq(ActionController::API)
+    expect(Agentkit::A2AController.action_methods).to include("rpc", "card", "register", "invoke")
+    expect(defined?(Agentkit::A2aController)).to be_nil
+  end
+
+  it "pins that inflection on every autoloader" do
+    Rails.autoloaders.each do |autoloader|
+      expect(autoloader.inflector.camelize("a2a_controller", nil)).to eq("A2AController")
+    end
+  end
+end

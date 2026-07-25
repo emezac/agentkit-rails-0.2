@@ -14,6 +14,21 @@ module Agentkit
       app.config.autoload_paths += Dir[root.join("app", "concerns")]
     end
 
+    # Pin our own inflection instead of inheriting the host app's.
+    #
+    # Zeitwerk camelizes a2a_controller.rb to A2aController by default, but an
+    # app that declares `inflect.acronym "A2A"` — an entirely natural thing for
+    # an app built on this gem to do — changes that globally, and then the gem's
+    # own file no longer defines the constant Zeitwerk expects. Eager loading
+    # fails and the host cannot boot in production.
+    #
+    # Naming it here makes the constant deterministic either way.
+    initializer "agentkit.inflections", before: :set_autoload_paths do
+      Rails.autoloaders.each do |autoloader|
+        autoloader.inflector.inflect("a2a_controller" => "A2AController")
+      end
+    end
+
     # Storage ports switch to ActiveRecord once the app's models are available.
     initializer "agentkit.stores", after: :active_record do
       ActiveSupport.on_load(:active_record) do

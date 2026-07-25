@@ -3,10 +3,13 @@
 module Agentkit
   # A2A over HTTP. Thin by design: all the protocol logic lives in
   # Agentkit::A2A so it stays testable without Rails.
-  # NOTE the casing: Zeitwerk camelizes `a2a_controller.rb` to `A2aController`.
+  # The engine pins this inflection (see agentkit.inflections) so the constant
+  # does not change depending on whether the host app declares an "A2A"
+  # acronym. It named the class A2AController before, which broke eager loading
+  # in every app that did.
   # Naming it A2AController raises on eager load and leaves the engine's
   # `a2a#rpc` route pointing at a constant that does not exist.
-  class A2aController < ActionController::API
+  class A2AController < ActionController::API
     before_action :ensure_enabled!
 
     # GET /agentkit/a2a  (and /.well-known/agent.json when the host routes it)
