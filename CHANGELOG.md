@@ -1,12 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.2.1 — 2026-07-24
 
-### Fixed — found by spec/dummy, the integration suite
+### Fixed — eleven defects found by the integration suite
 
-Eleven defects that the 166-example unit suite could not see, because the
-in-memory adapters are more forgiving than Postgres and because nothing was
-booting Rails.
+None of these were visible to the 166-example unit suite: the in-memory
+adapters are more forgiving than Postgres (they accept `nil` in a NOT NULL
+column, register steps on the `Run` for free and never lose state on restart),
+and nothing was booting Rails at all. Five of them had already shipped and were
+caught by piloting the gem on a real application; the other six surfaced the
+first time `spec/dummy` started.
 
 - **Engine never loaded** when `require "agentkit"` ran before Rails existed.
   The hook checked for `Rails::Engine`, which is only defined once
