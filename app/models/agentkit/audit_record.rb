@@ -20,7 +20,17 @@ module Agentkit
     before_update  { raise ActiveRecord::ReadOnlyRecord, "audit rows are immutable" }
     before_destroy { raise ActiveRecord::ReadOnlyRecord, "use Audit.prune! for retention" }
 
+    # v0.1 stored one `tokens_used` figure. Splitting it was the right call —
+    # input and output are priced differently — but the total is what a
+    # traceability view wants, so it stays available under the old name.
+    def tokens_used = input_tokens.to_i + output_tokens.to_i
+
     def self.total_cost_usd(scope = all) = scope.sum(:cost_usd).to_f.round(6)
     def self.avg_duration_ms(scope = all) = scope.average(:duration_ms)&.round(1)
+
+    # Summed in SQL rather than by loading rows.
+    def self.total_tokens(scope = all)
+      scope.sum(:input_tokens).to_i + scope.sum(:output_tokens).to_i
+    end
   end
 end
