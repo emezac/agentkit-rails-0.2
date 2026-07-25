@@ -18,6 +18,7 @@ module Agentkit
         def update(id, attrs)     = raise NotImplementedError
         def find(id)              = raise NotImplementedError
         def all(scope = {})       = raise NotImplementedError
+        def count(scope = {})     = raise NotImplementedError
         def delete_all            = raise NotImplementedError
         def by_content_hash(hash, scope = {}) = raise NotImplementedError
         def pending_embedding(limit:, scope: {}) = raise NotImplementedError
@@ -56,6 +57,8 @@ module Agentkit
         def all(scope = {})
           @rows.values.select { |r| matches?(r, scope) }
         end
+
+        def count(scope = {}) = all(scope).size
 
         def delete_all
           @mutex.synchronize { @rows = {}; @seq = 0 }
@@ -167,6 +170,11 @@ module Agentkit
         end
         def find(id)          = wrap(model.find_by(id: id))
         def all(scope = {})   = scoped(scope).map { |r| wrap(r) }
+
+        # A SQL COUNT. Counting via `all(...).size` would materialise and wrap
+        # every row in the table to produce one integer — fine against the
+        # in-memory store, ruinous against a real one.
+        def count(scope = {}) = scoped(scope).count
         def delete_all        = model.delete_all
 
         def by_content_hash(hash, scope = {})

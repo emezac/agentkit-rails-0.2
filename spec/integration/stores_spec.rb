@@ -321,3 +321,56 @@ RSpec.describe "Telemetry backend equivalence", :integration do
     expect(emit_sequence(:db).last).to eq(emit_sequence(:memory).last)
   end
 end
+
+# Added because a controller called Agentkit::Memory.count and it did not
+# exist. Both adapters implement it, so both are checked: the last time a
+# method existed on only one of them in spirit, an unordered SQL scope shipped
+# for months behind a green in-memory suite.
+RSpec.describe "Memory.count across backends", :integration do
+  def seed(store)
+    Agentkit.config.memory.store = store
+    Agentkit::Memory.reset!
+    Agentkit::Memory.store_backend.delete_all
+
+    3.times { |i| Agentkit::Memory.store("note #{i}", tags: %w[alpha], type: "observation") }
+    2.times { |i| Agentkit::Memory.store("other #{i}", tags: %w[beta], type: "insight") }
+  end
+
+  %i[memory active_record].each do |backend|
+    context "with the #{backend} store" do
+      before { seed(backend) }
+
+      it "counts everything" do
+        expect(Agentkit::Memory.count).to eq(5)
+      end
+
+      it "honours a scope" do
+        expect(Agentkit::Memory.count(types: "insight")).to eq(2)
+        expect(Agentkit::Memory.count(tags: %w[alpha])).to eq(3)
+      end
+
+      it "agrees with all(...).size" do
+        expect(Agentkit::Memory.count).to eq(Agentkit::Memory.all.size)
+        expect(Agentkit::Memory.count(types: "insight"))
+          .to eq(Agentkit::Memory.all(types: "insight").size)
+      end
+
+      # Both stores ignore a key they do not recognise. That is a footgun —
+      # count(memory_type: "insight") quietly counts everything — but they are
+      # at least consistent about it, and pinning that is what stops one
+      # adapter from drifting into raising while the other stays silent.
+      it "treats an unknown scope key the same way in both stores" do
+        expect(Agentkit::Memory.count(memory_type: "insight")).to eq(5)
+      end
+    end
+  end
+
+  # The reason count exists rather than all(...).size at the call site: one
+  # integer must not cost the whole table.
+  it "does not load rows to produce a number" do
+    seed(:active_record)
+    expect(Agentkit::Memory.store_backend).not_to receive(:wrap)
+
+    expect(Agentkit::Memory.count).to eq(5)
+  end
+end

@@ -144,6 +144,10 @@ module Agentkit
       def find(id) = store_backend.find(id)
       def all(scope = {}) = store_backend.all(scope)
 
+      # How many memories match a scope. Counted in the store rather than by
+      # loading them, so a dashboard tile costs one query instead of the table.
+      def count(scope = {}) = store_backend.count(scope)
+
       def perspectives_of(record)
         store_backend.all(derived_from: record.id)
       end
