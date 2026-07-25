@@ -1,0 +1,58 @@
+<div class="card">
+  <h2 style="margin:0 0 6px"><%= @run.flow_name %>
+    <span class="pill <%= @run.status %>"><%= @run.status %></span></h2>
+  <div class="dim mono"><%= @run.run_id %></div>
+  <div class="row" style="margin-top:12px">
+    <div><div class="label">Coste</div><div class="metric">$<%= @run.cost_usd.to_f.round(4) %></div></div>
+    <div><div class="label">Pasos</div><div class="metric"><%= @run.steps_completed %>/<%= @run.steps_total %></div></div>
+    <div><div class="label">Duración</div>
+      <div class="metric"><%= @run.finished_at && @run.started_at ? "#{(@run.finished_at - @run.started_at).round}s" : "—" %></div></div>
+  </div>
+</div>
+
+<%# Step timeline: the fan-out barrier and its branches are visible, which is
+    what makes a stuck join diagnosable instead of mysterious. %>
+<div class="card">
+  <div class="label">Timeline</div>
+  <table>
+    <thead><tr><th>paso</th><th>tipo</th><th>estado</th><th>intentos</th><th>ms</th><th>barrera</th></tr></thead>
+    <tbody>
+      <% @steps.each do |step| %>
+        <tr>
+          <td class="mono" style="padding-left: <%= step.parent_step_id ? 24 : 8 %>px">
+            <%= step.step_key %>
+          </td>
+          <td class="dim"><%= step.kind %></td>
+          <td><span class="pill <%= step.status %>"><%= step.status %></span></td>
+          <td class="mono"><%= step.attempt_count %></td>
+          <td class="mono dim">
+            <%= step.started_at && step.finished_at ? ((step.finished_at - step.started_at) * 1000).round : "" %>
+          </td>
+          <td class="mono dim"><%= step.pending_count %></td>
+        </tr>
+        <% if step.error.present? %>
+          <tr><td colspan="6" class="mono" style="color:var(--bad)"><%= step.error %></td></tr>
+        <% end %>
+      <% end %>
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <div class="label">Auditoría</div>
+  <table>
+    <thead><tr><th>evento</th><th>agente</th><th>modelo</th><th>tokens</th><th>coste</th><th>prompt</th></tr></thead>
+    <tbody>
+      <% @audit.each do |e| %>
+        <tr>
+          <td class="mono"><%= e.event_type %></td>
+          <td><%= e.agent_name %></td>
+          <td class="mono dim"><%= e.model %></td>
+          <td class="mono"><%= [e.input_tokens, e.output_tokens].compact.join("/") %></td>
+          <td class="mono"><%= e.cost_usd ? "$#{e.cost_usd.round(5)}" : "" %></td>
+          <td class="mono dim"><%= e.prompt_preview.to_s.truncate(70) %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,48 @@
+<div class="card">
+  <span class="pill <%= @suggestion.priority %>"><%= @suggestion.priority %></span>
+  <h2 style="margin:8px 0"><%= @suggestion.title %></h2>
+  <p class="dim"><%= @suggestion.description %></p>
+  <pre class="mono dim"><%= JSON.pretty_generate(@suggestion.payload) %></pre>
+</div>
+
+<%# Provenance: why does this proposal exist? For an imagined scenario this
+    walks back to the three-phase trace and the source memories. %>
+<% if @provenance[:memory] %>
+  <div class="card">
+    <div class="label">Procedencia</div>
+    <div>tipo ontológico: <span class="pill"><%= @provenance[:memory][:ontological] %></span></div>
+    <% if @provenance[:memory][:sources] %>
+      <div class="dim">memorias fuente: <%= @provenance[:memory][:sources].join(", ") %></div>
+    <% end %>
+    <% if (trace = @provenance[:memory][:trace]) %>
+      <table style="margin-top:8px">
+        <thead><tr><th>fase</th><th>datos</th></tr></thead>
+        <tbody>
+          <% trace[:phases].each do |phase| %>
+            <tr>
+              <td class="mono"><%= phase[:name] %></td>
+              <td class="mono dim"><%= phase.except(:name, :at).inspect.truncate(160) %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    <% end %>
+  </div>
+<% end %>
+
+<div class="card">
+  <div class="label">Auditoría del run</div>
+  <table>
+    <thead><tr><th>evento</th><th>agente</th><th>modelo</th><th>coste</th></tr></thead>
+    <tbody>
+      <% @provenance[:audit].each do |entry| %>
+        <tr>
+          <td class="mono"><%= entry.event_type %></td>
+          <td><%= entry.agent_name %></td>
+          <td class="mono dim"><%= entry.model %></td>
+          <td class="mono"><%= entry.cost_usd ? "$#{entry.cost_usd.round(5)}" : "" %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

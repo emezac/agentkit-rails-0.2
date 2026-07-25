@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>AgentKit · <%= Agentkit.config.domain_name %></title>
+    <%= csrf_meta_tags %>
+    <%= javascript_include_tag "turbo", type: "module" if defined?(Turbo) %>
+    <style>
+      :root {
+        --bg: #0f1115; --panel: #171a21; --line: #262b36; --txt: #e6e9ef;
+        --dim: #8b93a7; --accent: #6ea8fe; --ok: #4ade80; --warn: #fbbf24; --bad: #f87171;
+      }
+      @media (prefers-color-scheme: light) {
+        :root { --bg: #f7f8fa; --panel: #fff; --line: #e3e6ec; --txt: #1a1d24;
+                --dim: #6b7280; --accent: #2563eb; }
+      }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--bg); color: var(--txt);
+             font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", sans-serif; }
+      header { display: flex; gap: 20px; align-items: center; padding: 14px 24px;
+               border-bottom: 1px solid var(--line); background: var(--panel); }
+      header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: -.01em; }
+      header nav a { color: var(--dim); text-decoration: none; margin-right: 16px; }
+      header nav a.active, header nav a:hover { color: var(--accent); }
+      main { padding: 24px; max-width: 1100px; margin: 0 auto; }
+      .card { background: var(--panel); border: 1px solid var(--line);
+              border-radius: 10px; padding: 16px; margin-bottom: 12px; }
+      .row { display: flex; gap: 12px; flex-wrap: wrap; }
+      .row > .card { flex: 1 1 200px; }
+      .metric { font-size: 24px; font-weight: 600; letter-spacing: -.02em; }
+      .label { color: var(--dim); font-size: 12px; text-transform: uppercase;
+               letter-spacing: .04em; }
+      .pill { display: inline-block; padding: 2px 8px; border-radius: 20px;
+              font-size: 11px; border: 1px solid var(--line); color: var(--dim); }
+      .pill.high, .pill.failed, .pill.critical { color: var(--bad); border-color: var(--bad); }
+      .pill.ok, .pill.completed, .pill.accepted { color: var(--ok); border-color: var(--ok); }
+      .pill.waiting_human, .pill.pending, .pill.medium { color: var(--warn); border-color: var(--warn); }
+      table { width: 100%; border-collapse: collapse; }
+      th { text-align: left; color: var(--dim); font-weight: 500; font-size: 12px;
+           padding: 6px 8px; border-bottom: 1px solid var(--line); }
+      td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      button, .btn { background: var(--accent); color: #fff; border: 0; padding: 6px 12px;
+                     border-radius: 6px; cursor: pointer; font-size: 13px; }
+      button.ghost { background: transparent; color: var(--dim); border: 1px solid var(--line); }
+      select, input, textarea { background: var(--bg); color: var(--txt);
+                                border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+      .dim { color: var(--dim); }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+      .empty { color: var(--dim); padding: 32px; text-align: center; }
+      .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; }
+      .bar > div { height: 100%; background: var(--accent); }
+      details summary { cursor: pointer; color: var(--dim); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AgentKit · <%= Agentkit.config.domain_name %></h1>
+      <nav>
+        <%= link_to "Bandeja", suggestions_path %>
+        <%= link_to "Runs", runs_path %>
+        <%= link_to "Fábrica", factory_path %>
+      </nav>
+      <span class="pill" style="margin-left:auto">
+        memoria: <%= Agentkit.config.memory.level %> ·
+        embeddings: <%= Agentkit.config.memory.embedding.policy %> ·
+        fábrica: <%= Agentkit.config.factory.mode %>
+      </span>
+    </header>
+    <main>
+      <div id="agentkit-flash"><%= render "agentkit/shared/flash", message: (notice || alert) %></div>
+      <%= yield %>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,113 @@
+<div class="row">
+  <div class="card">
+    <div class="label">Modo</div>
+    <div class="metric"><%= @mode %></div>
+    <div class="dim">
+      <%= @mode == :observe ? "sólo acumula estadística" : "puede experimentar" %>
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Gasto LLM (<%= (window / 86_400).round %>d)</div>
+    <div class="metric">$<%= @economics[:llm_spend].round(4) %></div>
+  </div>
+  <div class="card">
+    <div class="label">Embeddings</div>
+    <div class="metric"><%= @economics[:embeddings] %></div>
+  </div>
+  <div class="card">
+    <div class="label">Latencia p95</div>
+    <div class="metric"><%= @economics[:latency].p95&.round || "—" %> ms</div>
+    <div class="dim">n=<%= @economics[:latency].n %></div>
+  </div>
+</div>
+
+<div class="card">
+  <div style="display:flex; align-items:center; gap:10px">
+    <div class="label" style="flex:1">Hallazgos abiertos</div>
+    <%= button_to "Diagnosticar", factory_diagnose_path, class: "ghost" %>
+    <%= link_to "Descargar informe", factory_report_path, class: "btn" %>
+  </div>
+
+  <% if @findings.empty? %>
+    <div class="empty">Sin hallazgos. Con <%= @mode %> activo, seguí acumulando decisiones.</div>
+  <% else %>
+    <table style="margin-top:10px">
+      <thead><tr><th>detector</th><th>sujeto</th><th>resumen</th><th>nivel</th></tr></thead>
+      <tbody>
+        <% @findings.each do |f| %>
+          <tr>
+            <td><span class="pill <%= f.severity %>"><%= f.detector %></span></td>
+            <td class="mono"><%= f.subject %></td>
+            <td><%= f.summary %>
+              <details><summary>evidencia</summary>
+                <pre class="mono dim"><%= JSON.pretty_generate(f.evidence) %></pre>
+              </details>
+            </td>
+            <td class="mono"><%= f.suggested_level.to_s.upcase %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  <% end %>
+</div>
+
+<%# Per-agent quality. `acceptance` deliberately excludes advisory timeouts —
+    a suggestion that nobody looked at is not a validation. %>
+<div class="card">
+  <div class="label">Calidad por agente</div>
+  <table>
+    <thead>
+      <tr><th>agente</th><th>aceptación</th><th>sin editar</th><th>ignoradas</th>
+          <th>$/aceptada</th><th>rechazo dominante</th></tr>
+    </thead>
+    <tbody>
+      <% @agents.each do |agent| %>
+        <% profile = @ledger.rejection_profile(agent: agent, since: @since) %>
+        <% dominant = profile.max_by { |_, v| v } %>
+        <tr>
+          <td><%= agent %></td>
+          <td class="mono"><%= pct @ledger.acceptance_rate(agent: agent, since: @since) %></td>
+          <td class="mono"><%= pct @ledger.clean_acceptance_rate(agent: agent, since: @since) %></td>
+          <td class="mono"><%= pct @ledger.ignore_rate(agent: agent, since: @since) %></td>
+          <td class="mono">
+            <% cost = @ledger.cost_per_accepted(agent: agent, since: @since) %>
+            <%= cost ? "$#{cost}" : "—" %>
+          </td>
+          <td class="dim"><%= dominant ? "#{dominant[0]} (#{(dominant[1] * 100).round}%)" : "—" %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <% if @agents.empty? %>
+    <div class="empty">Sin decisiones humanas registradas todavía.</div>
+  <% end %>
+</div>
+
+<% if @experiments.any? %>
+  <div class="card">
+    <div class="label">Experimentos</div>
+    <table>
+      <thead><tr><th>objetivo</th><th>nivel</th><th>tráfico</th><th>estado</th><th>resultado</th></tr></thead>
+      <tbody>
+        <% @experiments.each do |e| %>
+          <tr>
+            <td class="mono"><%= e.target %></td>
+            <td><%= e.level.upcase %></td>
+            <td class="mono"><%= e.traffic_pct %>%</td>
+            <td><span class="pill <%= e.status %>"><%= e.status %></span></td>
+            <td class="mono dim"><%= e.results.slice(:verdict, :effect, :reason).inspect %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+<% end %>
+
+<div class="card">
+  <div class="label">Cognición on-demand</div>
+  <div class="row" style="margin-top:8px">
+    <%= button_to "Dreaming (dry run)", cognition_run_path(processor: "dreaming", dry_run: 1), class: "ghost" %>
+    <%= button_to "Dreaming", cognition_run_path(processor: "dreaming") %>
+    <%= button_to "Imagination", cognition_run_path(processor: "imagination"), class: "ghost" %>
+  </div>
+</div>

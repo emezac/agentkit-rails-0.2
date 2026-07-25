@@ -1,0 +1,34 @@
+<div class="row">
+  <% %w[running waiting_human waiting_join completed failed compensated].each do |status| %>
+    <div class="card">
+      <div class="label"><%= status.tr("_", " ") %></div>
+      <div class="metric"><%= @counts[status] || 0 %></div>
+    </div>
+  <% end %>
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr><th>flow</th><th>estado</th><th>pasos</th><th>coste</th><th>inicio</th><th></th></tr>
+    </thead>
+    <tbody>
+      <% @runs.each do |run| %>
+        <tr>
+          <td><%= link_to run.flow_name, run_path(run) %>
+              <span class="dim mono">v<%= run.flow_version %></span></td>
+          <td><span class="pill <%= run.status %>"><%= run.status %></span></td>
+          <td class="mono"><%= run.steps_completed %>/<%= run.steps_total %></td>
+          <td class="mono">$<%= run.cost_usd.to_f.round(4) %></td>
+          <td class="dim"><%= run.started_at&.strftime("%d/%m %H:%M") %></td>
+          <td>
+            <% if %w[waiting_human waiting_join failed].include?(run.status) %>
+              <%= button_to "Reanudar", retry_run_path(run), class: "ghost" %>
+            <% end %>
+          </td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+  <% if @runs.empty? %><div class="empty">Sin ejecuciones todavía.</div><% end %>
+</div>

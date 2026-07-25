@@ -1,0 +1,16 @@
+# Built gems — produced by `rake build`, never committed.
+*.gem
+pkg/
+
+# A gem does not lock its dependencies: the consuming app does.
+Gemfile.lock
+
+# RSpec persistence file (--only-failures)
+.rspec_status
+
+# Local
+tmp/
+log/
+.DS_Store
+.env
+.env.*

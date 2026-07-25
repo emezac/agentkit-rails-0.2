@@ -1,0 +1,40 @@
+<div class="row">
+  <div class="card">
+    <div class="label">Pendientes</div>
+    <div class="metric"><%= @suggestions.size %></div>
+  </div>
+  <div class="card">
+    <div class="label">Aceptación (humana)</div>
+    <div class="metric"><%= @ledger[:acceptance_rate] ? "#{(@ledger[:acceptance_rate] * 100).round}%" : "—" %></div>
+    <div class="dim">sin editar: <%= @ledger[:clean_acceptance_rate] ? "#{(@ledger[:clean_acceptance_rate] * 100).round}%" : "—" %></div>
+  </div>
+  <div class="card">
+    <div class="label">Ignoradas</div>
+    <div class="metric"><%= @ledger[:ignore_rate] ? "#{(@ledger[:ignore_rate] * 100).round}%" : "—" %></div>
+  </div>
+  <div class="card">
+    <div class="label">Coste por aceptada</div>
+    <div class="metric"><%= @ledger[:cost_per_accepted] ? "$#{@ledger[:cost_per_accepted]}" : "—" %></div>
+  </div>
+</div>
+
+<% if @ledger[:rejection_profile].present? && @ledger[:rejection_profile].any? %>
+  <div class="card">
+    <div class="label">Perfil de rechazo</div>
+    <% @ledger[:rejection_profile].sort_by { |_, v| -v }.each do |code, share| %>
+      <div style="margin:6px 0">
+        <div class="dim"><%= code %> — <%= (share * 100).round %>%</div>
+        <div class="bar"><div style="width: <%= (share * 100).round %>%"></div></div>
+      </div>
+    <% end %>
+  </div>
+<% end %>
+
+<div id="agentkit-suggestions">
+  <% if @suggestions.empty? %>
+    <div class="card empty">Nada pendiente de revisión.</div>
+  <% else %>
+    <%= render partial: "agentkit/suggestions/suggestion",
+               collection: @suggestions, as: :suggestion, locals: { codes: @codes } %>
+  <% end %>
+</div>

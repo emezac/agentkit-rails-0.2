@@ -1,0 +1,46 @@
+<div class="card" id="suggestion_<%= suggestion.id %>">
+  <div style="display:flex; gap:10px; align-items:flex-start">
+    <div style="flex:1">
+      <span class="pill <%= suggestion.priority %>"><%= suggestion.priority %></span>
+      <span class="pill"><%= suggestion.suggestion_type %></span>
+      <% if suggestion.payload["ontological_type"] == "imagined" %>
+        <span class="pill warn" title="Escenario hipotético, no un hecho verificado">hipotético</span>
+      <% end %>
+      <strong style="display:block; margin-top:6px"><%= suggestion.title %></strong>
+      <div class="dim" style="margin-top:4px"><%= suggestion.description %></div>
+      <div class="dim mono" style="margin-top:6px">
+        <%= suggestion.source_agent %>
+        <% if suggestion.prompt_id %> · prompt <%= suggestion.prompt_id %> v<%= suggestion.prompt_version %><% end %>
+        <% if suggestion.gate_key %> · <%= link_to "run", runs_path %><% end %>
+        · <%= time_ago_in_words(suggestion.created_at) %>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:6px; align-items:flex-start">
+      <%= button_to "Aprobar", approve_suggestion_path(suggestion.id),
+                    form: { data: { turbo_stream: true } } %>
+      <%= button_to "Posponer", snooze_suggestion_path(suggestion.id),
+                    class: "ghost", form: { data: { turbo_stream: true } } %>
+    </div>
+  </div>
+
+  <%# Rejecting requires a code from the closed taxonomy: that is what turns a
+      rejection into an improvement signal instead of an unusable free-text note. %>
+  <details style="margin-top:10px">
+    <summary>Rechazar</summary>
+    <%= form_with url: reject_suggestion_path(suggestion.id), method: :post,
+                  data: { turbo_stream: true },
+                  style: "display:flex; gap:6px; margin-top:8px; flex-wrap:wrap" do |f| %>
+      <%= f.select :code, codes.map { |c| [c.to_s.tr("_", " "), c] }, {}, required: true %>
+      <%= f.text_field :note, placeholder: "nota opcional", style: "flex:1" %>
+      <%= f.submit "Rechazar", class: "ghost" %>
+    <% end %>
+  </details>
+
+  <% if suggestion.payload.except("proposal_id").any? %>
+    <details style="margin-top:8px">
+      <summary>Payload</summary>
+      <pre class="mono dim"><%= JSON.pretty_generate(suggestion.payload) %></pre>
+    </details>
+  <% end %>
+</div>
