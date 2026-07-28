@@ -8,6 +8,11 @@ module Agentkit
 
     before_action :require_agentkit_access!
 
+    # The factory view reads it to label the reporting period. Without this it
+    # is a private controller method and the panel raises NameError on render —
+    # the console was unreachable in any app that actually opened it.
+    helper_method :window
+
     private
 
     # The host app decides who may see the console. Default: anyone in
