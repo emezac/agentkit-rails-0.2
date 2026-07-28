@@ -122,8 +122,41 @@ module Agentkit
     }.freeze
 
     class << self
-      def findings    = @findings ||= []
-      def experiments = @experiments ||= []
+      # Persisted when the engine is loaded, in memory otherwise.
+      #
+      # These were a process-local array. The diagnose cron runs in a worker and
+      # the console renders in a web process, so the owner never saw what the
+      # cycle found — and whatever it did find vanished on the next deploy.
+      # agentkit_findings and agentkit_experiments were dead schema: models,
+      # tables, and nothing writing to them.
+      def persisted? = defined?(Agentkit::FindingRecord) && Agentkit::FindingRecord.table_exists?
+
+      def findings
+        return @findings ||= [] unless persisted?
+
+        Agentkit::FindingRecord.order(created_at: :desc).map { |r| finding_from(r) }
+      end
+
+      def experiments
+        return @experiments ||= [] unless persisted?
+
+        Agentkit::ExperimentRecord.order(created_at: :desc).map { |r| experiment_from(r) }
+      end
+
+      def finding_from(row)
+        Finding.new(id: row.id.to_s, detector: row.detector, severity: row.severity,
+                    subject: row.subject, summary: row.summary, evidence: row.evidence,
+                    suggested_level: row.suggested_level, status: row.status,
+                    created_at: row.created_at)
+      end
+
+      def experiment_from(row)
+        Experiment.new(id: row.id.to_s, name: row.name, level: row.level, target: row.target,
+                       control: row.control, variant: row.variant, traffic_pct: row.traffic_pct,
+                       bucket_by: row.bucket_by, status: row.status,
+                       finding_id: row.finding_id&.to_s, started_at: row.started_at,
+                       results: row.results)
+      end
       def golden_sets = @golden_sets ||= Hash.new { |h, k| h[k] = [] }
 
       def reset!
@@ -143,15 +176,52 @@ module Agentkit
         install_default_detectors! if Detectors.registry.empty?
 
         new_findings = Detectors.run_all(window: window)
-        new_findings.each do |f|
-          next if findings.any? { |existing| existing.detector == f.detector && existing.subject == f.subject && existing.status == "open" }
+        open_now = findings.select { |f| f.status == "open" }
 
-          findings << f
+        new_findings.each do |f|
+          # The same detector firing on the same subject week after week is one
+          # finding still open, not a new one every Monday.
+          #
+          # Compared as strings: a detector arrives from the registry as a
+          # Symbol and comes back from the database as a String, so the raw ==
+          # never matched and every cycle inserted a duplicate.
+          next if open_now.any? do |existing|
+            existing.detector.to_s == f.detector.to_s && existing.subject.to_s == f.subject.to_s
+          end
+
+          record_finding(f)
           Telemetry.emit("factory.finding",
                          dims: { detector: f.detector, severity: f.severity, level: f.suggested_level },
                          measures: { count: 1 })
         end
         new_findings
+      end
+
+      def record_finding(finding)
+        return (@findings ||= []) << finding unless persisted?
+
+        Agentkit::FindingRecord.create!(
+          detector: finding.detector.to_s, severity: finding.severity.to_s,
+          subject: finding.subject, summary: finding.summary,
+          evidence: finding.evidence || {},
+          suggested_level: finding.suggested_level.to_s, status: finding.status || "open"
+        )
+      end
+
+      # What the owner does with one. A finding is resolved by a person, and
+      # the record of who decided what is the point of keeping them.
+      def resolve_finding!(id, status)
+        raise ConfigurationError, "Unknown finding status: #{status}" unless
+          %w[open accepted dismissed].include?(status.to_s)
+
+        if persisted?
+          Agentkit::FindingRecord.where(id: id).update_all(status: status.to_s, updated_at: Time.now)
+        else
+          found = (@findings ||= []).find { |f| f.id.to_s == id.to_s }
+          found&.status = status.to_s
+        end
+
+        Telemetry.emit("factory.finding_resolved", dims: { status: status.to_s }, measures: { count: 1 })
       end
 
       # ─── Experiment ──────────────────────────────────────────────────────────
@@ -172,7 +242,19 @@ module Agentkit
           traffic_pct: traffic_pct, bucket_by: bucket_by.to_s, status: "running",
           finding_id: finding&.id, started_at: Time.now, results: {}
         )
-        experiments << exp
+
+        if persisted?
+          row = Agentkit::ExperimentRecord.create!(
+            name: exp.name, level: exp.level, target: exp.target,
+            control: exp.control || {}, variant: exp.variant || {},
+            traffic_pct: exp.traffic_pct, bucket_by: exp.bucket_by,
+            status: exp.status, finding_id: finding&.id, started_at: exp.started_at,
+            results: {}
+          )
+          exp.id = row.id.to_s
+        else
+          (@experiments ||= []) << exp
+        end
         apply_variant(exp)
         finding&.status = "experimenting"
         Telemetry.emit("factory.experiment.started",

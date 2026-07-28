@@ -374,3 +374,88 @@ RSpec.describe "Memory.count across backends", :integration do
     expect(Agentkit::Memory.count).to eq(5)
   end
 end
+
+# The improvement cycle only works if what it finds outlives the process that
+# found it. The diagnose cron runs in a worker and the console renders in a web
+# process; a finding kept in a class-level array is invisible to the person who
+# has to approve it, and gone by the next deploy.
+#
+# agentkit_findings and agentkit_experiments existed as models and tables with
+# nothing writing to them.
+RSpec.describe "Factory persistence", :integration do
+  before do
+    Agentkit::FindingRecord.delete_all
+    Agentkit::ExperimentRecord.delete_all
+  end
+
+  def a_finding(detector: :cost_spike, subject: "BillingAgent")
+    Agentkit::Factory::Finding.new(
+      id: SecureRandom.uuid, detector: detector, severity: "high", subject: subject,
+      summary: "El costo por sugerencia aceptada se triplicó", evidence: { "ratio" => 3.1 },
+      suggested_level: "n1", status: "open", created_at: Time.now
+    )
+  end
+
+  it "escribe los hallazgos en la base, no en memoria del proceso" do
+    Agentkit::Factory.record_finding(a_finding)
+
+    expect(Agentkit::FindingRecord.count).to eq(1)
+    expect(Agentkit::Factory.findings.map(&:subject)).to eq(["BillingAgent"])
+  end
+
+  # The proof: a second "process" with no in-memory state still sees it.
+  it "los ve un proceso que no fue el que los encontró" do
+    Agentkit::Factory.record_finding(a_finding)
+    Agentkit::Factory.instance_variable_set(:@findings, nil)
+
+    expect(Agentkit::Factory.findings.map(&:subject)).to eq(["BillingAgent"])
+  end
+
+  it "guarda la evidencia, que es lo que sostiene la decisión" do
+    Agentkit::Factory.record_finding(a_finding)
+
+    expect(Agentkit::Factory.findings.first.evidence).to eq({ "ratio" => 3.1 })
+  end
+
+  describe "resolverlos" do
+    it "registra que una persona decidió" do
+      Agentkit::Factory.record_finding(a_finding)
+      id = Agentkit::FindingRecord.first.id
+
+      Agentkit::Factory.resolve_finding!(id, "accepted")
+
+      expect(Agentkit::FindingRecord.find(id).status).to eq("accepted")
+      expect(Agentkit::Factory.findings.first.status).to eq("accepted")
+    end
+
+    it "rechaza un estado que no existe en vez de guardarlo" do
+      Agentkit::Factory.record_finding(a_finding)
+      id = Agentkit::FindingRecord.first.id
+
+      expect { Agentkit::Factory.resolve_finding!(id, "aprobadisimo") }
+        .to raise_error(Agentkit::ConfigurationError)
+    end
+  end
+
+  # The same detector firing every Monday on the same subject is one finding
+  # still open, not a new one each week.
+  it "no duplica un hallazgo que sigue abierto" do
+    Agentkit::Factory.record_finding(a_finding)
+    allow(Agentkit::Factory::Detectors).to receive(:run_all).and_return([a_finding])
+
+    Agentkit::Factory.diagnose!
+
+    expect(Agentkit::FindingRecord.count).to eq(1)
+  end
+
+  it "vuelve a abrirlo si el anterior ya se resolvió" do
+    Agentkit::Factory.record_finding(a_finding)
+    Agentkit::Factory.resolve_finding!(Agentkit::FindingRecord.first.id, "dismissed")
+    allow(Agentkit::Factory::Detectors).to receive(:run_all).and_return([a_finding])
+
+    Agentkit::Factory.diagnose!
+
+    expect(Agentkit::FindingRecord.count).to eq(2)
+    expect(Agentkit::FindingRecord.where(status: "open").count).to eq(1)
+  end
+end
