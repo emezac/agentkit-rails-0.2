@@ -77,11 +77,22 @@ module Agentkit
           when :created
             next unless suggestion.pending?
 
+            # Turbo's channel renderer otherwise falls back to the host
+            # ApplicationController. In a mounted engine that renderer does
+            # not know approve_suggestion_path/reject_suggestion_path, so every
+            # HITL creation logs an observer failure. Render through the
+            # engine controller first, preserving the /agentkit mount prefix,
+            # and broadcast the finished HTML.
+            html = Agentkit::ApplicationController.render(
+              partial: "agentkit/suggestions/suggestion",
+              locals: {
+                suggestion: suggestion,
+                codes: Agentkit.config.hitl.rejection_codes
+              }
+            )
             ::Turbo::StreamsChannel.broadcast_prepend_to(
               stream, target: "agentkit-suggestions",
-              partial: "agentkit/suggestions/suggestion",
-              locals: { suggestion: suggestion,
-                        codes: Agentkit.config.hitl.rejection_codes }
+              html: html
             )
           when :resolved
             ::Turbo::StreamsChannel.broadcast_remove_to(stream, target: "suggestion_#{suggestion.id}")

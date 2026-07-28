@@ -4,6 +4,8 @@ module Agentkit
   class SuggestionRecord < ApplicationRecord
     self.table_name = "agentkit_suggestions"
 
+    include Agentkit::TenantAssociations
+
     belongs_to :suggestable, polymorphic: true, optional: true
     has_many :decisions, class_name: "Agentkit::DecisionRecord",
                          foreign_key: :suggestion_id, dependent: :destroy, inverse_of: :suggestion

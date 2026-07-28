@@ -6,6 +6,8 @@ module Agentkit
   class EventRecord < ApplicationRecord
     self.table_name = "agentkit_events"
 
+    include Agentkit::TenantAssociations
+
     scope :named,  ->(n) { where(name: n.to_s) }
     scope :since,  ->(t) { where(occurred_at: t..) }
     scope :expired, -> { where(occurred_at: ...Agentkit.config.telemetry.retention_days.days.ago) }

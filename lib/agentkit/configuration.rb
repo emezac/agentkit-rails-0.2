@@ -247,6 +247,14 @@ module Agentkit
   class Configuration < Settings
     setting :domain_name,    default: "AgentKit App"
     setting :primary_entity, default: :entity
+
+    # The host's own models, for the user_id / account_id columns the kernel
+    # tables already carry. 0.1 declared these associations; 0.2 dropped them,
+    # which turned `create!(user: someone)` into an UnknownAttributeError in
+    # every app that upgraded. Resolved lazily by name, so an app without a
+    # User or Account model is unaffected until it asks for one.
+    setting :user_class,    default: "User"
+    setting :account_class, default: "Account"
     setting :multi_tenant,   default: false
     setting :tenant_resolver                          # ->(context) { tenant }
     setting :features,       default: -> { [] }

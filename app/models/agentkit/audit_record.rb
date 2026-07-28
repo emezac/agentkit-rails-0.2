@@ -7,6 +7,8 @@ module Agentkit
   class AuditRecord < ApplicationRecord
     self.table_name = "agentkit_audit_logs"
 
+    include Agentkit::TenantAssociations
+
     belongs_to :subject, polymorphic: true, optional: true
 
     scope :for_agent, ->(name) { where(agent_name: name) }

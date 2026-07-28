@@ -6,6 +6,8 @@ module Agentkit
   class MemoryRecord < ApplicationRecord
     self.table_name = "agentkit_memories"
 
+    include Agentkit::TenantAssociations
+
     has_neighbors :embedding if respond_to?(:has_neighbors)
 
     belongs_to :superseded_by, class_name: "Agentkit::MemoryRecord", optional: true

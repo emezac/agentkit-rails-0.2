@@ -4,6 +4,8 @@ module Agentkit
   class RunRecord < ApplicationRecord
     self.table_name = "agentkit_runs"
 
+    include Agentkit::TenantAssociations
+
     has_many :steps, class_name: "Agentkit::RunStepRecord",
                      foreign_key: :run_id, dependent: :delete_all, inverse_of: :run
 
