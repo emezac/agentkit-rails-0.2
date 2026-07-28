@@ -18,6 +18,13 @@ module Agentkit
     scope :for_run,   ->(id) { where(run_id: id) }
     scope :failed,    -> { where(status: %w[failed error]) }
 
+    # occurred_at is NOT NULL and has no database default, because Audit.record
+    # always supplies it. Writing the model directly is legitimate — a host
+    # recording its own domain event — and used to fail with a NotNullViolation
+    # that names a column the caller never heard of. When a row does not say
+    # when it happened, now is the only honest answer.
+    before_validation { self.occurred_at ||= Time.current }
+
     # Append-only by contract. Retention is a deliberate, separate operation.
     before_update  { raise ActiveRecord::ReadOnlyRecord, "audit rows are immutable" }
     before_destroy { raise ActiveRecord::ReadOnlyRecord, "use Audit.prune! for retention" }
