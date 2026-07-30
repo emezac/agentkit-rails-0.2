@@ -130,7 +130,9 @@ module Agentkit
             max_tokens:  max_tokens || profile.max_tokens,
             timeout:     timeout || profile.timeout || cfg.timeout,
             tools:       tools,
-            stream:      stream
+            stream:      stream,
+            api_base:    profile.api_base,
+            api_key:     profile.api_key
           )
           record_success(profile.provider)
         rescue StandardError => e

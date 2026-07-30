@@ -18,7 +18,7 @@ module Agentkit
 
       class Base
         def chat(prompt:, model:, system: nil, temperature: nil, max_tokens: nil,
-                 timeout: nil, tools: nil, stream: nil)
+                 timeout: nil, tools: nil, stream: nil, api_base: nil, api_key: nil)
           raise NotImplementedError
         end
 
@@ -30,10 +30,35 @@ module Agentkit
         # retryable from permanent.
         def classify(error)
           msg = error.message.to_s.downcase
+
+          # A spent daily quota is not transient in any useful sense.
+          #
+          # It carries the words "rate limit", so it used to classify as
+          # retryable: the caller then retried the same exhausted provider three
+          # times with backoff, every attempt failing, and the fallback chain
+          # never advanced — fallback only fires on PermanentError. An app with a
+          # perfectly good second provider configured stayed dead until midnight.
+          #
+          # Waiting half a second does not refill a daily allowance. Treating it
+          # as permanent is what lets the chain move to another provider, which
+          # is the only thing that can actually serve the request.
+          return PermanentError if msg.match?(EXHAUSTED_QUOTA)
           return TransientError if msg.match?(/timeout|timed out|rate.?limit|429|50\d|overload|connection|temporarily/)
 
           PermanentError
         end
+
+        # Per-day/per-month allowances, and the "you have no money" family. Both
+        # mean: this provider will not serve us again soon, try another one.
+        EXHAUSTED_QUOTA = /
+          per.?(day|month)            # free-models-per-day, requests-per-month
+          | daily\s+(limit|quota)
+          | quota\s+exceeded
+          | insufficient_quota
+          | no\s+balance
+          | insufficient\s+(funds|credit|balance)
+          | billing\s+hard\s+limit
+        /x
       end
 
       # ─── Fake ────────────────────────────────────────────────────────────────
@@ -45,7 +70,11 @@ module Agentkit
       # signature; the suite stayed green while the real gem's API had changed,
       # which is how the broken `chat` shipped to five projects.
       class Fake < Base
-        Call = Struct.new(:prompt, :system, :model, :temperature, :tools, keyword_init: true)
+        # api_base y api_key se registran para poder probar que un perfil llega
+        # al adaptador con sus propias credenciales, que es lo que permite que
+        # dos gateways compatibles convivan.
+        Call = Struct.new(:prompt, :system, :model, :temperature, :tools,
+                          :api_base, :api_key, keyword_init: true)
 
         class << self
           def script      = @script ||= []
@@ -60,8 +89,12 @@ module Agentkit
           end
 
           # Make the next `times` calls matching `model`/`contains` fail.
-          def fail_on(times: 1, model: nil, contains: nil, error: TransientError)
-            failures[[model, contains]] = { remaining: times, error: error }
+          # `message` permite reproducir el texto real de un proveedor, que es lo
+          # que decide si el error se clasifica transitorio o permanente. Sin
+          # eso sólo se puede probar el camino de fallback, nunca que un mensaje
+          # concreto —"free-models-per-day"— lo dispare.
+          def fail_on(times: 1, model: nil, contains: nil, error: TransientError, message: nil)
+            failures[[model, contains]] = { remaining: times, error: error, message: message }
             self
           end
 
@@ -78,8 +111,9 @@ module Agentkit
         end
 
         def chat(prompt:, model:, system: nil, temperature: nil, max_tokens: nil,
-                 timeout: nil, tools: nil, stream: nil)
-          self.class.calls << Call.new(prompt: prompt, system: system, model: model,
+                 timeout: nil, tools: nil, stream: nil, api_base: nil, api_key: nil)
+          self.class.calls << Call.new(api_base: api_base, api_key: api_key,
+                                       prompt: prompt, system: system, model: model,
                                        temperature: temperature, tools: tools)
           trip_failure!(model, prompt)
 
@@ -121,7 +155,7 @@ module Agentkit
 
           spec[:remaining] -= 1
           self.class.failures.delete(key) if spec[:remaining] <= 0
-          raise spec[:error].new("fake failure", model: model)
+          raise spec[:error].new(spec[:message] || "fake failure", model: model)
         end
 
         def token_estimate(text) = (text.to_s.length / 4.0).ceil
@@ -141,10 +175,10 @@ module Agentkit
       # exist — every project had to patch this same method.
       class RubyLLMAdapter < Base
         def chat(prompt:, model:, system: nil, temperature: nil, max_tokens: nil,
-                 timeout: nil, tools: nil, stream: nil)
+                 timeout: nil, tools: nil, stream: nil, api_base: nil, api_key: nil)
           require_ruby_llm!
 
-          session = ::RubyLLM.chat(model: model)
+          session = sesion_para(model, api_base: api_base, api_key: api_key)
           session = session.with_instructions(system) if system && !system.empty?
           session = session.with_temperature(temperature) if temperature && session.respond_to?(:with_temperature)
           session = session.with_tools(*resolve_tools(tools)) if tools && !tools.empty? && session.respond_to?(:with_tools)
@@ -172,6 +206,41 @@ module Agentkit
         end
 
         private
+
+        # Un contexto por credencial, memoizado.
+        #
+        # RubyLLM::Context existe justamente para esto: sostiene configuración
+        # por llamada y su propia conexión, sin tocar la global. Es lo que
+        # permite que un perfil apunte a OpenRouter y el siguiente de la cadena a
+        # otro proveedor, que es la única forma de sobrevivir a una cuota
+        # agotada.
+        def sesion_para(model, api_base:, api_key:)
+          return ::RubyLLM.chat(model: model) if api_base.nil? && api_key.nil?
+
+          contextos[[api_base, api_key]] ||= ::RubyLLM.context do |c|
+            c.openai_api_base        = api_base if api_base && c.respond_to?(:openai_api_base=)
+            c.openai_api_key         = api_key  if api_key  && c.respond_to?(:openai_api_key=)
+            c.openai_use_system_role = true if c.respond_to?(:openai_use_system_role=)
+          end
+
+          registrar_modelo(model)
+          contextos[[api_base, api_key]].chat(model: model)
+        end
+
+        def contextos = @contextos ||= {}
+
+        # Un gateway compatible expone modelos que ruby_llm no conoce; sin esto
+        # los rechaza antes de intentar la llamada.
+        def registrar_modelo(model_id)
+          return if model_id.nil? || !::RubyLLM.respond_to?(:models)
+
+          models = ::RubyLLM.models
+          return if models.any? { |m| m.id == model_id }
+
+          models.all << ::RubyLLM::Model::Info.new(id: model_id, name: model_id, provider: "openai")
+        rescue StandardError => e
+          Agentkit.logger&.debug("[AgentKit::LLM] model registration skipped: #{e.message}")
+        end
 
         def require_ruby_llm!
           return if defined?(::RubyLLM)

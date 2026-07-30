@@ -16,6 +16,15 @@ module Agentkit
     setting :fallback
     setting :price_in     # USD per 1M input tokens  (nil => look up in Pricing)
     setting :price_out    # USD per 1M output tokens
+
+    # Per-profile credentials, so two OpenAI-compatible gateways can coexist.
+    #
+    # Without these the adapter called `RubyLLM.configure` once, globally, and
+    # memoised it: configuring a second gateway clobbered the first. A fallback
+    # chain that crossed providers was therefore impossible — which is exactly
+    # what you need when one provider's quota runs out.
+    setting :api_base
+    setting :api_key
   end
 
   class LLMSettings < Settings
