@@ -37,7 +37,15 @@ module Agentkit
       def number(name, required: false, **opts)  = add(name, :number,  required, opts)
       def integer(name, required: false, **opts) = add(name, :integer, required, opts)
       def boolean(name, required: false, **opts) = add(name, :boolean, required, opts)
-      def array(name, required: false, **opts)   = add(name, :array,   required, opts)
+
+      # Without a block this is an array of the given scalar type (`in:` still
+      # applies per-item via `opts`); with one, an array of objects shaped by
+      # it — same block-means-nested-schema convention as `object` below.
+      # `validate_field`/`cast`/`json_type` already branch on `field.schema`
+      # for `:array` either way; only this constructor was never wired to set it.
+      def array(name, required: false, **opts, &block)
+        add(name, :array, required, opts, block ? Schema.define(&block) : nil)
+      end
 
       def object(name, required: false, **opts, &block)
         add(name, :object, required, opts, block ? Schema.define(&block) : nil)
