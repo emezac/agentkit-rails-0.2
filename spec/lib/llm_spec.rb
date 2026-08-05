@@ -61,6 +61,47 @@ RSpec.describe Agentkit::LLM do
       expect { described_class.complete("x", schema: schema) }
         .to raise_error(Agentkit::SchemaViolation, /failed schema/)
     end
+
+    # `object` accepted a block from the start; `array` did not, silently —
+    # calling it with one just dropped the block and left the item schema nil.
+    # A caller reaching for "array of objects" (the shape a list of steps or
+    # moves naturally takes) had no way to say so.
+    describe "array of objects" do
+      let(:schema_anidado) do
+        Agentkit::LLM::Schema.define do
+          string :titulo, required: true
+          array :pasos, required: true do
+            string :accion, required: true
+            string :motivo
+          end
+        end
+      end
+
+      it "parses and coerces each item against the nested schema" do
+        fake_llm.respond_with(
+          '{"titulo": "plan", "pasos": [{"accion": "llamar", "motivo": "urgente"}, {"accion": "escribir"}]}'
+        )
+
+        response = described_class.complete("x", schema: schema_anidado)
+
+        expect(response.parsed[:pasos].size).to eq(2)
+        expect(response.parsed[:pasos].first).to eq(accion: "llamar", motivo: "urgente")
+        expect(response.parsed[:pasos].last[:accion]).to eq("escribir")
+      end
+
+      it "validates each item and re-asks pointing at which one failed" do
+        fake_llm.respond_with(
+          '{"titulo": "plan", "pasos": [{"accion": "ok"}, {"motivo": "sin accion"}]}',
+          '{"titulo": "plan", "pasos": [{"accion": "ok"}, {"accion": "arreglado"}]}'
+        )
+
+        response = described_class.complete("x", schema: schema_anidado)
+
+        expect(llm_calls).to eq(2)
+        expect(fake_llm.calls.last.prompt).to include("pasos[1]", "accion")
+        expect(response.parsed[:pasos].last[:accion]).to eq("arreglado")
+      end
+    end
   end
 
   describe "retries and fallback" do
