@@ -20,6 +20,7 @@ RSpec.describe "Engine boot", :integration do
     expect(Rake::Task.task_defined?("agentkit:doctor")).to be(true)
     expect(Rake::Task.task_defined?("agentkit:estimate_embeddings")).to be(true)
     expect(Rake::Task.task_defined?("agentkit:factory_report")).to be(true)
+    expect(Rake::Task.task_defined?("agentkit:install:migrations")).to be(true)
   end
 
   it "mounts the console and A2A routes" do
@@ -43,6 +44,13 @@ RSpec.describe "Engine boot", :integration do
   end
 
   describe "Zeitwerk loading" do
+    it "registers the engine model path before Rails freezes autoload paths" do
+      engine_models = Agentkit::Engine.root.join("app/models").to_s
+
+      expect(ActiveSupport::Dependencies.autoload_paths.map(&:to_s)).to include(engine_models)
+      expect(Agentkit::MemoryRecord).to be < ActiveRecord::Base
+    end
+
     # A file under app/capabilities that only calls `Capability.register` at the
     # top level is never loaded, and fails eager-load in production. The
     # capabilities must be registered through the `to_prepare` hook.
