@@ -13,6 +13,11 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
+El instalador registra el engine durante `config/application.rb`; hacerlo por
+primera vez desde un initializer es demasiado tarde para que Rails incorpore
+sus modelos y tareas. El generador puede ejecutarse de nuevo de forma segura si
+una instalación anterior no encuentra `agentkit:install:migrations`.
+
 ---
 
 ## Qué cambia respecto a 0.1

@@ -26,6 +26,34 @@ module Agentkit
         Time.now.utc.strftime("%Y%m%d%H%M%S")
       end
 
+      # A Rails::Engine loaded from config/initializers is already too late:
+      # Rails has collected its railties, so the constant exists but its model
+      # paths and `agentkit:install:migrations` task never get registered.
+      # Install the engine at application boot before creating the initializer
+      # or invoking the migration task in a fresh Rails process.
+      def install_engine_boot
+        application = "config/application.rb"
+        source = File.read(destination_root_path(application))
+        core_require = /^require ["']agentkit["']\s*$/
+        engine_require = /^require ["']agentkit\/engine["']\s*$/
+
+        if source.match?(core_require) && source.match?(engine_require)
+          say_status :identical, application
+        elsif source.match?(core_require)
+          inject_into_file application, after: core_require do
+            "\nrequire \"agentkit/engine\""
+          end
+        elsif source.match?(engine_require)
+          inject_into_file application, before: engine_require do
+            "require \"agentkit\"\n"
+          end
+        else
+          inject_into_file application, after: rails_boot_anchor(source) do
+            "\nrequire \"agentkit\"\nrequire \"agentkit/engine\"\n"
+          end
+        end
+      end
+
       def copy_initializer
         template "initializer.rb", "config/initializers/agentkit.rb"
       end
@@ -65,6 +93,23 @@ module Agentkit
           Factory starts in :observe mode — it only accumulates statistics.
           Raise it to :suggest once you have ~60 human decisions per agent.
         MSG
+      end
+
+      private
+
+      def destination_root_path(relative_path)
+        File.expand_path(relative_path, destination_root)
+      end
+
+      def rails_boot_anchor(source)
+        rails_require = source.lines.reverse.find do |line|
+          line.match?(%r{\Arequire ["'](?:rails(?:/all|/application)?|[^"']+/railtie)["']\s*\z})
+        end
+
+        return rails_require if rails_require
+
+        raise Thor::Error,
+              "Could not find the Rails requires in config/application.rb; load agentkit/engine there manually."
       end
     end
   end
