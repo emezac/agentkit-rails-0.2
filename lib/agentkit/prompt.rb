@@ -22,7 +22,8 @@ module Agentkit
       end
     end
 
-    Canary = Struct.new(:id, :version, :percent, :bucket, :exclude_if, :started_at, keyword_init: true)
+    Canary = Struct.new(:id, :version, :percent, :bucket, :exclude_if, :started_at,
+                        :experiment_id, keyword_init: true)
 
     class << self
       def registry  = @registry ||= Hash.new { |h, k| h[k] = {} }
@@ -40,12 +41,13 @@ module Agentkit
         registry[id][version]
       end
 
-      def canary(id, version:, percent:, bucket: nil, exclude_if: nil)
+      def canary(id, version:, percent:, bucket: nil, exclude_if: nil, experiment_id: nil)
         id = id.to_sym
         raise ConfigurationError, "Prompt #{id} v#{version} is not defined" unless registry[id][version]
 
         canaries[id] = Canary.new(id: id, version: version, percent: percent.to_f,
-                                  bucket: bucket, exclude_if: exclude_if, started_at: Time.now)
+                                  bucket: bucket, exclude_if: exclude_if, started_at: Time.now,
+                                  experiment_id: experiment_id)
       end
 
       def stop_canary(id) = canaries.delete(id.to_sym)
@@ -83,8 +85,8 @@ module Agentkit
         version = assigned_version(id, ctx)
         text    = versions.fetch(version).render(ctx)
 
-        if (canary = canaries[id]) && canary.exclude_if&.call(text)
-          version = actives[id]
+        if (canary = effective_canary(id)) && canary.exclude_if&.call(text)
+          version = effective_active_version(id)
           text    = versions.fetch(version).render(ctx)
         end
         [text, version]
@@ -92,7 +94,23 @@ module Agentkit
 
       def defined?(id) = registry.key?(id.to_sym) && !registry[id.to_sym].empty?
       def versions(id) = registry[id.to_sym].keys.sort
-      def active_version(id) = actives[id.to_sym]
+      def active_version(id) = effective_active_version(id.to_sym)
+
+      # Correlates the prompt assignment with the factory experiment that
+      # produced it. Callers record both control and variant decisions under
+      # one experiment id, avoiding the old global "version 1 vs version 2"
+      # comparison that mixed unrelated prompts and tenants.
+      def experiment_assignment(id, version:, ctx: nil)
+        id = id.to_sym
+        canary = effective_canary(id)
+        return {} if canary.nil? || canary.experiment_id.nil?
+
+        assigned = assigned_version(id, ctx)
+        return {} unless assigned.to_s == version.to_s
+
+        { experiment_id: canary.experiment_id,
+          experiment_arm: assigned.to_s == canary.version.to_s ? "variant" : "control" }
+      end
 
       def reset!
         @registry = nil
@@ -106,15 +124,72 @@ module Agentkit
       # Deterministic bucketing: the same tenant always lands in the same arm,
       # so a canary cannot show a user two different behaviours in one session.
       def assigned_version(id, ctx)
-        active = actives[id] || registry[id].keys.max
-        canary = canaries[id]
+        active = effective_active_version(id) || registry[id].keys.max
+        canary = effective_canary(id)
         return active if canary.nil? || canary.percent <= 0
 
-        key = canary.bucket&.call(ctx) || ctx&.tenant_key || ctx&.run_id
+        key =
+          if canary.bucket.respond_to?(:call)
+            canary.bucket.call(ctx)
+          else
+            bucket_value(ctx, canary.bucket)
+          end
+        key ||= ctx&.tenant_key || ctx&.run_id
         return active if key.nil?
 
         bucket = Digest::MD5.hexdigest("#{id}:#{key}")[0, 8].to_i(16) % 100
         bucket < canary.percent ? canary.version : active
+      end
+
+      # Prompt rollout state must survive process boundaries. A diagnosis job
+      # normally starts the experiment in a worker, while prompt rendering
+      # happens in web processes that never saw the in-memory `canary` call.
+      # The experiment row is therefore the source of truth; the local registry
+      # remains the fast path for pure-Ruby/non-Rails hosts.
+      def effective_canary(id)
+        canaries[id] || persisted_canary(id)
+      end
+
+      def effective_active_version(id)
+        persisted_adoption(id)&.variant || actives[id]
+      end
+
+      def persisted_canary(id)
+        row = persisted_experiment(id, status: "running")
+        return nil unless row
+
+        Canary.new(
+          id: id, version: row.variant, percent: row.traffic_pct,
+          bucket: row.bucket_by&.to_sym, exclude_if: nil,
+          started_at: row.started_at, experiment_id: row.id.to_s
+        )
+      end
+
+      def persisted_adoption(id)
+        persisted_experiment(id, status: "adopted")
+      end
+
+      def persisted_experiment(id, status:)
+        return nil unless Agentkit.const_defined?(:ExperimentRecord, false) ||
+                          Agentkit.autoload?(:ExperimentRecord)
+
+        record = Agentkit.const_get(:ExperimentRecord)
+        return nil unless record.table_exists?
+
+        record.where(level: "n2", target: "prompt:#{id}", status: status)
+              .order(started_at: :desc, id: :desc).first
+      rescue StandardError => e
+        Agentkit.logger&.warn("[AgentKit::Prompt] persisted rollout unavailable: #{e.class}: #{e.message}")
+        nil
+      end
+
+      def bucket_value(ctx, bucket_by)
+        case bucket_by&.to_sym
+        when :account then ctx&.account.respond_to?(:id) ? ctx.account.id : ctx&.tenant_key
+        when :user    then ctx&.user.respond_to?(:id) ? ctx.user.id : ctx&.user
+        when :run     then ctx&.run_id
+        else ctx&.tenant_key
+        end
       end
     end
   end

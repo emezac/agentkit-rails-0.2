@@ -414,7 +414,7 @@ RSpec.describe "Factory persistence", :integration do
   it "guarda la evidencia, que es lo que sostiene la decisión" do
     Agentkit::Factory.record_finding(a_finding)
 
-    expect(Agentkit::Factory.findings.first.evidence).to eq({ "ratio" => 3.1 })
+    expect(Agentkit::Factory.findings.first.evidence).to eq({ ratio: 3.1 })
   end
 
   describe "resolverlos" do
@@ -449,6 +449,7 @@ RSpec.describe "Factory persistence", :integration do
   end
 
   it "vuelve a abrirlo si el anterior ya se resolvió" do
+    Agentkit.config.factory.finding_cooldown = 0
     Agentkit::Factory.record_finding(a_finding)
     Agentkit::Factory.resolve_finding!(Agentkit::FindingRecord.first.id, "dismissed")
     allow(Agentkit::Factory::Detectors).to receive(:run_all).and_return([a_finding])

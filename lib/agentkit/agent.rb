@@ -185,7 +185,8 @@ module Agentkit
         model: model || default_model, system: prompt_text || build_context,
         schema: schema || default_schema, tools: tools || default_tools,
         temperature: temperature, max_tokens: max_tokens, stream: stream,
-        agent: self.class.name, prompt_id: self.class.prompt_id, prompt_version: version
+        agent: self.class.name, prompt_id: self.class.prompt_id, prompt_version: version,
+        experiment_id: @prompt_experiment_id, experiment_arm: @prompt_experiment_arm
       )
       @last_usage = response.usage
       Memory.mark_used(@last_memories, response.content, agent: self.class.name) if @last_memories&.any?
@@ -232,6 +233,7 @@ module Agentkit
         payload: payload, suggestable: suggestable, source_agent: self.class.name,
         idempotency_key: idempotency_key, prompt_id: self.class.prompt_id,
         prompt_version: @prompt_version, model: @last_usage&.model,
+        experiment_id: @prompt_experiment_id, experiment_arm: @prompt_experiment_arm,
         context: effective_context
       )
     end
@@ -292,11 +294,17 @@ module Agentkit
     end
 
     def resolve_prompt(system)
-      return [system, nil] if system
-      return [nil, nil] unless self.class.prompt_id && Prompt.defined?(self.class.prompt_id)
+      if system || !(self.class.prompt_id && Prompt.defined?(self.class.prompt_id))
+        @prompt_experiment_id = @prompt_experiment_arm = nil
+        return [system, nil]
+      end
 
       text, version = Prompt.render(self.class.prompt_id, agent_context)
+      assignment = Prompt.experiment_assignment(self.class.prompt_id,
+                                                version: version, ctx: agent_context)
       @prompt_version = version
+      @prompt_experiment_id = assignment[:experiment_id]
+      @prompt_experiment_arm = assignment[:experiment_arm]
       [text, version]
     end
 

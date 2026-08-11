@@ -227,6 +227,9 @@ module Agentkit
     # :observe accumulates statistics only — safe default for day 0.
     setting :mode, default: :observe, in: %i[observe suggest auto_n1 auto_n1_n2]
     setting :cycle, default: -> { { diagnose: "0 6 * * 1", report: :weekly } }
+    setting :finding_cooldown, default: 7 * 86_400
+    setting :resolve_after_clean_cycles, default: 2
+    setting :baseline_window, default: 28 * 86_400
     setting :golden_set, default: lambda {
       { capture: %i[rejected edited], sample: 0.2, max_per_agent: 200, freeze_after_review: true }
     }

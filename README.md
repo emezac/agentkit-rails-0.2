@@ -180,10 +180,23 @@ Escalera de intervención por riesgo:
 | N2 | prompts versionados con canary | sí | sí |
 | N3 | políticas HITL y gates | sí | no |
 | N4 | composición (context providers, pasos) | sí | no |
-| N5 | código | — | **solo emite un PR, nunca escribe en disco** |
+| N5 | código | — | **solo emite un patch revisable, nunca escribe en disco** |
 
-Nada se promueve sin `min_samples`, efecto mínimo, significancia estadística y
-no-regresión del golden set.
+Hallazgos, experimentos, golden cases y corridas de diagnóstico persisten en
+PostgreSQL. Los hallazgos activos se deduplican por fingerprint y conservan
+recurrencia, primera/última observación y resolución auditable.
+
+N1–N4 requieren un adaptador registrado con `apply/adopt/rollback`; no existe
+un escritor genérico de configuración. N2 compara brazos concurrentes ligados a
+`experiment_id`; los cambios globales N1/N3/N4 comparan una ventana base
+capturada antes de aplicar contra la cohorte temporal posterior. El motor impide
+experimentos simultáneos con cohortes solapadas.
+
+Nada se promueve sin `min_samples`, efecto mínimo, significancia estadística,
+duración mínima, no-regresión del golden set y datos de costo. Si falta un
+runner, una cohorte o costo, falla cerrado como inconcluso. Los guardrails de
+aceptación y costo viven en `Agentkit::FactoryGuardrailsJob` para correr con más
+frecuencia que el diagnóstico semanal.
 
 ```bash
 rails agentkit:factory_report          # informe del ciclo en Markdown

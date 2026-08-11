@@ -19,7 +19,7 @@ module Agentkit
       :id, :suggestion_type, :title, :description, :priority, :status, :source_agent,
       :payload, :suggestable, :user_id, :account_id, :tenant_key, :idempotency_key,
       :prompt_id, :prompt_version, :model, :created_at, :resolved_at, :expires_at,
-      :run_id, :gate_key, :metadata,
+      :run_id, :gate_key, :experiment_id, :experiment_arm, :metadata,
       keyword_init: true
     ) do
       def pending?  = status.to_s == "pending"
@@ -104,9 +104,17 @@ module Agentkit
 
       def suggest!(type:, title:, description: nil, source_agent: nil, priority: "medium",
                    payload: {}, suggestable: nil, idempotency_key: nil, prompt_id: nil,
-                   prompt_version: nil, model: nil, gate_key: nil, context: nil, metadata: {})
+                   prompt_version: nil, model: nil, gate_key: nil, context: nil,
+                   experiment_id: nil, experiment_arm: nil, metadata: {})
         ctx    = context || Context.resolve
         config = ctx.config.hitl
+        assignment = if experiment_id
+                       { experiment_id: experiment_id, experiment_arm: experiment_arm }
+                     elsif prompt_id && prompt_version
+                       Prompt.experiment_assignment(prompt_id, version: prompt_version, ctx: ctx)
+                     else
+                       {}
+                     end
 
         if idempotency_key && (existing = find_by_idempotency(idempotency_key, config))
           Telemetry.emit("hitl.deduped", dims: { type: type.to_s, agent: source_agent })
@@ -120,6 +128,7 @@ module Agentkit
           user_id: id_of(ctx.user), account_id: id_of(ctx.account), tenant_key: ctx.tenant_key,
           idempotency_key: idempotency_key, prompt_id: prompt_id, prompt_version: prompt_version,
           model: model, run_id: ctx.run_id, gate_key: gate_key, created_at: Time.now,
+          experiment_id: assignment[:experiment_id], experiment_arm: assignment[:experiment_arm],
           metadata: metadata || {}
         )
         # The store assigns the id — the database in production, the sequence
@@ -128,7 +137,9 @@ module Agentkit
 
         Telemetry.emit("hitl.propose",
                        dims: { agent: source_agent, type: type.to_s, priority: priority.to_s,
-                               level: config.level, prompt_id: prompt_id, prompt_version: prompt_version },
+                               level: config.level, prompt_id: prompt_id, prompt_version: prompt_version,
+                               experiment_id: assignment[:experiment_id],
+                               experiment_arm: assignment[:experiment_arm] },
                        measures: { count: 1 })
 
         schedule_auto_apply(suggestion, config) if config.level == :advisory

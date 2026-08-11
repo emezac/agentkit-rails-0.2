@@ -183,8 +183,8 @@ RSpec.describe Agentkit::Factory do
       Agentkit.config.factory.promotion[:min_samples] = 5
       exp = described_class.experiment!(nil, target: "prompt:sales", control: 1, variant: 2, level: :n2)
 
-      6.times { record_decision(version: 1, decision: :accept) }
-      6.times { record_decision(version: 2, decision: :reject) }
+      6.times { record_decision(exp: exp, arm: "control", version: 1, decision: :accept) }
+      6.times { record_decision(exp: exp, arm: "variant", version: 2, decision: :reject) }
 
       verdict = described_class.evaluate(exp)
 
@@ -192,9 +192,10 @@ RSpec.describe Agentkit::Factory do
       expect(exp.status).to eq("rolled_back")
     end
 
-    def record_decision(version:, decision:)
+    def record_decision(exp:, arm:, version:, decision:)
       s = Agentkit::HITL.suggest!(type: "t", title: "t", source_agent: "SalesAgent",
-                                  prompt_id: :sales, prompt_version: version)
+                                  prompt_id: :sales, prompt_version: version,
+                                  experiment_id: exp.id, experiment_arm: arm)
       if decision == :accept
         Agentkit::HITL.approve(s.id, actor: "human:1")
       else
@@ -221,6 +222,96 @@ RSpec.describe Agentkit::Factory do
       expect(patch[:status]).to eq("for_review")
       expect(patch[:branch]).to start_with("agentkit/factory/")
       expect(patch[:diff]).to have_key("app/agents/x.rb")
+    end
+
+    it "requires an explicit reversible adapter for N1" do
+      expect {
+        described_class.experiment!(nil, target: "parameter:model", control: "slow",
+                                    variant: "fast", level: :n1)
+      }.to raise_error(Agentkit::ConfigurationError, /No reversible intervention/)
+    end
+
+    it "applies and rolls back a registered N1 adapter" do
+      transitions = []
+      described_class::Interventions.register(
+        "parameter:model", level: :n1,
+        apply: ->(experiment) { transitions << [:apply, experiment.variant] },
+        rollback: ->(experiment) { transitions << [:rollback, experiment.control] }
+      )
+      exp = described_class.experiment!(nil, target: "parameter:model", control: "slow",
+                                        variant: "fast", level: :n1)
+
+      described_class.rollback!(exp, reason: :guardrail)
+
+      expect(transitions).to eq([[:apply, "fast"], [:rollback, "slow"]])
+      expect(exp.status).to eq("rolled_back")
+    end
+
+    it "evaluates a global N1 adapter against its temporal baseline" do
+      5.times do
+        suggestion = Agentkit::HITL.suggest!(type: "t", title: "baseline",
+                                             source_agent: "SalesAgent")
+        Agentkit::HITL.reject(suggestion.id, actor: "human:1", code: :not_valuable)
+      end
+      Agentkit::Telemetry.emit("llm.call", dims: { agent: "SalesAgent" },
+                                           measures: { cost_usd: 5.0 })
+
+      described_class::Interventions.register(
+        "parameter:model", level: :n1,
+        apply: ->(_experiment) {}, adopt: ->(_experiment) {}, rollback: ->(_experiment) {}
+      )
+      promotion = Agentkit.config.factory.promotion
+      promotion[:min_samples] = 5
+      promotion[:min_effect] = 0.05
+      promotion[:significance] = 0.90
+      promotion[:min_duration] = 0
+      promotion[:golden_set_gate] = :off
+      exp = described_class.experiment!(
+        nil, target: "parameter:model", control: "slow", variant: "fast", level: :n1,
+        cohort: { agent_name: "SalesAgent" }
+      )
+
+      5.times do
+        suggestion = Agentkit::HITL.suggest!(type: "t", title: "variant",
+                                             source_agent: "SalesAgent")
+        Agentkit::HITL.approve(suggestion.id, actor: "human:1")
+      end
+      Agentkit::Telemetry.emit("llm.call", dims: { agent: "SalesAgent" },
+                                           measures: { cost_usd: 4.0 })
+
+      verdict = described_class.evaluate(exp)
+
+      expect(exp.results).to include("baseline_n" => 5, "baseline_acceptance" => 0.0)
+      expect(verdict[:verdict]).to eq(:adopt)
+      expect(verdict.dig(:cost, :ratio)).to eq(0.8)
+      expect(exp.status).to eq("adopted")
+    end
+
+    it "refuses concurrent experiments whose cohorts overlap" do
+      %w[parameter:first parameter:second].each do |target|
+        described_class::Interventions.register(
+          target, level: :n1,
+          apply: ->(_experiment) {}, rollback: ->(_experiment) {}
+        )
+      end
+      described_class.experiment!(
+        nil, target: "parameter:first", control: "a", variant: "b", level: :n1,
+        cohort: { agent_name: "SalesAgent" }
+      )
+
+      expect {
+        described_class.experiment!(
+          nil, target: "parameter:second", control: "a", variant: "b", level: :n1,
+          cohort: { agent_name: "SalesAgent" }
+        )
+      }.to raise_error(Agentkit::ConfigurationError, /overlaps the cohort/)
+
+      expect {
+        described_class.experiment!(
+          nil, target: "parameter:second", control: "a", variant: "b", level: :n1,
+          cohort: { agent_name: "BillingAgent" }
+        )
+      }.not_to raise_error
     end
   end
 

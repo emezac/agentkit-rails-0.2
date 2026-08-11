@@ -25,6 +25,7 @@ RSpec.configure do |config|
 
     Agentkit.reset!
     Agentkit::Flow.test_mode!
+    Agentkit::Factory.persistence = :memory
     Agentkit::Factory.reset!
     Agentkit::Cognition.reset!
     Agentkit::Proposals.reset!

@@ -10,10 +10,11 @@ module DummySchema
 
   def load!
     connection = ActiveRecord::Base.connection
-    return if connection.table_exists?(:agentkit_run_steps) && connection.table_exists?(:widgets)
 
     ActiveRecord::Migration.suppress_messages do
       create_domain_tables(connection)
+      # Always ask MigrationContext to run. Returning merely because the base
+      # tables existed left newly-added engine migrations unapplied forever.
       run_engine_migrations
     end
   end

@@ -99,10 +99,15 @@ module Agentkit
     def outcome(name, for:, value: nil, within: nil, **dims)
       subject    = binding.local_variable_get(:for)
       subject_id = subject.respond_to?(:id) ? subject.id : nil
+      resolved_value = value.respond_to?(:call) ? value.call : value
+      if subject_id && (subject.is_a?(HITL::Suggestion) ||
+                        (defined?(Agentkit::SuggestionRecord) && subject.is_a?(Agentkit::SuggestionRecord)))
+        HITL.ledger.record_outcome(subject_id, name: name, value: resolved_value)
+      end
       Telemetry.emit(
         "outcome.#{name}",
         dims: dims.merge(subject_type: subject.class.name, subject_id: subject_id),
-        measures: { value: value.respond_to?(:call) ? value.call : value, within: within }
+        measures: { value: resolved_value, within: within }
       )
     end
 

@@ -5,17 +5,49 @@ module Agentkit
     queue_as :agentkit_factory
 
     def perform(window_days = 7)
+      run = begin_factory_run(window_days)
       Agentkit::Factory.capture_golden!
       findings = Agentkit::Factory.diagnose!(window: window_days * 86_400)
-
-      # In :observe mode nothing acts on the findings — they only accumulate.
-      return findings unless %i[auto_n1 auto_n1_n2].include?(Agentkit.config.factory.mode)
-
-      Agentkit::Factory.experiments.select { |e| e.status == "running" }.each do |exp|
-        Agentkit::Factory.enforce_guardrails!(exp)
-        Agentkit::Factory.evaluate(exp)
-      end
+      evaluated = act_for_mode(findings)
+      finish_factory_run(run, "completed", experiments_evaluated: evaluated,
+                                           **Agentkit::Factory.last_diagnosis)
       findings
+    rescue StandardError => e
+      finish_factory_run(run, "failed", errors: [{ class: e.class.name, message: e.message }]) if run
+      raise
+    end
+
+    private
+
+    def act_for_mode(findings)
+      case Agentkit.config.factory.mode
+      when :observe
+        return 0
+      when :suggest
+        Agentkit::Factory.suggest_interventions!(findings)
+      when :auto_n1
+        Agentkit::Factory.auto_start_interventions!(findings, max_level: :n1)
+      when :auto_n1_n2
+        Agentkit::Factory.auto_start_interventions!(findings, max_level: :n2)
+      end
+
+      running = Agentkit::Factory.experiments.select { |experiment| experiment.status == "running" }
+      running.each { |experiment| Agentkit::Factory.evaluate(experiment) }
+      running.size
+    end
+
+    def begin_factory_run(window_days)
+      return nil unless defined?(Agentkit::FactoryRunRecord) && Agentkit::FactoryRunRecord.table_exists?
+
+      Agentkit::FactoryRunRecord.create!(window_days: window_days, started_at: Time.current)
+    end
+
+    def finish_factory_run(run, status, **attributes)
+      return unless run
+
+      allowed = %i[detector_count fired_count created_count deduplicated_count
+                   experiments_evaluated errors metadata]
+      run.finish!(status: status, **attributes.slice(*allowed))
     end
   end
 end
