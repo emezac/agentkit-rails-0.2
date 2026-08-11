@@ -7,6 +7,7 @@ module Agentkit
     self.table_name = "agentkit_decisions"
 
     belongs_to :suggestion, class_name: "Agentkit::SuggestionRecord", optional: true
+    belongs_to :experiment, class_name: "Agentkit::ExperimentRecord", optional: true
 
     # `mode` separates human judgements from advisory timeouts. Quality metrics
     # must only count the former.

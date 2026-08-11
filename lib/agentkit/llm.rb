@@ -40,7 +40,8 @@ module Agentkit
       #   a violation triggers a re-ask before raising SchemaViolation.
       def complete(prompt, model: :default, system: nil, temperature: nil, max_tokens: nil,
                    timeout: nil, tools: nil, schema: nil, cache: nil, stream: nil,
-                   agent: nil, prompt_id: nil, prompt_version: nil)
+                   agent: nil, prompt_id: nil, prompt_version: nil,
+                   experiment_id: nil, experiment_arm: nil)
         # `Array(nil)` is empty, so an explicit `model: nil` (what Agent#complete
         # passes when no profile is chosen) must fall back to :default rather
         # than skipping the loop and raising "no profile could serve".
@@ -58,6 +59,7 @@ module Agentkit
               temperature: temperature, max_tokens: max_tokens, timeout: timeout,
               tools: tools, schema: schema, cache: cache, stream: stream, agent: agent,
               prompt_id: prompt_id, prompt_version: prompt_version,
+              experiment_id: experiment_id, experiment_arm: experiment_arm,
               fallback_used: index.positive?
             )
           rescue PermanentError, CircuitOpen => e
@@ -112,7 +114,8 @@ module Agentkit
 
       def call_with_retries(prompt:, profile:, profile_name:, system:, temperature:, max_tokens:,
                             timeout:, tools:, schema:, cache:, stream:, agent:,
-                            prompt_id:, prompt_version:, fallback_used:)
+                            prompt_id:, prompt_version:, experiment_id:, experiment_arm:,
+                            fallback_used:)
         cfg      = Agentkit.config.llm
         attempts = 0
         started  = monotonic
@@ -145,7 +148,9 @@ module Agentkit
           end
           emit_call(profile: profile, profile_name: profile_name, agent: agent, usage: nil,
                     attempts: attempts, status: "error", error: error, prompt: prompt,
-                    prompt_id: prompt_id, prompt_version: prompt_version, started: started)
+                    prompt_id: prompt_id, prompt_version: prompt_version,
+                    experiment_id: experiment_id, experiment_arm: experiment_arm,
+                    started: started)
           raise error
         end
 
@@ -159,7 +164,8 @@ module Agentkit
           repaired = complete(
             repair_prompt(raw.content, violations, schema),
             model: profile.model, system: system, temperature: 0.0, agent: agent,
-            prompt_id: prompt_id, prompt_version: prompt_version
+            prompt_id: prompt_id, prompt_version: prompt_version,
+            experiment_id: experiment_id, experiment_arm: experiment_arm
           )
           parsed, violations = parse_with_schema(repaired.content, schema)
           usage += repaired.usage
@@ -171,6 +177,7 @@ module Agentkit
           emit_call(profile: profile, profile_name: profile_name, agent: agent, usage: usage,
                     attempts: attempts, status: "schema_violation", prompt: prompt,
                     prompt_id: prompt_id, prompt_version: prompt_version, started: started,
+                    experiment_id: experiment_id, experiment_arm: experiment_arm,
                     violations: violations.size)
           raise SchemaViolation.new("LLM output failed schema: #{violations.join('; ')}",
                                     raw: raw.content, violations: violations)
@@ -178,7 +185,9 @@ module Agentkit
 
         emit_call(profile: profile, profile_name: profile_name, agent: agent, usage: usage,
                   attempts: attempts, status: "ok", prompt: prompt, prompt_id: prompt_id,
-                  prompt_version: prompt_version, started: started, fallback_used: fallback_used)
+                  prompt_version: prompt_version, experiment_id: experiment_id,
+                  experiment_arm: experiment_arm, started: started,
+                  fallback_used: fallback_used)
 
         charge_budget(usage)
 
@@ -233,6 +242,7 @@ module Agentkit
 
       def emit_call(profile:, profile_name:, agent:, usage:, attempts:, status:, started:,
                     prompt: nil, prompt_id: nil, prompt_version: nil, error: nil,
+                    experiment_id: nil, experiment_arm: nil,
                     violations: 0, fallback_used: false)
         # Immutable row with the prompt preview — this is what v0.1 stored in
         # agentkit_agent_logs and what an auditor actually needs to see.
@@ -241,6 +251,7 @@ module Agentkit
           model: profile.model, usage: usage,
           payload: { profile: profile_name, provider: profile.provider,
                      prompt_id: prompt_id, prompt_version: prompt_version,
+                     experiment_id: experiment_id, experiment_arm: experiment_arm,
                      attempts: attempts, schema_violations: violations,
                      fallback_used: fallback_used, error: error&.message }
         )
@@ -249,6 +260,7 @@ module Agentkit
           dims: {
             model: profile.model, provider: profile.provider, profile: profile_name,
             agent: agent, prompt_id: prompt_id, prompt_version: prompt_version,
+            experiment_id: experiment_id, experiment_arm: experiment_arm,
             status: status, error_class: error&.class&.name
           },
           measures: {
