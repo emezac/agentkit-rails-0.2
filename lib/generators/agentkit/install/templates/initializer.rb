@@ -1,6 +1,13 @@
 # frozen_string_literal: true
 
-require "agentkit"
+# The installer loads agentkit/engine from config/application.rb. Requiring an
+# engine for the first time from this initializer is too late for Rails to add
+# its models, rake tasks and migrations.
+unless defined?(Agentkit::Engine)
+  raise LoadError,
+        "AgentKit must be loaded from config/application.rb. Add require \"agentkit\" and " \
+        "require \"agentkit/engine\" before the application class."
+end
 
 Agentkit.configure do |config|
   config.domain_name    = "<%= Rails.application.class.module_parent_name %>"

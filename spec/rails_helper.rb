@@ -46,6 +46,8 @@ RSpec.configure do |config|
     Agentkit.config.memory.level    = :hybrid
     Agentkit.config.memory.embedding.policy = :on_promotion
     Agentkit.config.audit.store     = :active_record
+    Agentkit.config.a2a.expose      = nil
+    Agentkit.config.a2a.hide        = []
     Agentkit.config.telemetry.backends = [:memory]
     Agentkit.config.llm.adapter     = :fake
     Agentkit::Audit.reset!
@@ -56,6 +58,8 @@ RSpec.configure do |config|
     Agentkit::Flow.shared_store = nil
     Agentkit::Flow.dispatcher   = nil
     Agentkit::Memory.reset!
+    Agentkit::Factory.persistence = :active_record
+    Agentkit::Factory.reset!
     Agentkit::HITL.ledger = Agentkit::HITL::Stores::ActiveRecordLedger.new
     Agentkit::HITL.store  = Agentkit::HITL::Stores::ActiveRecordStore.new
 

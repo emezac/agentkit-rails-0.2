@@ -38,6 +38,19 @@
 - **Épica 4 — Generadores Rails**:
   - `rails g agentkit:rag` for scaffolded RAG configuration & migration.
   - `rails g agentkit:team_memory` for scaffolded Team Memory Hub & migration.
+=======
+## Unreleased
+
+### Fixed
+
+- Added the conventional `agentkit-rails` Bundler entrypoint. It explicitly
+  loads the engine after Rails even when `agentkit` was already cached by a
+  plain-Ruby process earlier in boot.
+- The install generator now puts `require "agentkit"` and
+  `require "agentkit/engine"` in `config/application.rb`, after the Rails
+  framework requires and before the application class. Loading the engine from
+  an initializer was too late to register its models and
+  `agentkit:install:migrations` task.
 
 ## 0.2.1 — 2026-07-24
 

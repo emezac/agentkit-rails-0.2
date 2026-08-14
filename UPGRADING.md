@@ -10,6 +10,24 @@
 4. Replace the initializer's flat keys with the nested ones (table below).
 5. Nothing in `app/agents/` has to change: the v0.1 agent surface is preserved.
 
+## Engine boot for existing applications
+
+If `rails agentkit:install:migrations` is missing or the classes under the
+engine's `app/models` do not autoload, AgentKit is being required for the first
+time from `config/initializers/agentkit.rb`. That happens after Rails has
+already collected its engines.
+
+Run the installer again, or add these lines to `config/application.rb` after
+the Rails framework requires and before the application class:
+
+```ruby
+require "agentkit"
+require "agentkit/engine"
+```
+
+The operation is idempotent. Once those lines are present, remove any
+`require "agentkit"` left in the initializer.
+
 ## Configuration mapping
 
 | 0.1 | 0.2 |

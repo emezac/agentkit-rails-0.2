@@ -41,6 +41,7 @@ module Agentkit
           suggestion_type title description priority status source_agent payload
           user_id account_id tenant_key idempotency_key prompt_id prompt_version
           model run_id gate_key metadata resolved_at expires_at
+          experiment_id experiment_arm
         ].freeze
 
         def [](id)
@@ -103,7 +104,9 @@ module Agentkit
             final_payload: entry.final_payload || {},
             edit_distance: entry.edit_distance,
             time_to_decision_s: entry.time_to_decision_s,
-            tenant_key: entry.tenant_key
+            tenant_key: entry.tenant_key,
+            experiment_id: entry.experiment_id,
+            experiment_arm: entry.experiment_arm
           )
           entry
         rescue StandardError => e
@@ -112,12 +115,25 @@ module Agentkit
           entry
         end
 
-        def entries(agent: nil, type: nil, since: nil, mode: nil)
+        def record_outcome(suggestion_id, name:, value: nil)
+          row = Agentkit::DecisionRecord.where(suggestion_id: suggestion_id).order(:id).last
+          return nil unless row
+
+          row.update!(outcome: name.to_s, outcome_value: value, outcome_at: Time.now)
+          to_entry(row)
+        end
+
+        def entries(agent: nil, type: nil, since: nil, mode: nil, experiment_id: nil,
+                    experiment_arm: nil, prompt_id: nil, tenant_key: nil)
           scope = Agentkit::DecisionRecord.all
           scope = scope.where(agent_name: agent.to_s) if agent
           scope = scope.where(suggestion_type: type.to_s) if type
           scope = scope.where(created_at: since..) if since
           scope = scope.where(mode: mode.to_s) if mode
+          scope = scope.where(experiment_id: experiment_id) if experiment_id
+          scope = scope.where(experiment_arm: experiment_arm.to_s) if experiment_arm
+          scope = scope.where(prompt_id: prompt_id.to_s) if prompt_id
+          scope = scope.where(tenant_key: tenant_key.to_s) if tenant_key
           scope.order(:id).map { |r| to_entry(r) }
         end
 
@@ -136,7 +152,8 @@ module Agentkit
             proposed_payload: row.proposed_payload, final_payload: row.final_payload,
             edit_distance: row.edit_distance, time_to_decision_s: row.time_to_decision_s,
             outcome: row.outcome, outcome_value: row.outcome_value, outcome_at: row.outcome_at,
-            tenant_key: row.tenant_key, created_at: row.created_at
+            tenant_key: row.tenant_key, created_at: row.created_at,
+            experiment_id: row.experiment_id, experiment_arm: row.experiment_arm
           )
         end
       end

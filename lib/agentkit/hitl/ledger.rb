@@ -23,6 +23,7 @@ module Agentkit
         :model, :decision, :actor, :mode, :rejection_code, :rejection_note,
         :proposed_payload, :final_payload, :edit_distance, :time_to_decision_s,
         :outcome, :outcome_value, :outcome_at, :tenant_key, :created_at,
+        :experiment_id, :experiment_arm,
         keyword_init: true
       )
 
@@ -46,7 +47,9 @@ module Agentkit
           proposed_payload: suggestion.payload, final_payload: final_payload,
           edit_distance: distance(suggestion.payload, final_payload),
           time_to_decision_s: (Time.now - suggestion.created_at).round,
-          tenant_key: suggestion.tenant_key, created_at: Time.now
+          tenant_key: suggestion.tenant_key, created_at: Time.now,
+          experiment_id: suggestion.experiment_id,
+          experiment_arm: suggestion.experiment_arm
         )
         @entries << entry
 
@@ -54,7 +57,8 @@ module Agentkit
           "hitl.decide",
           dims: { agent: entry.agent_name, type: entry.suggestion_type, decision: entry.decision,
                   mode: entry.mode, rejection_code: entry.rejection_code,
-                  prompt_id: entry.prompt_id, prompt_version: entry.prompt_version },
+                  prompt_id: entry.prompt_id, prompt_version: entry.prompt_version,
+                  experiment_id: entry.experiment_id, experiment_arm: entry.experiment_arm },
           measures: { time_to_decision_s: entry.time_to_decision_s,
                       edit_distance: entry.edit_distance || 0.0 }
         )
@@ -71,12 +75,17 @@ module Agentkit
         entry
       end
 
-      def entries(agent: nil, type: nil, since: nil, mode: nil)
+      def entries(agent: nil, type: nil, since: nil, mode: nil, experiment_id: nil,
+                  experiment_arm: nil, prompt_id: nil, tenant_key: nil)
         @entries.select do |e|
           (agent.nil? || e.agent_name == agent.to_s) &&
             (type.nil?  || e.suggestion_type == type.to_s) &&
             (since.nil? || e.created_at >= since) &&
-            (mode.nil?  || e.mode == mode.to_s)
+            (mode.nil?  || e.mode == mode.to_s) &&
+            (experiment_id.nil? || e.experiment_id.to_s == experiment_id.to_s) &&
+            (experiment_arm.nil? || e.experiment_arm.to_s == experiment_arm.to_s) &&
+            (prompt_id.nil? || e.prompt_id.to_s == prompt_id.to_s) &&
+            (tenant_key.nil? || e.tenant_key.to_s == tenant_key.to_s)
         end
       end
 
