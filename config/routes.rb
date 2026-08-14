@@ -30,5 +30,7 @@ Agentkit::Engine.routes.draw do
   get  "a2a",          to: "a2a#card",     as: :a2a_card
   post "a2a/register", to: "a2a#register", as: :a2a_register
   # Convenience REST alias over the same dispatcher.
-  post "a2a/:capability", to: "a2a#invoke", as: :a2a_invoke
+  # ─── Team Memory Hub ───────────────────────────────────────────────────────
+  get  "team_memory",              to: "team_memory#index",        as: :team_memory_index
+  post "team_memory/create_asset", to: "team_memory#create_asset", as: :team_memory_create_asset
 end

@@ -100,7 +100,7 @@ module Agentkit
       # @param include [Symbol, Array] :imagined to opt into the ontological
       #   firewall, :summary for generated summaries.
       def recall(query, k: nil, threshold: nil, types: nil, tags: nil, mode: nil,
-                 include: nil, embed_query: true, agent: nil, context: nil)
+                 include: nil, embed_query: true, agent: nil, since: nil, until: nil, context: nil)
         ctx    = context || Context.resolve
         config = ctx.config.memory
         k      ||= config.default_k
@@ -114,6 +114,16 @@ module Agentkit
           when :hybrid  then hybrid(query, scope, k, threshold, config, embed_query)
           when :semantic then semantic(query, scope, k, threshold, config, embed_query)
           end
+
+        if since || binding.local_variable_get(:until)
+          s_time = since ? Time.parse(since.to_s) : nil rescue nil
+          u_time = binding.local_variable_get(:until) ? Time.parse(binding.local_variable_get(:until).to_s) : nil rescue nil
+
+          results = results.select do |r|
+            t = r.created_at || Time.now
+            (s_time.nil? || t >= s_time) && (u_time.nil? || t <= u_time)
+          end
+        end
 
         results.each { |r| bump_recall(r, config) }
 

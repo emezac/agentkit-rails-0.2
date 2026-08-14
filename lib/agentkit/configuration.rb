@@ -251,6 +251,33 @@ module Agentkit
     setting :imperative_mode, default: :propose, in: %i[propose execute]
   end
 
+  # ─── RAG ─────────────────────────────────────────────────────────────────────
+
+  class RAGSettings < Settings
+    setting :chunk_size,        default: 256
+    setting :chunk_overlap,     default: 50
+    setting :hybrid_search,     default: true
+    setting :rrf_k,             default: 60
+    setting :top_k,             default: 5
+    setting :metric,            default: "cosine"
+    setting :index_type,        default: "auto"
+    setting :nlist,             default: 100
+    setting :nprobe,            default: 10
+    setting :seed,              default: 42
+    setting :max_concurrency,   default: 9
+    setting :chapter_detection, default: :heading_regex
+    setting :store,             default: :active_record
+  end
+
+  # ─── Team Memory ─────────────────────────────────────────────────────────────
+
+  class TeamMemorySettings < Settings
+    setting :enabled,             default: true
+    setting :default_visibility,  default: :team, in: %i[private team restricted agent]
+    setting :store,               default: :active_record
+    setting :auto_extract_skills, default: true
+  end
+
   # ─── Root ────────────────────────────────────────────────────────────────────
 
   class Configuration < Settings
@@ -277,6 +304,8 @@ module Agentkit
     group :a2a,       A2ASettings
     group :factory,   FactorySettings
     group :chat,      ChatSettings
+    group :rag,       RAGSettings
+    group :team_memory, TeamMemorySettings
 
     # v0.1 compatibility: `config.a2a_enabled = true` still works.
     def a2a_enabled = a2a.enabled

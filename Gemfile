@@ -13,4 +13,7 @@ group :development, :test do
   gem "rails", ">= 7.1"
   gem "pg", ">= 1.5"
   gem "pgvector", ">= 0.2"
+  gem "numo-narray"
+  gem "pdf-reader"
+  gem "rubyzip"
 end

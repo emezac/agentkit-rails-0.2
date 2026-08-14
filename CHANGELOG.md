@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.3.0 — Native RAG & Team Memory Hub
+
+### Added
+
+- **Épica 1 — RAG Nativo (`Agentkit::RAG`)**:
+  - Full retrieval-augmented generation engine: BM25, Sliding Window / Semantic / Sentence Chunker, Indexer, Retriever (Vector + BM25 + RRF fusion), and Pipeline with streaming support.
+  - `ChapterChunker` and `CorpusSlice` for chapter/heading-based document partitioning.
+  - `KnowledgeStore` with `:memory` (singleton) and `:active_record` backends, metadata filtering, and pgvector + tsvector schema (`007_create_agentkit_knowledge.rb`).
+  - `Agentkit::RAG::AgentConcern` mixed into `Agentkit::Agent`: `use_knowledge`, `rag_retrieve`, `rag_index_slice`, `rag_generate`, `rag_context`.
+
+- **Épica 1.5 — Orquestación RAG Distribuida**:
+  - `Agentkit::RAG::CoordinatorFlow`: multi-step map/reduce flow for partitioning large PDFs (90MB+), parallel chapter indexing, chapter analysis, and bibliography reduction.
+  - Agents: `PDFChapterChunkerAgent`, `ChapterIndexerAgent`, `ChapterAnalystAgent`, `BibliographyReportAgent`.
+  - `MapNode#max_concurrency` now accepts lambdas for dynamic worker scaling.
+  - Fixed `Result.capture` double-wrapping bug (`wrap(yield)` instead of `ok(yield)`).
+
+- **Épica 2 — Team Memory Hub (`Agentkit::TeamMemory`)**:
+  - TencentDB Agent Memory implementation: team-level governance for ChatMemory, Skill, Wiki, and CodeGraph assets.
+  - ACL engine supporting `private`, `team`, `restricted`, `agent`, and `public` visibility rules.
+  - Wiki engine with `[[Wikilink]]` extraction, page management, and keyword search.
+  - CodeGraph static analysis engine extracting Ruby classes, modules, methods, callers, callees, and impact analysis.
+  - `SkillExtractor` for auto-generating executable skills from chat transcripts.
+  - `LayeredPipeline` (L0 raw → L1 atoms → L2 scenes → L3 persona/skills).
+  - `TeamMemory::AgentConcern` mixed into `Agent`: `join_team`, `share_skill`, `load_team_assets`, `equip_team_assets`.
+  - Migration `008_create_agentkit_team_memory.rb` and ActiveRecord models (`TeamRecord`, `MemoryAssetRecord`, `WikiPageRecord`, `CodeSymbolRecord`, `AssetBindingRecord`).
+  - Web dashboard in `/agentkit/team_memory`.
+
+- **Épica 3 — Mejoras de Memoria Avanzada**:
+  - `Memory::Layers` helpers for L0-L3 memory progression.
+  - `Memory::ColdStart` importer for historical JSON/JSONL transcripts.
+  - `Memory::CustomPrompts` for per-tenant/team template overrides.
+  - `Memory.recall(since:, until:)` time-window filtering.
+  - Interactive `mem:` chat commands (`mem:status`, `mem:sync`, `mem:skill`, `mem:help`) in `Agentkit::Chat.say`.
+  - `SkillExport` for packaging skills as `SKILL.md` + `tools.json` bundles and importing them.
+
+- **Épica 4 — Generadores Rails**:
+  - `rails g agentkit:rag` for scaffolded RAG configuration & migration.
+  - `rails g agentkit:team_memory` for scaffolded Team Memory Hub & migration.
+
 ## 0.2.1 — 2026-07-24
 
 ### Fixed — eleven defects found by the integration suite

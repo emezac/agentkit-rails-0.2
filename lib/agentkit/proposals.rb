@@ -280,6 +280,12 @@ module Agentkit
       def say(text, setup: nil, candidates: nil, context: nil)
         ctx   = context || Context.resolve
         setup ||= Setup.current || Setup.build
+
+        if text.to_s.strip =~ /^mem:(.*)/i
+          cmd = Regexp.last_match(1).strip.downcase
+          return handle_mem_command(cmd, context: ctx)
+        end
+
         match = IntentResolver.resolve(text, setup, ctx)
 
         if match.nil?
@@ -311,6 +317,34 @@ module Agentkit
       end
 
       private
+
+      def handle_mem_command(cmd, context:)
+        msg = case cmd
+              when "sync", "flush"
+                Memory.flush_embeddings!
+                "Sincronización de memoria ejecutada."
+              when "status", "info"
+                total_m = Memory.count
+                total_a = defined?(TeamMemory) ? TeamMemory.load_assets.size : 0
+                "Estado de Memoria: #{total_m} registros, #{total_a} assets de equipo."
+              when "skill", "extract-skill"
+                if defined?(TeamMemory::SkillExtractor)
+                  TeamMemory::SkillExtractor.extract(conversation: [cmd], name: "InteractiveSkill_#{Time.now.to_i}")
+                  "Skill extraído correctamente desde la sesión interactiva."
+                else
+                  "SkillExtractor no está disponible."
+                end
+              else
+                "Comandos de memoria disponibles: mem:sync (consolidar), mem:status (estado), mem:skill (extraer skill), mem:help"
+              end
+
+        Turn.new(
+          message: msg,
+          proposals: [],
+          clarifications: [],
+          state: { mem_command: cmd }
+        )
+      end
 
       def opening_message(proposals)
         return "No veo nada que proponerte ahora mismo." if proposals.empty?

@@ -33,8 +33,10 @@ module Agentkit
       end
 
       # Run a block, converting exceptions into a failed Result.
+      # Uses wrap() rather than ok() so that agents returning Result.ok(...)
+      # are not double-wrapped into Result.ok(Result.ok(...)).
       def capture(retryable_on: [TransientError])
-        ok(yield)
+        wrap(yield)
       rescue StandardError => e
         err(e, retryable: retryable_on.any? { |k| e.is_a?(k) })
       end
@@ -73,6 +75,13 @@ module Agentkit
     def memory     = @memories.first
     def suggestion = @suggestions.first
     def artifact   = @artifacts.first
+
+    # Hash delegation convenience when value is a Hash
+    def [](key)
+      return nil unless value.is_a?(Hash)
+
+      value[key] || value[key.to_sym] rescue nil
+    end
 
     # Raise the wrapped error. Used at the boundary where a caller wants
     # exception semantics (controllers, rake tasks).

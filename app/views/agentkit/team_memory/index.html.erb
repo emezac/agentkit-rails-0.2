@@ -1,0 +1,43 @@
+<div class="header">
+  <h2>Team Memory Hub</h2>
+  <span class="badge">Team: <%= @team_name %></span>
+</div>
+
+<div class="grid grid-2">
+  <div class="panel">
+    <h3>Memory Assets (<%= @assets.size %>)</h3>
+    <table class="table">
+      <thead>
+        <tr>
+          <th>Tipo</th>
+          <th>Nombre</th>
+          <th>Visibilidad</th>
+          <th>Versión</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @assets.each do |asset| %>
+          <tr>
+            <td><span class="tag tag-<%= asset.asset_type %>"><%= asset.asset_type %></span></td>
+            <td><strong><%= asset.name %></strong></td>
+            <td><%= asset.visibility %></td>
+            <td>v<%= asset.version %></td>
+          </tr>
+        <% end %>
+        <% if @assets.empty? %>
+          <tr><td colspan="4" class="text-muted">No hay assets registrados en este equipo.</td></tr>
+        <% end %>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="panel">
+    <h3>Resumen por Categoria</h3>
+    <ul>
+      <li><strong>Skills:</strong> <%= @skills.size %> assets</li>
+      <li><strong>Wiki Pages:</strong> <%= @wikis.size %> wikis</li>
+      <li><strong>Code Graphs:</strong> <%= @graphs.size %> repositorios</li>
+      <li><strong>Chat Memories:</strong> <%= @memories.size %> escenas</li>
+    </ul>
+  </div>
+</div>

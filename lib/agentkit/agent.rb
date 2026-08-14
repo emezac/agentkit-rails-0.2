@@ -316,3 +316,190 @@ module Agentkit
   # keeps compiling.
   ApplicationAgent = Agent
 end
+
+# ─── RAG Concern ─────────────────────────────────────────────────────────────
+# Loaded after Agent is defined so the require order inside rag.rb is satisfied.
+# Agents opt in with `use_knowledge :corpus_name` (class-level) or by calling
+# `rag_retrieve(query, ...)` / `rag_index_slice(slice)` directly in #call.
+
+require_relative "rag"
+
+module Agentkit
+  module RAG
+    # Mixed into Agentkit::Agent.  Provides three helpers:
+    #
+    #   rag_retrieve(query, corpus: nil, filter: {}, top_k: nil)
+    #     → Array of chunk hashes (content, score, metadata, …)
+    #
+    #   rag_index_slice(corpus_slice_or_hash)
+    #     → Hash (slice_id, chapter_index, title, chunks, vectors)
+    #
+    #   rag_generate(query, corpus: nil, filter: {}, top_k: nil, system_prompt: nil, &block)
+    #     → String (streamed answer if block given)
+    #
+    # Class-level declaration:
+    #   use_knowledge :my_corpus                  # default corpus for this agent
+    #   use_knowledge :my_corpus, filter: {...}   # with a default metadata filter
+    module AgentConcern
+      def self.included(base)
+        base.extend(ClassMethods)
+      end
+
+      module ClassMethods
+        # Declare a default knowledge corpus and optional metadata filter.
+        #
+        #   class MyAgent < Agentkit::Agent
+        #     use_knowledge :oxford_handbook
+        #     use_knowledge :code_repo, filter: { chapter_index: 3 }
+        #   end
+        def use_knowledge(corpus_name, filter: {})
+          @rag_corpora ||= []
+          @rag_corpora << { corpus: corpus_name.to_s, filter: filter }
+        end
+
+        def rag_corpora
+          @rag_corpora ||
+            (superclass.respond_to?(:rag_corpora) ? superclass.rag_corpora : nil) ||
+            []
+        end
+      end
+
+      # ── Instance helpers ──────────────────────────────────────────────────
+
+      # Retrieve relevant chunks for query.  Falls back to the first declared
+      # corpus when :corpus is omitted; raises if no corpus is configured.
+      #
+      # @param query   [String]
+      # @param corpus  [String, Symbol, nil]  overrides class default
+      # @param filter  [Hash]                 merged onto class default filter
+      # @param top_k   [Integer, nil]
+      # @return        [Array<Hash>]  chunk hashes with "content", "score", …
+      def rag_retrieve(query, corpus: nil, filter: {}, top_k: nil)
+        corp_name, default_filter = resolve_rag_corpus(corpus)
+        merged_filter = default_filter.merge(filter)
+        RAG.retrieve(query, corpus_name: corp_name, top_k: top_k, filter: merged_filter)
+      end
+
+      # Index a CorpusSlice (or a plain hash that can be cast to one).
+      # Useful when an agent is both the indexer and the analyser in the same run.
+      #
+      # @param slice [Agentkit::RAG::CorpusSlice, Hash]
+      # @return      [Hash]  { slice_id:, chapter_index:, title:, chunks:, vectors: }
+      def rag_index_slice(slice)
+        RAG.index_slice(slice)
+      end
+
+      # Full RAG pipeline: retrieve → prompt → LLM generate.
+      # Pass a block to receive streaming deltas.
+      #
+      # @param query         [String]
+      # @param corpus        [String, Symbol, nil]
+      # @param filter        [Hash]
+      # @param top_k         [Integer, nil]
+      # @param system_prompt [String, nil]
+      # @return              [String]
+      def rag_generate(query, corpus: nil, filter: {}, top_k: nil, system_prompt: nil, &block)
+        corp_name, default_filter = resolve_rag_corpus(corpus)
+        merged_filter = default_filter.merge(filter)
+        RAG.generate(query, corpus_name: corp_name, top_k: top_k, filter: merged_filter,
+                     system_prompt: system_prompt, &block)
+      end
+
+      # Build a knowledge context string for injection into the system prompt.
+      # Useful for agents that want fine-grained prompt control.
+      #
+      # @param query  [String]
+      # @param corpus [String, Symbol, nil]
+      # @param filter [Hash]
+      # @param top_k  [Integer, nil]
+      # @return       [String]
+      def rag_context(query, corpus: nil, filter: {}, top_k: nil)
+        chunks = rag_retrieve(query, corpus: corpus, filter: filter, top_k: top_k)
+        return "" if chunks.empty?
+
+        chunks.map.with_index(1) { |c, i| "[#{i}] #{c["content"] || c["text"]}" }.join("\n\n")
+      end
+
+      private
+
+      def resolve_rag_corpus(explicit_corpus)
+        if explicit_corpus
+          return [explicit_corpus.to_s, {}]
+        end
+
+        primary = self.class.rag_corpora.first
+        raise ConfigurationError,
+              "#{self.class.name} has no knowledge corpus configured. " \
+              "Declare one with `use_knowledge :corpus_name` or pass corpus: explicitly." if primary.nil?
+
+        [primary[:corpus], primary[:filter] || {}]
+      end
+    end
+  end
+
+  # Mix the RAG concern into every agent automatically.
+  # Agents without `use_knowledge` still get `rag_retrieve(query, corpus: ...)`.
+  Agent.include(RAG::AgentConcern)
+end
+
+# ─── Team Memory Concern ──────────────────────────────────────────────────────
+require_relative "team_memory"
+
+module Agentkit
+  module TeamMemory
+    module AgentConcern
+      def self.included(base)
+        base.extend(ClassMethods)
+      end
+
+      module ClassMethods
+        def belongs_to_team(team_name)
+          @team_name = team_name.to_s
+        end
+
+        def team_name
+          @team_name || (superclass.respond_to?(:team_name) ? superclass.team_name : nil)
+        end
+      end
+
+      # Join a team by name
+      def join_team(team_name)
+        @current_team = TeamMemory.find_team(team_name) || TeamMemory.create_team(name: team_name)
+      end
+
+      def current_team
+        @current_team ||= self.class.team_name ? TeamMemory.find_team(self.class.team_name) : nil
+      end
+
+      # Load team memory assets accessible to this agent
+      def load_team_assets(asset_type: nil)
+        team = current_team
+        TeamMemory.load_assets(team: team, agent_name: self.class.name, asset_type: asset_type)
+      end
+
+      # Share a new skill asset to the team
+      def share_skill(name, prompt_fragment:, visibility: "team", description: nil)
+        team = current_team
+        TeamMemory.create_asset(
+          asset_type: "skill",
+          name: name,
+          team_id: team&.id,
+          visibility: visibility,
+          content: {
+            "name"            => name,
+            "description"     => description,
+            "prompt_fragment" => prompt_fragment
+          }
+        )
+      end
+
+      # Equip this agent with team assets
+      def equip_team_assets
+        team = current_team
+        TeamMemory.equip(agent: self, team: team)
+      end
+    end
+  end
+
+  Agent.include(TeamMemory::AgentConcern)
+end

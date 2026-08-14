@@ -290,7 +290,10 @@ module Agentkit
 
       # Tree reduce: chunk, reduce, repeat. 400 items is ~3 levels, not a chain.
       def run_reduce(node, iteration)
-        source = flow_ctx[node.target] || rebuild_results(find_barrier(node.target))
+        raw = flow_ctx[node.target] || rebuild_results(find_barrier(node.target))
+        # The join node overwrites the map's StepResults in flow_ctx with
+        # Result.ok(StepResults). Unwrap so we always work with StepResults.
+        source = raw.is_a?(Result) && raw.ok? && raw.value.is_a?(StepResults) ? raw.value : raw
         raise FlowError, "reduce `#{node.name}` found no map results for `#{node.target}`" if source.nil?
 
         step, fresh = checkout(node, iteration, kind: "reduce")
@@ -303,7 +306,7 @@ module Agentkit
           values = values.each_slice(node.chunk).map { |group| invoke_callable(node.agent, node.block, group) }
         end
 
-        result = Result.ok(values.first, usage: source.usage)
+        result = Result.wrap(values.first)
         Telemetry.emit("flow.reduce", dims: { flow: run.flow_name, step: node.name },
                                       measures: { levels: level, inputs: source.size })
         complete_step(node, step, result)

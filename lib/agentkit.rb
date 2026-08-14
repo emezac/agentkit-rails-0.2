@@ -28,6 +28,11 @@ require_relative "agentkit/setup"
 require_relative "agentkit/proposals"
 require_relative "agentkit/a2a"
 require_relative "agentkit/factory"
+require_relative "agentkit/memory/layers"
+require_relative "agentkit/memory/cold_start"
+require_relative "agentkit/memory/custom_prompts"
+require_relative "agentkit/skill_export"
+require_relative "agentkit/team_memory"
 
 # AgentKit Rails v2 — agent kernel for domain applications.
 #
@@ -63,8 +68,10 @@ module Agentkit
       SkillRegistry.reset!
       Capability.reset!
       Memory.reset!
+      Memory::CustomPrompts.reset! if defined?(Memory::CustomPrompts)
       HITL.reset!
       Flow::Registry.reset!
+      TeamMemory.reset! if defined?(TeamMemory)
       self
     end
 

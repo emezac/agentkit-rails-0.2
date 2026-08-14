@@ -45,7 +45,10 @@ module Agentkit
       class ParallelNode < Base
         def over            = opts[:over]
         def with_fn         = opts[:with]
-        def max_concurrency = opts[:max_concurrency]
+        def max_concurrency(ctx = nil)
+          val = opts[:max_concurrency]
+          val.respond_to?(:call) ? (ctx ? val.call(ctx) : val) : val
+        end
         def as              = opts[:as] || name
         def agent           = opts[:agent]
       end
@@ -64,7 +67,10 @@ module Agentkit
         def over            = opts[:over]
         def agent           = opts[:agent]
         def block           = opts[:block]
-        def max_concurrency = opts[:max_concurrency]
+        def max_concurrency(ctx = nil)
+          val = opts[:max_concurrency]
+          val.respond_to?(:call) ? (ctx ? val.call(ctx) : val) : val
+        end
         def batch_size      = opts[:batch_size] || 1
       end
 
