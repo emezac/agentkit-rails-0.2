@@ -8,6 +8,7 @@ module Agentkit
 
     validates :title, presence: true
     validates :content, presence: true
+    validates :tenant_key, presence: true
 
     def to_h
       {

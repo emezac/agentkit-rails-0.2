@@ -9,6 +9,7 @@ module Agentkit
     SYMBOL_TYPES = %w[class method module function constant].freeze
 
     validates :name, presence: true
+    validates :tenant_key, presence: true
     validates :file_path, presence: true
     validates :symbol_type, presence: true, inclusion: { in: SYMBOL_TYPES }
 

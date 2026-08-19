@@ -50,6 +50,8 @@ module Agentkit
           if defined?(Agentkit::WikiPageRecord) && TeamMemory.ar_available?(Agentkit::WikiPageRecord) && asset.id
             rec = Agentkit::WikiPageRecord.create!(
               asset_id: asset.id,
+              tenant_key: asset.tenant_key,
+              account_id: asset.account_id,
               title: title,
               content: content,
               links: extracted_links

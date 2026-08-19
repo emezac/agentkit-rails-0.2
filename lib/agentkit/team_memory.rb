@@ -12,39 +12,52 @@ module Agentkit
   # Team Memory Hub (TencentDB Agent Memory implementation for AgentKit).
   # Governs team-level memory assets: ChatMemory, Skill, Wiki, CodeGraph with ACL rules.
   module TeamMemory
+    GLOBAL_TENANT_KEY = "__global__"
+
     class << self
       # Create or find a team
-      def create_team(name:, description: nil, owner_id: nil, account_id: nil, metadata: {})
+      def create_team(name:, description: nil, owner_id: nil, account_id: nil, tenant_key: nil, metadata: {})
+        scope = resolve_tenant_scope(tenant_key: tenant_key, account_id: account_id)
         Team.create(
           name: name, description: description, owner_id: owner_id,
-          account_id: account_id, metadata: metadata
+          metadata: metadata, **scope
         )
       end
 
-      def find_team(name)
-        Team.find_by_name(name)
+      def find_team(name, tenant_key: nil, account_id: nil)
+        scope = resolve_tenant_scope(tenant_key: tenant_key, account_id: account_id)
+        Team.find_by_name(name, **scope)
       end
 
       # Create a new governed memory asset
       def create_asset(asset_type:, name:, team_id: nil, visibility: "team", owner_id: nil,
-                       version: "1.0.0", status: "ready", content: {}, bindings: [])
+                       version: "1.0.0", status: "ready", content: {}, bindings: [],
+                       tenant_key: nil, account_id: nil)
+        scope = resolve_tenant_scope(tenant_key: tenant_key, account_id: account_id)
+        validate_team_scope!(team_id, **scope) if team_id
         AssetStore.create(
           asset_type: asset_type, name: name, team_id: team_id,
           visibility: visibility, owner_id: owner_id, version: version,
-          status: status, content: content, bindings: bindings
+          status: status, content: content, bindings: bindings, **scope
         )
       end
 
       # Bind an asset explicitly to an agent or entity
-      def bind_asset(asset_or_name, agent_name:, priority: 50)
-        asset = asset_or_name.is_a?(Asset) ? asset_or_name : AssetStore.find_by_name(asset_or_name)
+      def bind_asset(asset_or_name, agent_name:, priority: 50, tenant_key: nil, account_id: nil)
+        scope = resolve_tenant_scope(tenant_key: tenant_key, account_id: account_id)
+        asset = asset_or_name.is_a?(Asset) ? asset_or_name : AssetStore.find_by_name(asset_or_name, **scope)
         return nil if asset.nil?
+        if asset.tenant_key.to_s != scope[:tenant_key].to_s
+          raise ConfigurationError, "Cannot bind a TeamMemory asset from another tenant"
+        end
 
         if defined?(Agentkit::AssetBindingRecord) && ar_available?(Agentkit::AssetBindingRecord) && asset.id
           Agentkit::AssetBindingRecord.create!(
             asset_id: asset.id,
             agent_name: agent_name.to_s,
-            priority: priority
+            priority: priority,
+            tenant_key: asset.tenant_key,
+            account_id: asset.account_id
           )
         end
 
@@ -54,14 +67,19 @@ module Agentkit
       end
 
       # Load all accessible assets for an agent within a team context
-      def load_assets(team: nil, agent_name: nil, owner_id: nil, asset_type: nil)
-        team_obj = team ? (team.is_a?(Team) ? team : find_team(team)) : nil
+      def load_assets(team: nil, agent_name: nil, owner_id: nil, asset_type: nil,
+                      tenant_key: nil, account_id: nil)
+        scope = resolve_tenant_scope(tenant_key: tenant_key, account_id: account_id)
+        if team.is_a?(Team) && team.tenant_key.to_s != scope[:tenant_key].to_s
+          raise ConfigurationError, "Cannot load TeamMemory assets from another tenant"
+        end
+        team_obj = team ? (team.is_a?(Team) ? team : find_team(team, **scope)) : nil
         team_id  = team_obj&.id || (team.is_a?(Numeric) ? team : nil)
 
         all_assets = if team_id
-                       AssetStore.list_for_team(team_id, asset_type: asset_type)
+                       AssetStore.list_for_team(team_id, asset_type: asset_type, **scope)
                      else
-                       AssetStore.all
+                       AssetStore.all(**scope)
                      end
 
         ACL.filter(all_assets, agent_name: agent_name, team_id: team_id, owner_id: owner_id)
@@ -93,11 +111,34 @@ module Agentkit
         false
       end
 
+      def resolve_tenant_scope(tenant_key: nil, account_id: nil)
+        context = Context.resolve
+        resolved_key = tenant_key || context.tenant_key
+        if Agentkit.config.multi_tenant && resolved_key.nil?
+          raise ConfigurationError, "TeamMemory requires a tenant_key when multi_tenant is enabled"
+        end
+
+        resolved_account_id = account_id || id_of(context.account)
+        { tenant_key: resolved_key || GLOBAL_TENANT_KEY, account_id: resolved_account_id }
+      end
+
       def reset!
         Team.reset!
         AssetStore.reset!
         Wiki.reset!
         CodeGraph.reset!
+      end
+
+      private
+
+      def validate_team_scope!(team_id, tenant_key:, account_id: nil)
+        return if Team.find_by_id(team_id, tenant_key: tenant_key, account_id: account_id)
+
+        raise ConfigurationError, "Team #{team_id} does not belong to tenant #{tenant_key}"
+      end
+
+      def id_of(value)
+        value.respond_to?(:id) ? value.id : value
       end
     end
   end

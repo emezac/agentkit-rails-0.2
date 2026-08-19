@@ -1,3 +1,81 @@
+# Upgrading 0.2.1 → 0.3.1
+
+## Required steps
+
+1. Point the application at `agentkit-rails`, version `~> 0.3.1`.
+2. Install the engine migrations and run them:
+
+   ```bash
+   bin/rails agentkit:install:migrations
+   bin/rails db:migrate
+   ```
+
+3. Confirm that migration `010_add_agentkit_tenancy.rb` ran. It adds
+   `tenant_key` and `account_id` to RAG and Team Memory tables and replaces
+   global uniqueness constraints with tenant-scoped ones.
+4. Applications with more than one tenant must enable strict scoping:
+
+   ```ruby
+   Agentkit.configure do |config|
+     config.multi_tenant = true
+   end
+   ```
+
+5. Run every RAG and Team Memory operation inside an `Agentkit::Context`, or
+   pass `tenant_key:` explicitly. Unscoped access raises `ConfigurationError`
+   when strict scoping is enabled.
+
+   ```ruby
+   context = Agentkit::Context.new(account: current_account)
+
+   Agentkit.with_context(context) do
+     Agentkit::RAG.retrieve("refund policy", corpus_name: "handbook")
+     Agentkit::TeamMemory.load_assets(team: "Operations")
+   end
+   ```
+
+## Database security
+
+The engine now enforces tenant scope in its Ruby and ActiveRecord adapters.
+Applications that use PostgreSQL Row-Level Security should add their own RLS
+policies for the six new tables, using the same session tenant mechanism as the
+host application:
+
+- `agentkit_knowledge_chunks`
+- `agentkit_teams`
+- `agentkit_memory_assets`
+- `agentkit_wiki_pages`
+- `agentkit_code_symbols`
+- `agentkit_asset_bindings`
+
+AgentKit deliberately does not install a generic RLS policy because host
+applications differ in how they place the current tenant in a PostgreSQL
+session variable. RLS remains a second line of defence in addition to the
+engine's mandatory scopes.
+
+## Embedding dimensions
+
+The default RAG schema uses `vector(1536)`. If the configured embedding model
+returns another size, create a host migration for the desired vector dimension
+and set:
+
+```ruby
+config.rag.embedding_dimensions = 3072
+```
+
+AgentKit now raises a clear configuration error before writing a vector whose
+size does not match this setting.
+
+## Compatibility notes
+
+- Existing Agent, Flow, HITL, Memory, Audit and Factory APIs remain compatible
+  with 0.2.1.
+- Team names are unique per tenant instead of globally.
+- RAG chunk identifiers are unique per tenant and corpus.
+- `RAG.drop_corpus` only removes the current tenant's corpus.
+
+---
+
 # Upgrading 0.1 → 0.2
 
 ## TL;DR for the six existing applications

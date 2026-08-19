@@ -104,5 +104,37 @@ RSpec.describe Agentkit::RAG do
       retrieved = Agentkit::RAG.retrieve("shredded", corpus_name: "hipaa", filter: { chapter_index: 2 }, store: store)
       expect(retrieved.first["chapter_index"]).to eq(2)
     end
+
+    it "isolates identical corpus names between tenants" do
+      tenant_a = Agentkit::Context.new(tenant_key: "tenant:a")
+      tenant_b = Agentkit::Context.new(tenant_key: "tenant:b")
+
+      Agentkit.with_context(tenant_a) do
+        Agentkit::RAG.index(corpus_name: "handbook", source: "alpha-only policy", store: store)
+      end
+      Agentkit.with_context(tenant_b) do
+        Agentkit::RAG.index(corpus_name: "handbook", source: "beta-only policy", store: store)
+      end
+
+      results_a = Agentkit.with_context(tenant_a) do
+        Agentkit::RAG.retrieve("policy", corpus_name: "handbook", store: store)
+      end
+      results_b = Agentkit.with_context(tenant_b) do
+        Agentkit::RAG.retrieve("policy", corpus_name: "handbook", store: store)
+      end
+
+      expect(results_a.map { |row| row["text"] }).to contain_exactly(include("alpha-only"))
+      expect(results_b.map { |row| row["text"] }).to contain_exactly(include("beta-only"))
+    end
+
+    it "requires an explicit context when multi-tenancy is enabled" do
+      Agentkit.config.multi_tenant = true
+
+      expect do
+        Agentkit::RAG.index(corpus_name: "handbook", source: "unscoped", store: store)
+      end.to raise_error(Agentkit::ConfigurationError, /requires a tenant_key/)
+    ensure
+      Agentkit.config.multi_tenant = false
+    end
   end
 end

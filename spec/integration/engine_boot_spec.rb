@@ -97,6 +97,25 @@ RSpec.describe "Engine boot", :integration do
       expect(index).not_to be_nil
       expect(index.unique).to be(true)
     end
+
+
+    it "adds tenant boundaries to RAG and Team Memory tables" do
+      %i[
+        agentkit_knowledge_chunks agentkit_teams agentkit_memory_assets
+        agentkit_wiki_pages agentkit_code_symbols agentkit_asset_bindings
+      ].each do |table|
+        columns = ActiveRecord::Base.connection.columns(table).map(&:name)
+        expect(columns).to include("tenant_key", "account_id"), "missing tenant columns on #{table}"
+      end
+
+      knowledge_index = ActiveRecord::Base.connection.indexes(:agentkit_knowledge_chunks)
+                                         .find { |index| index.name == "idx_agentkit_knowledge_tenant_chunk" }
+      team_index = ActiveRecord::Base.connection.indexes(:agentkit_teams)
+                                    .find { |index| index.name == "idx_agentkit_teams_tenant_name" }
+
+      expect(knowledge_index.unique).to be(true)
+      expect(team_index.unique).to be(true)
+    end
   end
 end
 

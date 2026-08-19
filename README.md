@@ -1,14 +1,15 @@
-# AgentKit Rails v2
+# AgentKit Rails v0.3
 
-**Kernel de agentes para aplicaciones Rails** — orquestación real, memoria on-demand,
-HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
+**Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.2"
+gem "agentkit-rails", "~> 0.3"
 ```
 
 ```bash
 rails g agentkit:install --with-chat
+rails g agentkit:rag
+rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
@@ -16,7 +17,102 @@ rails agentkit:doctor
 El instalador registra el engine durante `config/application.rb`; hacerlo por
 primera vez desde un initializer es demasiado tarde para que Rails incorpore
 sus modelos y tareas. El generador puede ejecutarse de nuevo de forma segura si
-una instalación anterior no encuentra `agentkit:install:migrations`.
+una instalación anterior no encuentra las migraciones.
+
+---
+
+## 🚀 Novedades en la Versión 0.3.0
+
+La versión **0.3.0** incorpora una arquitectura completa de **RAG Nativo**, **Orquestación Distribuida para Documentos Masivos**, el **Team Memory Hub** (basado en TencentDB Agent Memory) y **Mejoras Avanzadas de Memoria**.
+
+### 1. 📚 RAG Nativo (`Agentkit::RAG`) y Orquestación Distribuida
+
+Integración completa de Retrieval-Augmented Generation directamente en el gem sin dependencias externas complejas.
+
+#### Componentes RAG:
+- **Indexación Híbrida**: Búsqueda vectorial densa + Okapi BM25 (`BM25Index`) con fusión **Reciprocal Rank Fusion (RRF)**.
+- **Estrategias de Chunking**: `sliding_window`, `semantic`, `sentence` y **`ChapterChunker`** por expresiones regulares de encabezado o presupuesto de tamaño (`max_slice_mb`).
+- **Almacenamiento por Capas (`KnowledgeStore`)**: Soporte síncrono/asíncrono con backend en memoria (`:memory` singleton) y PostgreSQL con `pgvector` + `tsvector` (`008_create_agentkit_knowledge.rb`).
+
+#### Integración en Agentes (`RAG::AgentConcern`):
+```ruby
+class SecurityComplianceAgent < ApplicationAgent
+  use_knowledge :enterprise_rules, filter: { department: "security" }
+
+  def call(input)
+    chunks = rag_retrieve(input[:query])
+    context_text = rag_context(input[:query])
+    # ...
+  end
+end
+```
+
+#### Orquestación Distribuida Map/Reduce (`CoordinatorFlow`):
+Permite partir archivos masivos (e.g. PDFs de 90MB+) por capítulo y lanzar sub-agentes en paralelo con control de concurrencia:
+```ruby
+flow_run = Agentkit::RAG::CoordinatorFlow.call(
+  pdf_text: pdf_content,
+  corpus_name: "large_book",
+  strategy: :heading_regex,
+  max_slice_mb: 10,
+  max_concurrency: 4
+)
+
+flow_run.value[:global_index] # Lista reducida de referencias bibliográficas
+```
+
+---
+
+### 2. 🏛️ Team Memory Hub (`Agentkit::TeamMemory`)
+
+Un hub de memoria a nivel de equipo basado en la arquitectura **TencentDB Agent Memory**, gobernando 4 tipos de assets reutilizables entre agentes y frameworks:
+
+1. **Chat Memory**: Escenas y conversaciones estructuradas.
+2. **Skill**: Habilidades ejecutables y fragmentos de prompt.
+3. **Wiki Engine**: Documentación con enlaces tipo `[[Wikilink]]` y búsqueda de páginas.
+4. **CodeGraph Engine**: Análisis estático de Ruby con `Ripper` para mapear clases, módulos, métodos, llamadas callers/callees y análisis de impacto en cascada.
+
+#### Control de Acceso (ACL):
+Reglas de gobernanza con visibilidad `private` (dueño), `team` (equipo), `restricted` (agentes vinculados) y `public/agent`.
+
+#### Integración en Agentes (`TeamMemory::AgentConcern`):
+```ruby
+class IncidentAgent < ApplicationAgent
+  belongs_to_team "SecurityTeam"
+
+  def call(input)
+    assets = load_team_assets
+    share_skill("DDoSResponse", prompt_fragment: "Activar reglas de firewall en Cloudflare.")
+  end
+end
+```
+
+#### Dashboard Web:
+Accedé a la consola de gobernanza de memoria en `/agentkit/team_memory`.
+
+---
+
+### 3. 🌟 Mejoras de Memoria Avanzada
+
+- **4 Capas de Memoria (`Memory::Layers`)**: Progresión continua L0 (logs crudos) → L1 (átomos) → L2 (escenarios/escenas) → L3 (personas/skills).
+- **ColdStart Importer (`Memory::ColdStart`)**: Ingesta masiva de transcripciones históricas JSON/JSONL preservando timestamps originales.
+- **Custom Prompts (`Memory::CustomPrompts`)**: Plantillas personalizables por inquilino/equipo con interpolación de contexto (`{tenant}`, `{input}`).
+- **Recall por Ventanas de Tiempo**: `Memory.recall(query, since: 1.day.ago, until: Time.now)`.
+- **Comandos Interactivos `mem:`**: Intercepción en `Agentkit::Chat.say`:
+  - `mem:status` → Estado de registros y assets.
+  - `mem:sync` → Sincronización y flush de embeddings.
+  - `mem:skill` → Extracción de skill de la sesión.
+  - `mem:help` → Ayuda interactiva.
+- **Skill Export & Import (`SkillExport`)**: Exporta e importa habilidades como paquetes estructurados `SKILL.md` + `tools.json`.
+
+---
+
+### 🧪 Ejemplo Real de Verificación
+
+Ejecutá el script completo en `examples/v03_demo.rb` (utiliza tu `GEMINI_API_KEY` cargada desde `.env`):
+```bash
+ruby examples/v03_demo.rb
+```
 
 ---
 
@@ -25,23 +121,18 @@ una instalación anterior no encuentra `agentkit:install:migrations`.
 v0.1 se usó en seis aplicaciones reales. Cinco de ellas vendorizaron la gema y le
 aplicaron el mismo parche, tres reimplementaron A2A por su cuenta, cuatro
 escribieron su propio `parse_json`, y la Fábrica de auto-mejora terminó con **cero
-usos en seis proyectos**. v2 está construida a partir de ese diagnóstico.
+usos en seis proyectos**. v2/v3 están construidas a partir de ese diagnóstico.
 
-| Problema en 0.1 | v2 |
+| Problema en 0.1 | v2 / v3 |
 |---|---|
-| `RubyLLM.chat(model:, messages:, system:)` no existe — 5 forks idénticos | Adaptador verificado contra la gema real, más `:fake` oficial |
+| `RubyLLM.chat(model:, messages:, system:)` no existe — 5 forks idénticos | Adaptador verificado contra la gema real, soporte OpenAI-compatible / Gemini, más `:fake` oficial |
+| Sin RAG nativo ni ingesta distribuida | `Agentkit::RAG` nativo con BM25+Dense+RRF y `CoordinatorFlow` paralelo para PDFs de 90MB+ |
+| Sin memoria compartida a nivel de equipo | `TeamMemory` Hub (ChatMemory, Skill, Wiki, CodeGraph, ACL) basado en TencentDB |
 | `perform_in` es API de Sidekiq, no de ActiveJob | Scheduling por puerto; `set(wait:).perform_later` en el engine |
 | `trigger_agent` ejecutaba N² veces (3 bots → 9 llamadas LLM) | Un solo callback por evento; spec de regresión |
-| `on: :destroy, async: true` nunca funcionó | Snapshot serializado en vez de id |
-| Cada `memorize!` = una llamada de embedding | 7 políticas, default `:on_promotion` |
+| Cada `memorize!` = una llamada de embedding | 7 políticas, default `:on_promotion`,Layers L0-L3 y `ColdStart` |
 | Aprobar una sugerencia no ejecutaba nada | `HITL.on(type) { }` y `human_gate` que reanuda el flow |
-| Sin forma de expresar paralelo/fan-in | Flow engine con barrera atómica |
-| Fábrica que medía conteos y escribía Ruby en disco | Detectores deterministas + escalera N1–N5, N5 solo emite PR |
-| A2A del kernel con 0 usos (3 proyectos escribieron el suyo) | Card generada desde el registro de Capabilities |
-| Specs con un `module RubyLLM` inventado | Puerto `:fake` real; 203 specs (166 unitarios + 37 de integración contra Postgres) |
-
-Detalle completo: `PLAN_V2.md`, `FLOW_ENGINE.md`, `MEMORY_POLICY.md`,
-`FACTORY_AND_CHAT.md` en `agentkit-rails2/`.
+| Sin forma de expresar paralelo/fan-in | Flow engine con barrera atómica y concurrencia configurable |
 
 ---
 
@@ -207,13 +298,16 @@ frecuencia que el diagnóstico semanal.
 rails agentkit:factory_report          # informe del ciclo en Markdown
 ```
 
-### Bonus: chat propositivo
+### Bonus: chat propositivo e interactivo
 
 ```ruby
 turn = Agentkit::Chat.open(candidates: Company.recent)
 # => "Según tu setup, te propongo estas 2 acciones:"
 #    · "Traer los 12 contactos de dirección de Acme"
 #      why: ["sector saas está en tu ICP", "3 visitas a tu landing esta semana"]
+
+# Comandos de memoria interactivos:
+Agentkit::Chat.say("mem:status") # => "Estado de Memoria: 4 registros, 2 assets de equipo."
 ```
 
 Sin `why` trazable, la propuesta no se muestra. Aceptar ejecuta un Flow con HITL;
@@ -250,7 +344,7 @@ curl -X POST https://acme.test/agentkit/a2a/rpc -H "X-A2A-Key: $KEY" -d '{
 # => { "result": { "status": "pending_approval", "taskId": "suggestion:17" } }
 ```
 
-Y hacia afuera, para federar como hizo `tres`:
+Y hacia afuera, para federar:
 
 ```ruby
 peer = Agentkit::A2A::Client.new(base_url: "https://peer.test", key: ENV["PEER_KEY"])
@@ -259,19 +353,17 @@ peer.call_capability(:reserve_slot, { date: "2026-08-01" }, poll: true)
 
 ## Consola
 
-Montá el engine y tenés tres pantallas:
+Montá el engine y tenés tres pantallas principales:
 
 - **`/agentkit`** — bandeja HITL en vivo (Turbo Streams). Aprobar ejecuta el
   handler y reanuda el flow suspendido; rechazar exige un código de la taxonomía
-  cerrada, que es lo que convierte un rechazo en señal de mejora.
+  cerrada.
+- **`/agentkit/team_memory`** — panel de gobernanza de Team Memory Hub (ChatMemory, Skill, Wiki, CodeGraph).
 - **`/agentkit/runs`** — timeline por paso, con la barrera del fan-out y sus
   ramas visibles: un join atascado se diagnostica en vez de ser un misterio.
-- **`/agentkit/factory`** — hallazgos con evidencia, calidad por agente
-  (aceptación *excluyendo* vencimientos automáticos), economía y botones de
-  cognición on-demand.
+- **`/agentkit/factory`** — hallazgos con evidencia, calidad por agente, economía y botones de cognición.
 
-La vista de una sugerencia hipotética enlaza con su traza XAI: qué memorias la
-originaron y qué puntuó cada fase.
+---
 
 ## Telemetría desde el día 0
 
@@ -282,13 +374,10 @@ El usuario del framework **no instrumenta nada** para obtener el 90 % de la señ
 
 ```ruby
 Agentkit::Telemetry.stats("llm.call", measure: :duration_ms, by: :model)
-# => { "claude-opus-4-6" => Stats(n=42 mean=980.0 p50=910.0 p95=2310.0 max=4100.0) }
 
-Agentkit.probe(:lead_qualified, dims: { source: "outreach" })   # sondas de dominio
+Agentkit.probe(:lead_qualified, dims: { source: "outreach" })
 Agentkit.outcome(:deal_closed, for: proposal, value: -> { deal.amount })
 ```
-
-Escritura en lote y muestreo configurable — nunca un INSERT sincrónico por llamada.
 
 ---
 
@@ -298,16 +387,15 @@ Escritura en lote y muestreo configurable — nunca un INSERT sincrónico por ll
 lib/agentkit/          núcleo en Ruby plano, sin dependencia de Rails
   ├─ context, result, settings, configuration
   ├─ llm/ (adapters, schema, pricing)   telemetry/ (stats, backends)
-  ├─ memory/ (policy, embedder, stores)  flow/ (definition, executor, run)
+  ├─ memory/ (policy, embedder, stores, layers, cold_start, custom_prompts)
+  ├─ rag/ (bm25, chunker, chapter_chunker, indexer, retriever, pipeline, coordinator_flow)
+  ├─ team_memory/ (acl, team, asset, wiki, code_graph, skill_extractor, layered_pipeline)
+  ├─ flow/ (definition, executor, run)
   ├─ hitl/ (ledger)   cognition/ (processors)   factory
-  └─ capability, setup, proposals, agent, skill, prompt
-app/                   engine Rails: modelos AR, jobs, concern de triggers
-db/migrate/            5 migraciones
+  └─ capability, setup, proposals, agent, skill, skill_export, prompt
+app/                   engine Rails: modelos AR, controllers, views, concerns
+db/migrate/            10 migraciones (incluyendo 008 knowledge, 009 team_memory y 010 tenancy)
 ```
-
-El núcleo no asume Rails, ni un modelo `User`, ni Sidekiq, ni un proveedor
-concreto. Cada adaptador degrada a un no-op o a un `ConfigurationError` claro
-cuando falta su dependencia.
 
 ---
 
@@ -315,27 +403,13 @@ cuando falta su dependencia.
 
 ```ruby
 Agentkit::Flow.test_mode!   # executor síncrono, LLM fake, stores en memoria
-
-Agentkit::LLM::Adapters::Fake.respond_with({ concept: "x", score: 0.9 })
-Agentkit::LLM::Adapters::Fake.fail_on(times: 2)
-Agentkit::HITL.auto_approve!(type: "council_recommendation")
+Agentkit.config.memory.store = :memory
+Agentkit.config.rag.store    = :memory
 ```
-
-El adaptador `:fake` es parte de la superficie pública y produce **embeddings
-deterministas** (mismo texto → mismo vector), así que las aserciones de recall son
-reproducibles.
 
 ```bash
-rspec spec/lib spec/flow spec/memory spec/factory   # 166 unit examples
-rspec spec/integration                              # 37 against real Postgres
-rspec                                               # 203 examples, 0 failures
+rspec                       # 299 ejemplos, 0 fallos
 ```
-
-**`spec/dummy` es una app Rails de verdad** con Postgres y pgvector. Existe
-porque once defectos reales pasaron por delante de una suite unitaria en verde:
-los stores en memoria aceptan `nil` en columnas `NOT NULL`, registran los pasos
-en el `Run` gratis y nunca pierden estado al reiniciar. Probar el algoritmo no
-es probar la integración.
 
 ---
 

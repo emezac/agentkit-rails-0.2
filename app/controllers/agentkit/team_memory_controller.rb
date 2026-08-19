@@ -3,9 +3,10 @@
 module Agentkit
   class TeamMemoryController < ApplicationController
     def index
+      scope = tenant_scope
       @team_name = params[:team] || "default"
-      @team      = Agentkit::TeamMemory.find_team(@team_name)
-      @assets    = Agentkit::TeamMemory.load_assets(team: @team_name)
+      @team      = Agentkit::TeamMemory.find_team(@team_name, **scope)
+      @assets    = Agentkit::TeamMemory.load_assets(team: @team_name, **scope)
       @skills    = @assets.select { |a| a.asset_type == "skill" }
       @wikis     = @assets.select { |a| a.asset_type == "wiki" }
       @graphs    = @assets.select { |a| a.asset_type == "code_graph" }
@@ -13,14 +14,26 @@ module Agentkit
     end
 
     def create_asset
+      scope = tenant_scope
       asset = Agentkit::TeamMemory.create_asset(
         asset_type: params[:asset_type],
         name: params[:name],
         team_id: params[:team_id],
         visibility: params[:visibility] || "team",
-        content: { "description" => params[:description] }
+        content: { "description" => params[:description] },
+        **scope
       )
       redirect_to team_memory_index_path(team: params[:team]), notice: "Asset #{asset.name} creado."
+    end
+
+    private
+
+    def tenant_scope
+      context = agentkit_context
+      {
+        tenant_key: context.tenant_key,
+        account_id: context.account.respond_to?(:id) ? context.account.id : context.account
+      }
     end
   end
 end

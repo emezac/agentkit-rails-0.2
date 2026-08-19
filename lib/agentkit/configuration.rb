@@ -270,6 +270,7 @@ module Agentkit
     setting :max_concurrency,   default: 9
     setting :chapter_detection, default: :heading_regex
     setting :store,             default: :active_record
+    setting :embedding_dimensions, default: 1536
   end
 
   # ─── Team Memory ─────────────────────────────────────────────────────────────

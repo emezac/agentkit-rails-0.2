@@ -83,6 +83,8 @@ module Agentkit
           if defined?(Agentkit::CodeSymbolRecord) && TeamMemory.ar_available?(Agentkit::CodeSymbolRecord) && asset.id
             rec = Agentkit::CodeSymbolRecord.create!(
               asset_id: asset.id,
+              tenant_key: asset.tenant_key,
+              account_id: asset.account_id,
               name: name,
               symbol_type: symbol_type,
               file_path: file_path,

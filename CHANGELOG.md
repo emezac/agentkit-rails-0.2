@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.1 — Unreleased
+
+### Fixed
+
+- Restored Ruby 3.1/3.2 parser compatibility for the in-memory HITL store.
+- Added tenant-scoped persistence and lookup for RAG corpora, teams, assets,
+  wiki pages, code symbols, and asset bindings.
+- Added migration `010_add_agentkit_tenancy.rb` so an existing 0.3 database can
+  gain tenant boundaries without replaying already-applied migrations.
+- Rejects unscoped RAG and Team Memory operations when `multi_tenant` is enabled.
+- Rejects assets linked to a team owned by another tenant.
+- Validates RAG embedding dimensions before PostgreSQL attempts to store them.
+- Generator failures are no longer mislabeled as harmless duplicate migrations.
+- Corrected migration numbering and removed a merge-conflict artifact from the documentation.
+
 ## 0.3.0 — Native RAG & Team Memory Hub
 
 ### Added
@@ -7,7 +22,7 @@
 - **Épica 1 — RAG Nativo (`Agentkit::RAG`)**:
   - Full retrieval-augmented generation engine: BM25, Sliding Window / Semantic / Sentence Chunker, Indexer, Retriever (Vector + BM25 + RRF fusion), and Pipeline with streaming support.
   - `ChapterChunker` and `CorpusSlice` for chapter/heading-based document partitioning.
-  - `KnowledgeStore` with `:memory` (singleton) and `:active_record` backends, metadata filtering, and pgvector + tsvector schema (`007_create_agentkit_knowledge.rb`).
+  - `KnowledgeStore` with `:memory` (singleton) and `:active_record` backends, metadata filtering, and pgvector + tsvector schema (`008_create_agentkit_knowledge.rb`).
   - `Agentkit::RAG::AgentConcern` mixed into `Agentkit::Agent`: `use_knowledge`, `rag_retrieve`, `rag_index_slice`, `rag_generate`, `rag_context`.
 
 - **Épica 1.5 — Orquestación RAG Distribuida**:
@@ -24,7 +39,7 @@
   - `SkillExtractor` for auto-generating executable skills from chat transcripts.
   - `LayeredPipeline` (L0 raw → L1 atoms → L2 scenes → L3 persona/skills).
   - `TeamMemory::AgentConcern` mixed into `Agent`: `join_team`, `share_skill`, `load_team_assets`, `equip_team_assets`.
-  - Migration `008_create_agentkit_team_memory.rb` and ActiveRecord models (`TeamRecord`, `MemoryAssetRecord`, `WikiPageRecord`, `CodeSymbolRecord`, `AssetBindingRecord`).
+  - Migration `009_create_agentkit_team_memory.rb` and ActiveRecord models (`TeamRecord`, `MemoryAssetRecord`, `WikiPageRecord`, `CodeSymbolRecord`, `AssetBindingRecord`).
   - Web dashboard in `/agentkit/team_memory`.
 
 - **Épica 3 — Mejoras de Memoria Avanzada**:
@@ -38,9 +53,7 @@
 - **Épica 4 — Generadores Rails**:
   - `rails g agentkit:rag` for scaffolded RAG configuration & migration.
   - `rails g agentkit:team_memory` for scaffolded Team Memory Hub & migration.
-=======
-## Unreleased
-
+  - Migration `010_add_agentkit_tenancy.rb` upgrades existing 0.3 installations with tenant-scoped RAG and Team Memory records.
 ### Fixed
 
 - Added the conventional `agentkit-rails` Bundler entrypoint. It explicitly

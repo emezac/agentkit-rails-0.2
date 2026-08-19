@@ -153,4 +153,64 @@ RSpec.describe Agentkit::TeamMemory do
       expect(assets.map(&:name)).to include("ScanVulnerabilities")
     end
   end
+
+
+  describe "tenant isolation" do
+    it "keeps teams and identically named assets inside their tenant" do
+      tenant_a = Agentkit::Context.new(tenant_key: "team-tenant:a")
+      tenant_b = Agentkit::Context.new(tenant_key: "team-tenant:b")
+
+      team_a = Agentkit.with_context(tenant_a) { described_class.create_team(name: "Operations") }
+      team_b = Agentkit.with_context(tenant_b) { described_class.create_team(name: "Operations") }
+      Agentkit.with_context(tenant_a) do
+        described_class.create_asset(asset_type: "skill", name: "Deploy", team_id: team_a.id)
+      end
+      Agentkit.with_context(tenant_b) do
+        described_class.create_asset(asset_type: "skill", name: "Deploy", team_id: team_b.id)
+      end
+
+      assets_a = Agentkit.with_context(tenant_a) { described_class.load_assets(team: "Operations") }
+      assets_b = Agentkit.with_context(tenant_b) { described_class.load_assets(team: "Operations") }
+
+      expect(team_a.tenant_key).to eq("team-tenant:a")
+      expect(team_b.tenant_key).to eq("team-tenant:b")
+      expect(assets_a.map(&:tenant_key)).to contain_exactly("team-tenant:a")
+      expect(assets_b.map(&:tenant_key)).to contain_exactly("team-tenant:b")
+    end
+
+    it "rejects unscoped operations when multi-tenancy is enabled" do
+      Agentkit.config.multi_tenant = true
+
+      expect { described_class.create_team(name: "Unscoped") }
+        .to raise_error(Agentkit::ConfigurationError, /requires a tenant_key/)
+    ensure
+      Agentkit.config.multi_tenant = false
+    end
+
+
+    it "rejects an asset linked to another tenant's team" do
+      tenant_a = Agentkit::Context.new(tenant_key: "team-owner:a")
+      tenant_b = Agentkit::Context.new(tenant_key: "team-owner:b")
+      team_a = Agentkit.with_context(tenant_a) { described_class.create_team(name: "Private Operations") }
+
+      expect do
+        Agentkit.with_context(tenant_b) do
+          described_class.create_asset(asset_type: "skill", name: "CrossTenant", team_id: team_a.id)
+        end
+      end.to raise_error(Agentkit::ConfigurationError, /does not belong to tenant/)
+    end
+
+
+    it "enforces the same boundary through specialized asset stores" do
+      tenant_a = Agentkit::Context.new(tenant_key: "wiki-owner:a")
+      tenant_b = Agentkit::Context.new(tenant_key: "wiki-owner:b")
+      team_a = Agentkit.with_context(tenant_a) { described_class.create_team(name: "Private Wiki") }
+
+      expect do
+        Agentkit.with_context(tenant_b) do
+          described_class::Wiki.create_wiki(name: "CrossTenantWiki", team_id: team_a.id)
+        end
+      end.to raise_error(Agentkit::ConfigurationError, /does not belong to tenant/)
+    end
+  end
 end

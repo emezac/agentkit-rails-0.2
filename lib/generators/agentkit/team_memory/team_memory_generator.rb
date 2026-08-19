@@ -6,7 +6,7 @@ require "rails/generators/migration"
 module Agentkit
   module Generators
     # `rails g agentkit:team_memory`
-    # Scaffolds Team Memory Hub configuration and copies migration 008_create_agentkit_team_memory.rb.
+    # Scaffolds Team Memory Hub configuration and copies migration 009_create_agentkit_team_memory.rb.
     class TeamMemoryGenerator < Rails::Generators::Base
       include Rails::Generators::Migration
 
@@ -17,11 +17,9 @@ module Agentkit
 
       def copy_migration
         migration_template(
-          File.expand_path("../../../../db/migrate/008_create_agentkit_team_memory.rb", __dir__),
+          File.expand_path("../../../../db/migrate/009_create_agentkit_team_memory.rb", __dir__),
           "db/migrate/create_agentkit_team_memory.rb"
         )
-      rescue StandardError => e
-        say "Migration already exists or skipped: #{e.message}", :yellow
       end
 
       def show_next_steps

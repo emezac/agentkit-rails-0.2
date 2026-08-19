@@ -20,39 +20,42 @@ module Agentkit
       end
 
       class Base
-        def insert_chunks(corpus_name, chunks, embeddings: []) = raise NotImplementedError
-        def keyword_search(corpus_name, query, limit: 50, filter: {}) = raise NotImplementedError
-        def vector_search(corpus_name, vector, limit: 5, threshold: 0.3, filter: {}) = raise NotImplementedError
-        def cleanup_partial_index(corpus_name) = raise NotImplementedError
-        def drop_corpus(corpus_name) = raise NotImplementedError
-        def count(corpus_name = nil) = raise NotImplementedError
-        def delete_all = raise NotImplementedError
+        def insert_chunks(corpus_name, chunks, embeddings: [], tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def keyword_search(corpus_name, query, limit: 50, filter: {}, tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def vector_search(corpus_name, vector, limit: 5, threshold: 0.3, filter: {}, tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def cleanup_partial_index(corpus_name, tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def drop_corpus(corpus_name, tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def count(corpus_name = nil, tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def delete_all(tenant_key: nil, account_id: nil) = raise NotImplementedError
       end
 
       # ─── In-memory Store ───────────────────────────────────────────────────
 
       class InMemoryStore < Base
         def initialize
-          @chunks = {} # corpus_name => Array of Hash chunks
+          @chunks = {} # [tenant_key, corpus_name] => Array of Hash chunks
           @mutex = Mutex.new
         end
 
-        def insert_chunks(corpus_name, chunks, embeddings: [])
+        def insert_chunks(corpus_name, chunks, embeddings: [], tenant_key: nil, account_id: nil)
+          key = storage_key(corpus_name, tenant_key)
           @mutex.synchronize do
-            @chunks[corpus_name.to_s] ||= []
+            @chunks[key] ||= []
             chunks.each_with_index do |c, i|
               emb = embeddings[i]
               record = c.dup.transform_keys(&:to_s)
               record["corpus_name"] = corpus_name.to_s
+              record["tenant_key"] = tenant_key
+              record["account_id"] = account_id
               record["embedding"] = emb
-              @chunks[corpus_name.to_s] << record
+              @chunks[key] << record
             end
           end
           chunks.size
         end
 
-        def keyword_search(corpus_name, query, limit: 50, filter: {})
-          pool = @chunks[corpus_name.to_s] || []
+        def keyword_search(corpus_name, query, limit: 50, filter: {}, tenant_key: nil, account_id: nil)
+          pool = @chunks[storage_key(corpus_name, tenant_key)] || []
           terms = tokenize(query)
           return [] if terms.empty? || pool.empty?
 
@@ -67,8 +70,8 @@ module Agentkit
           scored.sort_by { |(_, s)| -s }.first(limit).map(&:first)
         end
 
-        def vector_search(corpus_name, vector, limit: 5, threshold: 0.3, filter: {})
-          pool = @chunks[corpus_name.to_s] || []
+        def vector_search(corpus_name, vector, limit: 5, threshold: 0.3, filter: {}, tenant_key: nil, account_id: nil)
+          pool = @chunks[storage_key(corpus_name, tenant_key)] || []
           return [] if pool.empty? || vector.nil?
 
           pool.filter_map do |chunk|
@@ -81,21 +84,25 @@ module Agentkit
           end.sort_by { |(_, d)| d }.first(limit)
         end
 
-        def cleanup_partial_index(corpus_name)
-          @mutex.synchronize { @chunks.delete(corpus_name.to_s) }
+        def cleanup_partial_index(corpus_name, tenant_key: nil, account_id: nil)
+          @mutex.synchronize { @chunks.delete(storage_key(corpus_name, tenant_key)) }
         end
         alias drop_corpus cleanup_partial_index
 
-        def count(corpus_name = nil)
+        def count(corpus_name = nil, tenant_key: nil, account_id: nil)
           if corpus_name
-            (@chunks[corpus_name.to_s] || []).size
+            (@chunks[storage_key(corpus_name, tenant_key)] || []).size
+          elsif tenant_key
+            @chunks.sum { |(key, _corpus), rows| key == tenant_key.to_s ? rows.size : 0 }
           else
             @chunks.values.sum(&:size)
           end
         end
 
-        def delete_all
-          @mutex.synchronize { @chunks.clear }
+        def delete_all(tenant_key: nil, account_id: nil)
+          @mutex.synchronize do
+            tenant_key ? @chunks.delete_if { |(key, _corpus), _rows| key == tenant_key.to_s } : @chunks.clear
+          end
         end
 
         private
@@ -108,6 +115,10 @@ module Agentkit
             val = chunk[k.to_sym] if val.nil?
             val == v || val.to_s == v.to_s
           end
+        end
+
+        def storage_key(corpus_name, tenant_key)
+          [tenant_key.to_s, corpus_name.to_s]
         end
 
         private
@@ -139,11 +150,14 @@ module Agentkit
           Agentkit::KnowledgeChunkRecord
         end
 
-        def insert_chunks(corpus_name, chunks, embeddings: [])
+        def insert_chunks(corpus_name, chunks, embeddings: [], tenant_key: nil, account_id: nil)
+          validate_embedding_dimensions!(embeddings)
           rows = chunks.each_with_index.map do |c, i|
             emb = embeddings[i]
             {
               corpus_name:   corpus_name.to_s,
+              tenant_key:    tenant_key,
+              account_id:    account_id,
               chunk_id:      c["id"] || c[:id] || SecureRandom.uuid,
               chapter_index: c["chapter_index"] || c[:chapter_index],
               chapter_title: c["chapter_title"] || c[:chapter_title],
@@ -161,11 +175,11 @@ module Agentkit
           rows.size
         end
 
-        def keyword_search(corpus_name, query, limit: 50, filter: {})
+        def keyword_search(corpus_name, query, limit: 50, filter: {}, tenant_key: nil, account_id: nil)
           terms = query.to_s.strip
           return [] if terms.empty?
 
-          rel = model.where(corpus_name: corpus_name.to_s)
+          rel = tenant_relation(tenant_key, account_id).where(corpus_name: corpus_name.to_s)
           rel = rel.where(chapter_index: filter[:chapter_index]) if filter[:chapter_index]
 
           rel.where("search_vector @@ plainto_tsquery('simple', ?) OR content % ?", terms, terms)
@@ -174,9 +188,9 @@ module Agentkit
              .map(&:to_hash)
         end
 
-        def vector_search(corpus_name, vector, limit: 5, threshold: 0.3, filter: {})
+        def vector_search(corpus_name, vector, limit: 5, threshold: 0.3, filter: {}, tenant_key: nil, account_id: nil)
           literal = "[#{vector.join(',')}]"
-          rel = model.where(corpus_name: corpus_name.to_s).where.not(embedding: nil)
+          rel = tenant_relation(tenant_key, account_id).where(corpus_name: corpus_name.to_s).where.not(embedding: nil)
           rel = rel.where(chapter_index: filter[:chapter_index]) if filter[:chapter_index]
 
           rows = rel.where("embedding <=> CAST(? AS vector) < ?", literal, threshold)
@@ -186,17 +200,36 @@ module Agentkit
           rows.map { |r| [r.to_hash, r.attributes["distance"].to_f] }
         end
 
-        def cleanup_partial_index(corpus_name)
-          model.where(corpus_name: corpus_name.to_s).delete_all
+        def cleanup_partial_index(corpus_name, tenant_key: nil, account_id: nil)
+          tenant_relation(tenant_key, account_id).where(corpus_name: corpus_name.to_s).delete_all
         end
         alias drop_corpus cleanup_partial_index
 
-        def count(corpus_name = nil)
-          corpus_name ? model.where(corpus_name: corpus_name.to_s).count : model.count
+        def count(corpus_name = nil, tenant_key: nil, account_id: nil)
+          relation = tenant_relation(tenant_key, account_id)
+          corpus_name ? relation.where(corpus_name: corpus_name.to_s).count : relation.count
         end
 
-        def delete_all
-          model.delete_all
+        def delete_all(tenant_key: nil, account_id: nil)
+          tenant_key || account_id ? tenant_relation(tenant_key, account_id).delete_all : model.delete_all
+        end
+
+        private
+
+        def validate_embedding_dimensions!(embeddings)
+          expected = Agentkit.config.rag.embedding_dimensions.to_i
+          invalid = embeddings.compact.find { |embedding| embedding.length != expected }
+          return unless invalid
+
+          raise ConfigurationError,
+                "RAG embedding has #{invalid.length} dimensions; configured schema expects #{expected}"
+        end
+
+        def tenant_relation(tenant_key, account_id)
+          relation = model.all
+          relation = relation.where(tenant_key: tenant_key) if tenant_key
+          relation = relation.where(account_id: account_id) if account_id
+          relation
         end
       end
     end

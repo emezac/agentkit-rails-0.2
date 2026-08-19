@@ -13,6 +13,7 @@ module Agentkit
     VISIBILITIES = %w[private team restricted agent public].freeze
 
     validates :asset_type, presence: true, inclusion: { in: ASSET_TYPES }
+    validates :tenant_key, presence: true
     validates :name, presence: true
     validates :visibility, inclusion: { in: VISIBILITIES }
 
@@ -29,7 +30,9 @@ module Agentkit
         "usage_count" => usage_count,
         "content"     => content,
         "bindings"    => bindings,
-        "created_at"  => created_at
+        "created_at"  => created_at,
+        "tenant_key"  => tenant_key,
+        "account_id"  => account_id
       }
     end
   end

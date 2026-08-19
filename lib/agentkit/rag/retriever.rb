@@ -4,12 +4,13 @@ module Agentkit
   module RAG
     # Hybrid retriever combining dense vector search and BM25 sparse keyword search via RRF.
     class Retriever
-      def initialize(store: nil, config: nil)
+      def initialize(store: nil, config: nil, tenant_key: nil, account_id: nil)
         @config = config || Agentkit.config.rag
         @store  = store || KnowledgeStore.build(@config.store)
+        @tenant_scope = RAG.resolve_tenant_scope(tenant_key: tenant_key, account_id: account_id)
       end
 
-      attr_reader :config, :store
+      attr_reader :config, :store, :tenant_scope
 
       def retrieve(query, corpus_name: "default_corpus", top_k: nil, filter: {})
         top_k ||= config.top_k
@@ -30,14 +31,16 @@ module Agentkit
         q_emb = query_vector(query)
         return retrieve_bm25(corpus_name, query, fetch_k: fetch_k, filter: filter) if q_emb.nil?
 
-        results = store.vector_search(corpus_name, q_emb, limit: fetch_k, threshold: 0.8, filter: filter)
+        results = store.vector_search(
+          corpus_name, q_emb, limit: fetch_k, threshold: 0.8, filter: filter, **tenant_scope
+        )
         results.map do |doc, dist|
           doc.merge("score" => 1.0 - dist, "distance" => dist)
         end
       end
 
       def retrieve_bm25(corpus_name, query, fetch_k:, filter:)
-        store.keyword_search(corpus_name, query, limit: fetch_k, filter: filter).map do |doc|
+        store.keyword_search(corpus_name, query, limit: fetch_k, filter: filter, **tenant_scope).map do |doc|
           doc.merge("bm25_score" => 1.0)
         end
       end
@@ -65,7 +68,7 @@ module Agentkit
       end
 
       def query_vector(query)
-        Memory.embedder.query_vector(query, Agentkit.config.memory) || Array.new(1536) { rand }
+        Memory.embedder.query_vector(query, Agentkit.config.memory) || Array.new(config.embedding_dimensions) { rand }
       rescue StandardError
         nil
       end

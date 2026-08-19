@@ -3,6 +3,8 @@
 class CreateAgentkitKnowledge < ActiveRecord::Migration[7.1]
   def change
     create_table :agentkit_knowledge_chunks do |t|
+      t.string  :tenant_key,   null: false, default: "__global__"
+      t.bigint  :account_id
       t.string  :corpus_name,   null: false
       t.string  :chunk_id,      null: false
       t.integer :chapter_index
@@ -23,11 +25,14 @@ class CreateAgentkitKnowledge < ActiveRecord::Migration[7.1]
     execute <<~SQL
       ALTER TABLE agentkit_knowledge_chunks
       ADD COLUMN search_vector tsvector
-      GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content, '')));
+      GENERATED ALWAYS AS (to_tsvector('simple', coalesce(content, ''))) STORED;
     SQL
 
-    add_index :agentkit_knowledge_chunks, %i[corpus_name chunk_id], unique: true
-    add_index :agentkit_knowledge_chunks, %i[corpus_name chapter_index]
+    add_index :agentkit_knowledge_chunks, %i[tenant_key corpus_name chunk_id],
+              unique: true, name: "idx_agentkit_knowledge_tenant_chunk"
+    add_index :agentkit_knowledge_chunks, %i[tenant_key corpus_name chapter_index],
+              name: "idx_agentkit_knowledge_tenant_chapter"
+    add_index :agentkit_knowledge_chunks, :account_id
     add_index :agentkit_knowledge_chunks, :search_vector, using: :gin
     add_index :agentkit_knowledge_chunks, :content, using: :gin, opclass: :gin_trgm_ops
 

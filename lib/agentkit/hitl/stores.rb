@@ -19,7 +19,11 @@ module Agentkit
         end
 
         def [](id)        = @rows[id]
-        def []=(id, row)  = @rows[id] = row
+
+        def []=(id, row)
+          @rows[id] = row
+        end
+
         def values        = @rows.values
         def key?(id)      = @rows.key?(id)
 

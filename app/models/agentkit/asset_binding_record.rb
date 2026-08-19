@@ -7,6 +7,7 @@ module Agentkit
     belongs_to :asset, class_name: "Agentkit::MemoryAssetRecord"
 
     validates :agent_name, presence: true
+    validates :tenant_key, presence: true
 
     def to_h
       {
