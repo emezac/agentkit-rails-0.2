@@ -16,21 +16,27 @@ module Agentkit
         top_k ||= config.top_k
         fetch_k = filter.any? ? top_k * 3 : top_k * 2
 
+        q_emb = query_vector(query)
+        if q_emb.nil?
+          emit_degraded(corpus_name)
+          return mark_strategy(
+            retrieve_bm25(corpus_name, query, fetch_k: top_k, filter: filter),
+            "keyword_only"
+          )
+        end
+
         if config.hybrid_search
-          vec_res  = retrieve_vector(corpus_name, query, fetch_k: fetch_k, filter: filter)
+          vec_res  = retrieve_vector(corpus_name, q_emb, fetch_k: fetch_k, filter: filter)
           bm25_res = retrieve_bm25(corpus_name, query, fetch_k: fetch_k, filter: filter)
-          rrf_combine(vec_res, bm25_res, top_k: top_k, rrf_k: config.rrf_k)
+          mark_strategy(rrf_combine(vec_res, bm25_res, top_k: top_k, rrf_k: config.rrf_k), "hybrid")
         else
-          retrieve_vector(corpus_name, query, fetch_k: top_k, filter: filter)
+          mark_strategy(retrieve_vector(corpus_name, q_emb, fetch_k: top_k, filter: filter), "vector")
         end
       end
 
       private
 
-      def retrieve_vector(corpus_name, query, fetch_k:, filter:)
-        q_emb = query_vector(query)
-        return retrieve_bm25(corpus_name, query, fetch_k: fetch_k, filter: filter) if q_emb.nil?
-
+      def retrieve_vector(corpus_name, q_emb, fetch_k:, filter:)
         results = store.vector_search(
           corpus_name, q_emb, limit: fetch_k, threshold: 0.8, filter: filter, **tenant_scope
         )
@@ -68,9 +74,22 @@ module Agentkit
       end
 
       def query_vector(query)
-        Memory.embedder.query_vector(query, Agentkit.config.memory) || Array.new(config.embedding_dimensions) { rand }
+        Memory.embedder.query_vector(query, Agentkit.config.memory)
       rescue StandardError
         nil
+      end
+
+      def mark_strategy(results, strategy)
+        results.map { |doc| doc.merge("retrieval_strategy" => strategy) }
+      end
+
+      def emit_degraded(corpus_name)
+        Telemetry.emit(
+          "rag.retrieval.degraded",
+          dims: { cause: "query_embedding_unavailable", strategy: "keyword_only",
+                  corpus: corpus_name.to_s, tenant: tenant_scope[:tenant_key] },
+          measures: { count: 1 }
+        )
       end
     end
   end

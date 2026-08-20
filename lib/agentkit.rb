@@ -9,6 +9,7 @@ require_relative "agentkit/errors"
 require_relative "agentkit/settings"
 require_relative "agentkit/configuration"
 require_relative "agentkit/context"
+require_relative "agentkit/scope"
 require_relative "agentkit/result"
 
 require_relative "agentkit/telemetry"

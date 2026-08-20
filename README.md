@@ -408,7 +408,8 @@ Agentkit.config.rag.store    = :memory
 ```
 
 ```bash
-rspec                       # 299 ejemplos, 0 fallos
+bundle install
+bundle exec rake verify     # validación sintáctica + suite completa
 ```
 
 ---

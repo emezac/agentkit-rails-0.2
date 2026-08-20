@@ -8,6 +8,7 @@ module Agentkit
     scope :reviewed, -> { where(reviewed: true) }
 
     validates :agent_name, presence: true
-    validates :suggestion_id, uniqueness: { scope: :agent_name }, allow_nil: true
+    validates :tenant_key, presence: true
+    validates :suggestion_id, uniqueness: { scope: %i[tenant_key agent_name] }, allow_nil: true
   end
 end

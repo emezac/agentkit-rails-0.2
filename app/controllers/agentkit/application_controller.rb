@@ -7,6 +7,7 @@ module Agentkit
     protect_from_forgery with: :exception
 
     before_action :require_agentkit_access!
+    around_action :with_agentkit_scope
 
     # The factory view reads it to label the reporting period. Without this it
     # is a private controller method and the panel raises NameError on render —
@@ -14,6 +15,10 @@ module Agentkit
     helper_method :window
 
     private
+
+    def with_agentkit_scope(&block)
+      Agentkit.with_context(agentkit_context, &block)
+    end
 
     # The host app decides who may see the console. Default: anyone in
     # development, nobody in production until it is configured.

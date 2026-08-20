@@ -92,8 +92,17 @@ RSpec.describe "Advanced Memory Improvements (Épica 3)" do
 
       expect(bundle["SKILL.md"]).to include("## Test Skill Prompt")
 
+      Agentkit::SkillRegistry.reset!
       imported = described_class.import(bundle)
-      expect(imported.name).to eq(:TestExportSkill)
+      expect(imported.name).to eq("TestExportSkill")
+      expect(imported.status).to eq("quarantined")
+      expect(Agentkit::SkillRegistry.registered?(:TestExportSkill)).to be(false)
+
+      proposal = Agentkit::HITL.pending(type: "skill_activation").last
+      Agentkit::HITL.approve(proposal.id, actor: "human:reviewer")
+
+      expect(Agentkit::SkillRegistry.load_skill(:TestExportSkill)).not_to be_nil
+      expect(Agentkit::TeamMemory::AssetStore.find(imported.id).status).to eq("active")
     end
   end
 end

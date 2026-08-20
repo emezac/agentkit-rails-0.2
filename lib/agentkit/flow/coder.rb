@@ -80,7 +80,7 @@ module Agentkit
         return decode(fetch_artifact(hash[ARTIFACT_KEY], store), store) if hash.key?(ARTIFACT_KEY)
         return hash[SYMBOL_KEY].to_sym if hash.key?(SYMBOL_KEY)
         return Time.parse(hash[TIME_KEY]) if hash.key?(TIME_KEY)
-        return Agentkit::Memory.find(hash[MEMORY_KEY]) if hash.key?(MEMORY_KEY)
+        return Agentkit::Memory.find(hash[MEMORY_KEY], scope: Scope.resolve) if hash.key?(MEMORY_KEY)
         return find_record(hash[RECORD_KEY], hash["id"]) if hash.key?(RECORD_KEY)
 
         if hash.key?(BRANCHES_KEY)

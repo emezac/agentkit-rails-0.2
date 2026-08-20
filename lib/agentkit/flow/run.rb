@@ -133,10 +133,14 @@ module Agentkit
           @runs[run.id] = run
         end
 
-        def find_run(id)          = @runs[id]
+        def find_run(id, scope: nil)
+          run = @runs[id]
+          Scope.resolve(scope).match?(run) ? run : nil
+        end
 
-        def find_step(run, id)
+        def find_step(run, id, scope: nil)
           return nil if id.nil?
+          return nil unless Scope.resolve(scope).match?(run)
 
           run.steps.find { |s| s.id == id }
         end
@@ -145,21 +149,34 @@ module Agentkit
         def put_artifact(payload)
           @artifacts ||= {}
           id = (@artifact_seq = (@artifact_seq || 0) + 1)
-          @artifacts[id] = payload
+          ctx = Context.resolve
+          @artifacts[id] = { payload: payload, tenant_key: ctx.tenant_key || "__global__",
+                             account_id: ctx.account.respond_to?(:id) ? ctx.account.id : ctx.account }
           id
         end
 
-        def get_artifact(id) = (@artifacts || {})[id]
-        def find_run_by_uuid(uuid) = @runs.values.find { |r| r.run_id == uuid }
+        def get_artifact(id, scope: nil)
+          artifact = (@artifacts || {})[id]
+          return artifact unless artifact.is_a?(Hash) && artifact.key?(:tenant_key)
+
+          Scope.resolve(scope).match?(artifact) ? artifact[:payload] : nil
+        end
+        def find_run_by_uuid(uuid, scope: nil)
+          resolved = Scope.resolve(scope)
+          @runs.values.find { |r| r.run_id == uuid && resolved.match?(r) }
+        end
         def update_run(run, **attrs)
           attrs.each { |k, v| run.public_send(:"#{k}=", v) }
           run
         end
 
-        def find_by_idempotency(key)
+        def find_by_idempotency(key, tenant_key: Context.current&.tenant_key || "__global__")
           return nil if key.nil?
 
-          @runs.values.find { |r| r.idempotency_key == key && !%w[failed cancelled].include?(r.status) }
+          @runs.values.find do |r|
+            r.idempotency_key == key && r.tenant_key.to_s == tenant_key.to_s &&
+              !%w[failed cancelled].include?(r.status)
+          end
         end
 
         # Returns [step, created?]. The uniqueness of (run_id, step_key) is
@@ -196,11 +213,12 @@ module Agentkit
           end
         end
 
-        def runs(status: nil)
-          @runs.values.select { |r| status.nil? || r.status == status.to_s }
+        def runs(status: nil, scope: nil)
+          resolved = Scope.resolve(scope)
+          @runs.values.select { |r| resolved.match?(r) && (status.nil? || r.status == status.to_s) }
         end
 
-        def all_steps = @runs.values.flat_map(&:steps)
+        def all_steps(scope: nil) = runs(scope: scope).flat_map(&:steps)
 
         def clear
           @mutex.synchronize { @runs = {}; @seq = 0; @steps = 0 }
@@ -216,24 +234,29 @@ module Agentkit
           run
         end
 
-        def find_run(id)           = wrap(Agentkit::RunRecord.find_by(id: id))
-        def find_run_by_uuid(uuid) = wrap(Agentkit::RunRecord.find_by(run_id: uuid))
+        def find_run(id, scope: nil) = wrap(run_relation(scope).find_by(id: id))
+        def find_run_by_uuid(uuid, scope: nil) = wrap(run_relation(scope).find_by(run_id: uuid))
 
-        def find_step(run, id)
+        def find_step(run, id, scope: nil)
           return nil if id.nil?
+          return nil unless Scope.resolve(scope).match?(run)
 
-          run.steps.find { |s| s.id == id } || register(run, wrap_step(Agentkit::RunStepRecord.find_by(id: id)))
+          row = Agentkit::RunStepRecord.where(tenant_key: run.tenant_key).find_by(id: id)
+          run.steps.find { |s| s.id == id } || register(run, wrap_step(row))
         end
 
         def put_artifact(payload)
           Agentkit::ArtifactRecord.create!(kind: "flow_payload", content_type: "application/json",
                                            body: JSON.generate(payload),
                                            content_hash: Digest::SHA256.hexdigest(JSON.generate(payload))[0, 32],
-                                           tenant_key: Context.current&.tenant_key).id
+                                           tenant_key: Context.current&.tenant_key || "__global__").id
         end
 
-        def get_artifact(id)
-          row = Agentkit::ArtifactRecord.find_by(id: id)
+        def get_artifact(id, scope: nil)
+          resolved = Scope.resolve(scope)
+          relation = Agentkit::ArtifactRecord.all
+          relation = relation.where(tenant_key: resolved.tenant_key) if resolved.tenant_key
+          row = relation.find_by(id: id)
           row && JSON.parse(row.body)
         end
 
@@ -243,10 +266,11 @@ module Agentkit
           run
         end
 
-        def find_by_idempotency(key)
+        def find_by_idempotency(key, tenant_key: Context.current&.tenant_key || "__global__")
           return nil if key.nil?
 
-          wrap(Agentkit::RunRecord.where(idempotency_key: key).where.not(status: %w[failed cancelled]).first)
+          wrap(Agentkit::RunRecord.where(idempotency_key: key, tenant_key: tenant_key)
+                                  .where.not(status: %w[failed cancelled]).first)
         end
 
         # The in-memory Run has to know its own steps: `steps_named`,
@@ -257,7 +281,7 @@ module Agentkit
           existing = run.steps.find { |s| s.step_key == step_key }
           return [existing, false] if existing
 
-          row = Agentkit::RunStepRecord.create_with(attrs.merge(run_id: run.id))
+          row = Agentkit::RunStepRecord.create_with(attrs.merge(run_id: run.id, tenant_key: run.tenant_key))
                                        .find_or_create_by(run_id: run.id, step_key: step_key)
           [register(run, wrap_step(row)), row.previously_new_record?]
         rescue ActiveRecord::RecordNotUnique
@@ -296,6 +320,14 @@ module Agentkit
         end
 
         private
+
+        def run_relation(scope)
+          resolved = Scope.resolve(scope)
+          relation = Agentkit::RunRecord.all
+          relation = relation.where(tenant_key: resolved.tenant_key) if resolved.tenant_key
+          relation = relation.where(account_id: resolved.account_id) if resolved.account_id
+          relation
+        end
 
         def register(run, step)
           return nil if step.nil?

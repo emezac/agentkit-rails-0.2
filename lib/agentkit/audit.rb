@@ -125,7 +125,7 @@ module Agentkit
           step_key:      step_key,
           user_id:       id_of(ctx&.user),
           account_id:    id_of(ctx&.account),
-          tenant_key:    ctx&.tenant_key,
+          tenant_key:    ctx&.tenant_key || "__global__",
           subject_type:  subject&.class&.name,
           subject_id:    id_of(subject),
           occurred_at:   Time.now
@@ -151,33 +151,39 @@ module Agentkit
 
       # ─── Read ────────────────────────────────────────────────────────────────
 
-      def entries(agent: nil, event_type: nil, since: nil, trace_id: nil, run_id: nil)
+      def entries(agent: nil, event_type: nil, since: nil, trace_id: nil, run_id: nil, scope: nil)
+        resolved = Scope.resolve(scope)
         store.entries(agent: agent, event_type: event_type, since: since,
-                      trace_id: trace_id, run_id: run_id)
+                      trace_id: trace_id, run_id: run_id, scope: resolved)
       end
 
       def traces = @traces ||= []
 
-      def find_trace(id)
-        store.find_trace(id) || traces.find { |t| t.id == id }
+      def find_trace(id, scope: nil)
+        resolved = Scope.resolve(scope)
+        store.find_trace(id, scope: resolved) || traces.find { |t| t.id == id && resolved.match?(t) }
       end
 
-      def traces_for(kind: nil, since: nil)
-        store.traces(kind: kind, since: since)
+      def traces_for(kind: nil, since: nil, scope: nil)
+        store.traces(kind: kind, since: since, scope: Scope.resolve(scope))
       end
 
       # Everything that happened under one correlation id: agent actions, the
       # cognitive traces they spawned, and the flow steps they ran in.
-      def timeline(trace_id)
+      def timeline(trace_id, scope: nil)
+        resolved = Scope.resolve(scope)
         {
           trace_id: trace_id,
-          entries:  entries(trace_id: trace_id).sort_by(&:occurred_at),
-          traces:   traces_for.select { |t| t.id == trace_id || t.run_id == trace_id }
+          entries:  entries(trace_id: trace_id, scope: resolved).sort_by(&:occurred_at),
+          traces:   traces_for(scope: resolved).select { |t| t.id == trace_id || t.run_id == trace_id }
         }
       end
 
       # Why does this memory exist? Walks derived_from and the trace that made it.
-      def provenance(memory)
+      def provenance(memory, scope: nil)
+        resolved = Scope.resolve(scope)
+        return nil unless resolved.match?(memory)
+
         {
           memory_id:   memory.id,
           ontological: memory.ontological_type,
@@ -185,7 +191,7 @@ module Agentkit
           run_id:      memory.run_id,
           derived_from: memory.derived_from_memory_id,
           superseded_by: memory.superseded_by_id,
-          trace:       (memory.metadata || {})["trace_id"]&.then { |id| find_trace(id)&.to_h },
+          trace:       (memory.metadata || {})["trace_id"]&.then { |id| find_trace(id, scope: resolved)&.to_h },
           sources:     (memory.metadata || {})["source_memory_ids"]
         }.compact
       end
@@ -252,9 +258,10 @@ module Agentkit
         trace
       end
 
-      def entries(agent: nil, event_type: nil, since: nil, trace_id: nil, run_id: nil)
+      def entries(agent: nil, event_type: nil, since: nil, trace_id: nil, run_id: nil, scope: nil)
+        resolved = Scope.resolve(scope)
         @entries.select do |e|
-          (agent.nil?      || e.agent_name == agent.to_s) &&
+          resolved.match?(e) && (agent.nil? || e.agent_name == agent.to_s) &&
             (event_type.nil? || e.event_type == event_type.to_s) &&
             (since.nil?      || e.occurred_at >= since) &&
             (trace_id.nil?   || e.trace_id == trace_id) &&
@@ -262,14 +269,18 @@ module Agentkit
         end
       end
 
-      def traces(kind: nil, since: nil)
+      def traces(kind: nil, since: nil, scope: nil)
+        resolved = Scope.resolve(scope)
         @traces.select do |t|
-          (kind.nil?  || t.kind == kind.to_s) &&
+          resolved.match?(t) && (kind.nil? || t.kind == kind.to_s) &&
             (since.nil? || t.started_at >= since)
         end
       end
 
-      def find_trace(id) = @traces.find { |t| t.id == id }
+      def find_trace(id, scope: nil)
+        resolved = Scope.resolve(scope)
+        @traces.find { |t| t.id == id && resolved.match?(t) }
+      end
 
       def clear
         @mutex.synchronize { @entries = []; @traces = []; @seq = 0 }
@@ -290,37 +301,37 @@ module Agentkit
       def append_trace(trace)
         row = Agentkit::TraceRecord.create!(
           trace_id: trace.id, kind: trace.kind, trigger: trace.trigger,
-          status: trace.status, run_id: trace.run_id, tenant_key: trace.tenant_key,
+          status: trace.status, run_id: trace.run_id, tenant_key: trace.tenant_key || "__global__",
           meta: trace.meta, started_at: trace.started_at,
           finished_at: trace.finished_at, duration_ms: trace.duration_ms
         )
         trace.phases.each_with_index do |phase, i|
           Agentkit::TracePhaseRecord.create!(
             trace_id: row.id, position: i, name: phase[:name],
-            occurred_at: phase[:at], data: phase.except(:name, :at)
+            occurred_at: phase[:at], data: phase.except(:name, :at), tenant_key: row.tenant_key
           )
         end
         trace
       end
 
-      def entries(agent: nil, event_type: nil, since: nil, trace_id: nil, run_id: nil)
-        scope = Agentkit::AuditRecord.all
-        scope = scope.where(agent_name: agent.to_s) if agent
-        scope = scope.where(event_type: event_type.to_s) if event_type
-        scope = scope.where(occurred_at: since..) if since
-        scope = scope.where(trace_id: trace_id) if trace_id
-        scope = scope.where(run_id: run_id) if run_id
-        scope.order(:occurred_at).map { |r| wrap(r) }
+      def entries(agent: nil, event_type: nil, since: nil, trace_id: nil, run_id: nil, scope: nil)
+        relation = audit_relation(scope)
+        relation = relation.where(agent_name: agent.to_s) if agent
+        relation = relation.where(event_type: event_type.to_s) if event_type
+        relation = relation.where(occurred_at: since..) if since
+        relation = relation.where(trace_id: trace_id) if trace_id
+        relation = relation.where(run_id: run_id) if run_id
+        relation.order(:occurred_at).map { |r| wrap(r) }
       end
 
-      def traces(kind: nil, since: nil)
-        scope = Agentkit::TraceRecord.all
-        scope = scope.where(kind: kind.to_s) if kind
-        scope = scope.where(started_at: since..) if since
-        scope.order(started_at: :desc)
+      def traces(kind: nil, since: nil, scope: nil)
+        relation = trace_relation(scope)
+        relation = relation.where(kind: kind.to_s) if kind
+        relation = relation.where(started_at: since..) if since
+        relation.order(started_at: :desc)
       end
 
-      def find_trace(id) = Agentkit::TraceRecord.find_by(trace_id: id)
+      def find_trace(id, scope: nil) = trace_relation(scope).find_by(trace_id: id)
 
       # The only way an audit row ever disappears, and it is deliberate.
       def prune!(older_than:)
@@ -328,6 +339,21 @@ module Agentkit
       end
 
       private
+
+      def audit_relation(scope)
+        resolved = Scope.resolve(scope)
+        relation = Agentkit::AuditRecord.all
+        relation = relation.where(tenant_key: resolved.tenant_key) if resolved.tenant_key
+        relation = relation.where(account_id: resolved.account_id) if resolved.account_id
+        relation
+      end
+
+      def trace_relation(scope)
+        resolved = Scope.resolve(scope)
+        relation = Agentkit::TraceRecord.all
+        relation = relation.where(tenant_key: resolved.tenant_key) if resolved.tenant_key
+        relation
+      end
 
       def wrap(row)
         Entry.new(**row.attributes.symbolize_keys.slice(*Entry.members))

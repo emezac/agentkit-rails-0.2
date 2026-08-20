@@ -4,17 +4,20 @@ module Agentkit
   class FactoryDiagnoseJob < ApplicationJob
     queue_as :agentkit_factory
 
-    def perform(window_days = 7)
-      run = begin_factory_run(window_days)
-      Agentkit::Factory.capture_golden!
-      findings = Agentkit::Factory.diagnose!(window: window_days * 86_400)
-      evaluated = act_for_mode(findings)
-      finish_factory_run(run, "completed", experiments_evaluated: evaluated,
-                                           **Agentkit::Factory.last_diagnosis)
-      findings
-    rescue StandardError => e
-      finish_factory_run(run, "failed", errors: [{ class: e.class.name, message: e.message }]) if run
-      raise
+    def perform(window_days = 7, scope = nil)
+      resolved = Agentkit::Scope.resolve(scope)
+      Agentkit.with_context(Agentkit::Context.new(tenant_key: resolved.tenant_key)) do
+        run = begin_factory_run(window_days, resolved)
+        Agentkit::Factory.capture_golden!
+        findings = Agentkit::Factory.diagnose!(window: window_days * 86_400)
+        evaluated = act_for_mode(findings)
+        finish_factory_run(run, "completed", experiments_evaluated: evaluated,
+                                             **Agentkit::Factory.last_diagnosis)
+        findings
+      rescue StandardError => e
+        finish_factory_run(run, "failed", errors: [{ class: e.class.name, message: e.message }]) if run
+        raise
+      end
     end
 
     private
@@ -36,18 +39,22 @@ module Agentkit
       running.size
     end
 
-    def begin_factory_run(window_days)
+    def begin_factory_run(window_days, scope)
       return nil unless defined?(Agentkit::FactoryRunRecord) && Agentkit::FactoryRunRecord.table_exists?
 
-      Agentkit::FactoryRunRecord.create!(window_days: window_days, started_at: Time.current)
+      Agentkit::FactoryRunRecord.create!(window_days: window_days, started_at: Time.current,
+                                         tenant_key: scope.tenant_key || "__global__",
+                                         account_id: scope.account_id)
     end
 
     def finish_factory_run(run, status, **attributes)
       return unless run
 
       allowed = %i[detector_count fired_count created_count deduplicated_count
-                   experiments_evaluated errors metadata]
-      run.finish!(status: status, **attributes.slice(*allowed))
+                   experiments_evaluated metadata]
+      filtered = attributes.slice(*allowed)
+      filtered[:error_details] = attributes[:errors] if attributes.key?(:errors)
+      run.finish!(status: status, **filtered)
     end
   end
 end

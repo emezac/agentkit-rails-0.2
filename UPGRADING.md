@@ -1,3 +1,22 @@
+# Upgrading 0.3.1 → 0.3.2
+
+Install and run migrations `011`, `012` and `013`. Historical unscoped rows are
+assigned to `__global__`; the rollback is intentionally irreversible because
+merging tenant security boundaries is unsafe.
+
+With `multi_tenant = true`, all AgentKit reads, mutations, reports and jobs now
+require an `Agentkit::Context` or serialized `Agentkit::Scope`. Queue producers
+must include the scope passed by the kernel; legacy unscoped jobs fail closed
+and should be discarded or re-enqueued with their original tenant.
+
+Skill import now returns a quarantined Team Memory asset. Approve the generated
+`skill_activation` suggestion before expecting the skill in `SkillRegistry`.
+
+`force_sync` only expresses transport waiting preference and never bypasses
+approval. A2A mutation callers should always provide an `idempotency_key`.
+
+---
+
 # Upgrading 0.2.1 → 0.3.1
 
 ## Required steps

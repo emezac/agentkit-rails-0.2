@@ -125,6 +125,19 @@ module Agentkit
           end
         end
 
+        def update(asset, status:, content: asset.content)
+          scope = { tenant_key: asset.tenant_key, account_id: asset.account_id }
+          if defined?(Agentkit::MemoryAssetRecord) && TeamMemory.ar_available?(Agentkit::MemoryAssetRecord)
+            rec = tenant_relation(**scope).find_by(id: asset.id)
+            return nil unless rec
+
+            rec.update!(status: status.to_s, content: content)
+            from_record(rec)
+          else
+            store.update(asset, status: status, content: content)
+          end
+        end
+
         def reset!
           @store = InMemoryAssetStore.new
         end
@@ -205,6 +218,16 @@ module Agentkit
 
       def all(tenant_key:, account_id: nil)
         @mutex.synchronize { @assets.values.select { |asset| asset.tenant_key.to_s == tenant_key.to_s } }
+      end
+
+      def update(asset, status:, content: asset.content)
+        @mutex.synchronize do
+          return nil unless @assets[asset.id]&.tenant_key.to_s == asset.tenant_key.to_s
+
+          @assets[asset.id] = Asset.new(**asset.to_h.transform_keys(&:to_sym).merge(
+            status: status.to_s, content: content
+          ))
+        end
       end
     end
   end

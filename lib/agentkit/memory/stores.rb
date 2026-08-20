@@ -16,7 +16,7 @@ module Agentkit
       class Base
         def insert(record)        = raise NotImplementedError
         def update(id, attrs)     = raise NotImplementedError
-        def find(id)              = raise NotImplementedError
+        def find(id, scope: {})   = raise NotImplementedError
         def all(scope = {})       = raise NotImplementedError
         def count(scope = {})     = raise NotImplementedError
         def delete_all            = raise NotImplementedError
@@ -52,7 +52,10 @@ module Agentkit
           rec
         end
 
-        def find(id) = @rows[id]
+        def find(id, scope: {})
+          record = @rows[id]
+          record if record && matches?(record, scope)
+        end
 
         def all(scope = {})
           @rows.values.select { |r| matches?(r, scope) }
@@ -168,7 +171,7 @@ module Agentkit
           row.update!(encode_vector(attrs))
           row
         end
-        def find(id)          = wrap(model.find_by(id: id))
+        def find(id, scope: {}) = wrap(scoped(scope).find_by(id: id))
         def all(scope = {})   = scoped(scope).map { |r| wrap(r) }
 
         # A SQL COUNT. Counting via `all(...).size` would materialise and wrap

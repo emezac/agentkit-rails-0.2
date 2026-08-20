@@ -62,15 +62,15 @@
     </thead>
     <tbody>
       <% @agents.each do |agent| %>
-        <% profile = @ledger.rejection_profile(agent: agent, since: @since) %>
+        <% profile = @ledger.rejection_profile(agent: agent, since: @since, scope: @scope) %>
         <% dominant = profile.max_by { |_, v| v } %>
         <tr>
           <td><%= agent %></td>
-          <td class="mono"><%= pct @ledger.acceptance_rate(agent: agent, since: @since) %></td>
-          <td class="mono"><%= pct @ledger.clean_acceptance_rate(agent: agent, since: @since) %></td>
-          <td class="mono"><%= pct @ledger.ignore_rate(agent: agent, since: @since) %></td>
+          <td class="mono"><%= pct @ledger.acceptance_rate(agent: agent, since: @since, scope: @scope) %></td>
+          <td class="mono"><%= pct @ledger.clean_acceptance_rate(agent: agent, since: @since, scope: @scope) %></td>
+          <td class="mono"><%= pct @ledger.ignore_rate(agent: agent, since: @since, scope: @scope) %></td>
           <td class="mono">
-            <% cost = @ledger.cost_per_accepted(agent: agent, since: @since) %>
+            <% cost = @ledger.cost_per_accepted(agent: agent, since: @since, scope: @scope) %>
             <%= cost ? "$#{cost}" : "—" %>
           </td>
           <td class="dim"><%= dominant ? "#{dominant[0]} (#{(dominant[1] * 100).round}%)" : "—" %></td>

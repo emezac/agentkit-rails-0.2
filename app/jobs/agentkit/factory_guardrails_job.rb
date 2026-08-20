@@ -6,10 +6,13 @@ module Agentkit
   class FactoryGuardrailsJob < ApplicationJob
     queue_as :agentkit_factory
 
-    def perform
-      Agentkit::Factory.experiments
-                       .select { |experiment| experiment.status == "running" }
-                       .each { |experiment| Agentkit::Factory.enforce_guardrails!(experiment) }
+    def perform(scope = nil)
+      resolved = Agentkit::Scope.resolve(scope)
+      Agentkit.with_context(Agentkit::Context.new(tenant_key: resolved.tenant_key)) do
+        Agentkit::Factory.experiments
+                         .select { |experiment| experiment.status == "running" }
+                         .each { |experiment| Agentkit::Factory.enforce_guardrails!(experiment) }
+      end
     end
   end
 end

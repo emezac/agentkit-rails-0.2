@@ -82,7 +82,8 @@ module Agentkit
                        AssetStore.all(**scope)
                      end
 
-        ACL.filter(all_assets, agent_name: agent_name, team_id: team_id, owner_id: owner_id)
+        ACL.filter(all_assets, agent_name: agent_name, team_id: team_id, owner_id: owner_id,
+                   tenant_key: scope[:tenant_key])
       end
 
       # Equip an agent instance with accessible team assets (skills, wiki excerpts, context)
@@ -91,7 +92,7 @@ module Agentkit
         assets = load_assets(team: team, agent_name: agent_name, owner_id: owner_id)
 
         # Inject skill assets into SkillRegistry
-        assets.select { |a| a.asset_type == "skill" }.each do |skill_asset|
+        assets.select { |a| a.asset_type == "skill" && a.status == "active" }.each do |skill_asset|
           if defined?(Agentkit::Skill) && skill_asset.content["prompt_fragment"]
             Agentkit::Skill.define(skill_asset.name) do |s|
               s.prompt(skill_asset.content["prompt_fragment"])

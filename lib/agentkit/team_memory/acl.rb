@@ -12,38 +12,38 @@ module Agentkit
         # @param team_id    [Integer, nil]              ID of the team context
         # @param owner_id   [Integer, nil]              ID of the user/owner context
         # @return           [Boolean]
-        def accessible?(asset, agent_name: nil, team_id: nil, owner_id: nil)
+        def accessible?(asset, agent_name: nil, team_id: nil, owner_id: nil,
+                        tenant_key: nil, action: :read)
           visibility  = extract_field(asset, :visibility).to_s
           asset_team  = extract_field(asset, :team_id)
           asset_owner = extract_field(asset, :owner_id)
           bindings    = Array(extract_field(asset, :bindings))
+          asset_tenant = extract_field(asset, :tenant_key)
+
+          return false unless %i[read use update bind export activate].include?(action.to_sym)
+          effective_tenant = tenant_key || Context.current&.tenant_key
+          return false if Agentkit.config.multi_tenant && effective_tenant.to_s.empty?
+          return false if effective_tenant && asset_tenant.to_s != effective_tenant.to_s
 
           case visibility
           when "private"
-            return true if owner_id && asset_owner && owner_id.to_i == asset_owner.to_i
-            return true if agent_name && bindings.include?(agent_name.to_s)
-
-            false
+            owner_id && asset_owner && owner_id.to_s == asset_owner.to_s
           when "team"
-            return true if asset_team.nil?
-            return true if team_id && asset_team.to_i == team_id.to_i
-
-            false
+            !asset_team.nil? && !team_id.nil? && asset_team.to_s == team_id.to_s
           when "restricted"
-            return false if agent_name.nil?
-
-            bindings.include?(agent_name.to_s)
-          when "agent", "public"
-            true
+            !agent_name.nil? && bindings.any? && bindings.include?(agent_name.to_s)
+          when "agent"
+            !agent_name.nil? && bindings.any? && bindings.include?(agent_name.to_s)
           else
-            asset_team.nil? || (team_id && asset_team.to_i == team_id.to_i)
+            false
           end
         end
 
         # Filter a list of assets based on ACL rules.
-        def filter(assets, agent_name: nil, team_id: nil, owner_id: nil)
+        def filter(assets, agent_name: nil, team_id: nil, owner_id: nil, tenant_key: nil, action: :read)
           Array(assets).select do |asset|
-            accessible?(asset, agent_name: agent_name, team_id: team_id, owner_id: owner_id)
+            accessible?(asset, agent_name: agent_name, team_id: team_id, owner_id: owner_id,
+                        tenant_key: tenant_key, action: action)
           end
         end
 

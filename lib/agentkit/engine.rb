@@ -50,8 +50,8 @@ module Agentkit
     # a port now, and this is the ActiveJob implementation of it.
     initializer "agentkit.hitl_scheduler" do
       config.to_prepare do
-        Agentkit::HITL.scheduler = lambda do |delay, suggestion_id|
-          Agentkit::AutoApplySuggestionJob.set(wait: delay).perform_later(suggestion_id)
+        Agentkit::HITL.scheduler = lambda do |delay, suggestion_id, scope|
+          Agentkit::AutoApplySuggestionJob.set(wait: delay).perform_later(suggestion_id, scope)
         end
 
         # An approval resumes the suspended run instead of ending the process.
@@ -60,7 +60,9 @@ module Agentkit
           flow   = suggestion.payload["flow"] || suggestion.payload[:flow]
           next if run_id.blank? || flow.blank?
 
-          Agentkit::FlowResumeJob.perform_later(flow, run_id)
+          Agentkit::FlowResumeJob.perform_later(flow, run_id,
+                                                { tenant_key: suggestion.tenant_key,
+                                                  account_id: suggestion.account_id }.compact)
         end
       end
     end

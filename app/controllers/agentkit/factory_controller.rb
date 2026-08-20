@@ -8,7 +8,8 @@ module Agentkit
       @experiments = Agentkit::Factory.experiments
       @ledger      = Agentkit::HITL.ledger
       @since       = Time.now - window
-      @agents      = @ledger.entries(since: @since).map(&:agent_name).compact.uniq
+      @scope       = Agentkit::Scope.resolve(context: agentkit_context)
+      @agents      = @ledger.entries(since: @since, scope: @scope).map(&:agent_name).compact.uniq
       @economics   = economics
     end
 
@@ -27,12 +28,15 @@ module Agentkit
 
     def economics
       since = Time.now - window
+      tenant = @scope&.tenant_key || Agentkit::Scope.resolve(context: agentkit_context).tenant_key
+      llm_events = Agentkit::Telemetry.events(name: "llm.call", since: since)
+                                      .select { |event| tenant.nil? || event.dims[:tenant].to_s == tenant.to_s }
+      embedding_events = Agentkit::Telemetry.events(name: "embedding.generate", since: since)
+                                            .select { |event| tenant.nil? || event.dims[:tenant].to_s == tenant.to_s }
       {
-        llm_spend:  Agentkit::Telemetry.events(name: "llm.call", since: since)
-                                       .sum { |e| e.measures[:cost_usd].to_f },
-        embeddings: Agentkit::Telemetry.events(name: "embedding.generate", since: since)
-                                       .sum { |e| e.measures[:count].to_i },
-        latency:    Agentkit::Telemetry.stats("llm.call", measure: :duration_ms, since: since)
+        llm_spend:  llm_events.sum { |e| e.measures[:cost_usd].to_f },
+        embeddings: embedding_events.sum { |e| e.measures[:count].to_i },
+        latency:    Agentkit::Telemetry::Stats.from(llm_events.filter_map { |e| e.measures[:duration_ms] })
       }
     end
   end

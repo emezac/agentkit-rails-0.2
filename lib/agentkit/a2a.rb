@@ -234,14 +234,19 @@ module Agentkit
 
           # Irreversible or strict-gated work is parked as a suggestion and the
           # caller is handed a task id to poll — never executed silently.
-          if A2A.requires_approval?(cap) && !params["force_sync"]
+          if A2A.requires_approval?(cap)
+            digest = HITL.send(:canonical_digest, inputs)
+            requester = Context.current&.principal || Context.current&.metadata&.dig(:principal) || "peer:a2a"
             suggestion = HITL.suggest!(
               type: "a2a:#{cap.name}", title: "A2A request: #{cap.title}",
               description: "Remote peer requested `#{cap.name}`.",
               priority: cap.irreversible? ? "high" : "medium",
               source_agent: "A2A", payload: inputs.merge("via" => "a2a"),
-              idempotency_key: params["idempotency_key"]
+              idempotency_key: params["idempotency_key"],
+              metadata: { "arguments_digest" => digest, "requester_principal" => requester.to_s,
+                          "force_sync" => !!params["force_sync"] }
             )
+            register_approved_execution(suggestion, cap)
             return { status: "pending_approval", taskId: "suggestion:#{suggestion.id}",
                      capability: cap.name.to_s, risk: cap.risk.to_s }
           end
@@ -262,7 +267,7 @@ module Agentkit
 
           case kind
           when "suggestion"
-            s = HITL.find(ref.to_i)
+            s = HITL.find(ref.to_i, scope: Scope.resolve)
             return Error.new(code: :invalid_params, message: "unknown task") if s.nil?
 
             { taskId: id, status: task_status(s), capability: s.suggestion_type.sub("a2a:", ""),
@@ -298,10 +303,35 @@ module Agentkit
 
         private
 
+        def register_approved_execution(suggestion, capability)
+          HITL.on(suggestion.suggestion_type) do |approved|
+            next unless approved.id == suggestion.id
+            next if approved.metadata&.dig("execution_status") == "completed"
+
+            unless A2A.requires_approval?(capability) &&
+                   capability.eligible?(Setup.current || Setup.build, Context.current)
+              approved.metadata = (approved.metadata || {}).merge("execution_status" => "failed",
+                                                                   "execution_error" => "policy_or_precondition_changed")
+              HITL.store[approved.id] = approved
+              next
+            end
+
+            exact_inputs = approved.payload.reject { |key, _| key.to_s == "via" }
+            result = capability.execute(symbolize(exact_inputs), context: Context.current)
+            status = result.respond_to?(:ok?) && !result.ok? ? "failed" : "completed"
+            approved.metadata = (approved.metadata || {}).merge("execution_status" => status)
+            HITL.store[approved.id] = approved
+          rescue StandardError => e
+            approved.metadata = (approved.metadata || {}).merge("execution_status" => "failed",
+                                                                 "execution_error" => e.class.name)
+            HITL.store[approved.id] = approved
+          end
+        end
+
         def task_status(suggestion)
           case suggestion.status.to_s
           when "pending", "snoozed" then "pending_approval"
-          when "accepted", "auto_applied" then "completed"
+          when "accepted", "auto_applied" then suggestion.metadata&.dig("execution_status") || "approved"
           when "rejected" then "rejected"
           else suggestion.status.to_s
           end

@@ -39,6 +39,7 @@ RSpec.configure do |config|
   # suites interleave, so each integration example re-pins what a booted Rails
   # app would have.
   config.before(:each, :integration) do
+    Agentkit.config.multi_tenant      = false
     Agentkit.config.flow.store      = :active_record
     Agentkit.config.flow.executor   = :async
     Agentkit.config.flow.dispatcher = :active_job

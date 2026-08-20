@@ -124,18 +124,19 @@ module Agentkit
         end
 
         run = build_run(ctx, input, store)
-        Flow.dispatcher.advance(run.run_id)
+        Flow.dispatcher.advance(run.run_id, run_scope(run))
         run
       end
 
       # Resume a run suspended at a human gate or a join.
       def resume(run_id, context: nil, mode: nil)
         store = store_for
-        run   = store.find_run_by_uuid(run_id) || store.find_run(run_id)
+        ctx = context || Context.resolve
+        scope = Scope.resolve(context: ctx)
+        run   = store.find_run_by_uuid(run_id, scope: scope) || store.find_run(run_id, scope: scope)
         raise FlowError, "Run #{run_id} not found" if run.nil?
         return Result.ok(run.output) if run.finished?
 
-        ctx = context || Context.resolve
         Executor.new(definition: definition, run: run, store: store,
                      context: ctx, input: run.input,
                      mode: mode || (Flow.dispatcher.async? ? :async : :sync)).call
@@ -160,12 +161,13 @@ module Agentkit
       end
 
       def build_run(ctx, input, store)
+        tenant_key = ctx.tenant_key || "__global__"
         run = Run.new(
           flow_name: name, flow_version: definition.version, run_id: ctx.run_id,
           # Domain records travel as references and are reloaded on the other
           # side; without this the input arrives at a worker as a plain Hash.
           input: Coder.dump(input, store: store),
-          context: ctx.to_h, tenant_key: ctx.tenant_key,
+          context: ctx.to_h.merge(tenant_key: tenant_key), tenant_key: tenant_key,
           account_id: id_of(ctx.account), user_id: id_of(ctx.user),
           idempotency_key: definition.idempotency_fn&.call(input),
           deadline_at: definition.timeout ? Time.now + definition.timeout : nil,
@@ -179,8 +181,13 @@ module Agentkit
         key = definition.idempotency_fn&.call(input)
         return nil if key.nil?
 
-        existing = store.find_by_idempotency(key)
+        tenant_key = Context.current&.tenant_key || "__global__"
+        existing = store.find_by_idempotency(key, tenant_key: tenant_key)
         existing&.finished? ? existing : nil
+      end
+
+      def run_scope(run)
+        { tenant_key: run.tenant_key, account_id: run.account_id }
       end
 
       def decorate(result, run)

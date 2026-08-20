@@ -76,24 +76,24 @@ module Agentkit
       end
 
       def entries(agent: nil, type: nil, since: nil, mode: nil, experiment_id: nil,
-                  experiment_arm: nil, prompt_id: nil, tenant_key: nil)
+                  experiment_arm: nil, prompt_id: nil, tenant_key: nil, scope: nil)
+        resolved = Scope.resolve(scope || { tenant_key: tenant_key })
         @entries.select do |e|
-          (agent.nil? || e.agent_name == agent.to_s) &&
+          resolved.match?(e) && (agent.nil? || e.agent_name == agent.to_s) &&
             (type.nil?  || e.suggestion_type == type.to_s) &&
             (since.nil? || e.created_at >= since) &&
             (mode.nil?  || e.mode == mode.to_s) &&
             (experiment_id.nil? || e.experiment_id.to_s == experiment_id.to_s) &&
             (experiment_arm.nil? || e.experiment_arm.to_s == experiment_arm.to_s) &&
-            (prompt_id.nil? || e.prompt_id.to_s == prompt_id.to_s) &&
-            (tenant_key.nil? || e.tenant_key.to_s == tenant_key.to_s)
+            (prompt_id.nil? || e.prompt_id.to_s == prompt_id.to_s)
         end
       end
 
       # ─── Quality metrics ─────────────────────────────────────────────────────
 
       # Acceptance excluding `mode: auto` — a timeout is not a validation.
-      def acceptance_rate(agent: nil, type: nil, since: nil, prompt_version: nil)
-        judged = human_entries(agent: agent, type: type, since: since, prompt_version: prompt_version)
+      def acceptance_rate(agent: nil, type: nil, since: nil, prompt_version: nil, scope: nil)
+        judged = human_entries(agent: agent, type: type, since: since, prompt_version: prompt_version, scope: scope)
         return nil if judged.empty?
 
         accepted = judged.count { |e| %w[accepted edited].include?(e.decision) }
@@ -101,52 +101,54 @@ module Agentkit
       end
 
       # Accepted with no edits at all — the honest quality number.
-      def clean_acceptance_rate(agent: nil, type: nil, since: nil, prompt_version: nil)
-        judged = human_entries(agent: agent, type: type, since: since, prompt_version: prompt_version)
+      def clean_acceptance_rate(agent: nil, type: nil, since: nil, prompt_version: nil, scope: nil)
+        judged = human_entries(agent: agent, type: type, since: since, prompt_version: prompt_version, scope: scope)
         return nil if judged.empty?
 
         clean = judged.count { |e| e.decision == "accepted" && e.edit_distance.to_f.zero? }
         (clean.to_f / judged.size).round(4)
       end
 
-      def edit_magnitude(agent: nil, since: nil)
-        values = entries(agent: agent, since: since).filter_map { |e| e.edit_distance if e.decision == "edited" }
+      def edit_magnitude(agent: nil, since: nil, scope: nil)
+        values = entries(agent: agent, since: since, scope: scope).filter_map { |e| e.edit_distance if e.decision == "edited" }
         Telemetry::Stats.from(values)
       end
 
       # Where an agent fails, not just how often.
-      def rejection_profile(agent: nil, since: nil)
-        rejected = entries(agent: agent, since: since).select { |e| e.decision == "rejected" }
+      def rejection_profile(agent: nil, since: nil, scope: nil)
+        rejected = entries(agent: agent, since: since, scope: scope).select { |e| e.decision == "rejected" }
         return {} if rejected.empty?
 
         rejected.group_by(&:rejection_code)
                 .transform_values { |list| (list.size.to_f / rejected.size).round(4) }
       end
 
-      def ignore_rate(agent: nil, since: nil)
-        all = entries(agent: agent, since: since)
+      def ignore_rate(agent: nil, since: nil, scope: nil)
+        all = entries(agent: agent, since: since, scope: scope)
         return nil if all.empty?
 
         (all.count { |e| %w[ignored expired].include?(e.decision) }.to_f / all.size).round(4)
       end
 
-      def time_to_decision(agent: nil, since: nil)
-        Telemetry::Stats.from(human_entries(agent: agent, since: since).map(&:time_to_decision_s))
+      def time_to_decision(agent: nil, since: nil, scope: nil)
+        Telemetry::Stats.from(human_entries(agent: agent, since: since, scope: scope).map(&:time_to_decision_s))
       end
 
       # The number a founder actually cares about: what one useful proposal costs.
-      def cost_per_accepted(agent: nil, since: nil)
-        accepted = human_entries(agent: agent, since: since).count { |e| %w[accepted edited].include?(e.decision) }
+      def cost_per_accepted(agent: nil, since: nil, scope: nil)
+        resolved = Scope.resolve(scope)
+        accepted = human_entries(agent: agent, since: since, scope: resolved).count { |e| %w[accepted edited].include?(e.decision) }
         return nil if accepted.zero?
 
         spend = Telemetry.events(name: "llm.call", since: since)
-                         .select { |e| agent.nil? || e.dims[:agent] == agent.to_s }
+                         .select { |e| (agent.nil? || e.dims[:agent] == agent.to_s) &&
+                                       (resolved.tenant_key.nil? || e.dims[:tenant].to_s == resolved.tenant_key.to_s) }
                          .sum { |e| e.measures[:cost_usd].to_f }
         (spend / accepted).round(6)
       end
 
-      def outcome_lift(agent: nil, since: nil)
-        list = entries(agent: agent, since: since).select { |e| e.outcome_value }
+      def outcome_lift(agent: nil, since: nil, scope: nil)
+        list = entries(agent: agent, since: since, scope: scope).select { |e| e.outcome_value }
         return nil if list.empty?
 
         accepted = list.select { |e| %w[accepted edited].include?(e.decision) }.map { |e| e.outcome_value.to_f }
@@ -157,15 +159,15 @@ module Agentkit
         { accepted_mean: (accepted.sum / accepted.size).round(4), baseline_mean: base.round(4) }
       end
 
-      def summary(agent: nil, since: nil)
+      def summary(agent: nil, since: nil, scope: nil)
         {
-          n: entries(agent: agent, since: since).size,
-          acceptance_rate: acceptance_rate(agent: agent, since: since),
-          clean_acceptance_rate: clean_acceptance_rate(agent: agent, since: since),
-          ignore_rate: ignore_rate(agent: agent, since: since),
-          rejection_profile: rejection_profile(agent: agent, since: since),
-          time_to_decision: time_to_decision(agent: agent, since: since).to_h,
-          cost_per_accepted: cost_per_accepted(agent: agent, since: since)
+          n: entries(agent: agent, since: since, scope: scope).size,
+          acceptance_rate: acceptance_rate(agent: agent, since: since, scope: scope),
+          clean_acceptance_rate: clean_acceptance_rate(agent: agent, since: since, scope: scope),
+          ignore_rate: ignore_rate(agent: agent, since: since, scope: scope),
+          rejection_profile: rejection_profile(agent: agent, since: since, scope: scope),
+          time_to_decision: time_to_decision(agent: agent, since: since, scope: scope).to_h,
+          cost_per_accepted: cost_per_accepted(agent: agent, since: since, scope: scope)
         }
       end
 
@@ -174,8 +176,8 @@ module Agentkit
 
       private
 
-      def human_entries(agent: nil, type: nil, since: nil, prompt_version: nil)
-        entries(agent: agent, type: type, since: since)
+      def human_entries(agent: nil, type: nil, since: nil, prompt_version: nil, scope: nil)
+        entries(agent: agent, type: type, since: since, scope: scope)
           .select { |e| e.mode == "human" }
           .select { |e| prompt_version.nil? || e.prompt_version == prompt_version }
       end

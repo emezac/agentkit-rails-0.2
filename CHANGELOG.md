@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.2 — Unreleased
+
+### Security
+
+- Removed the caller-controlled A2A `force_sync` HITL bypass. Approvals bind to
+  the canonical arguments digest, enforce separation of duties, revalidate
+  policy and preconditions, and execute idempotently.
+- Added mandatory `Agentkit::Scope` boundaries across Memory, HITL, Flow,
+  artifacts, Audit, Factory, controllers, reports and background jobs.
+- Tenantized Factory findings, experiments, golden cases and cycle runs with
+  compound uniqueness constraints and tenant-specific advisory locks.
+- Imported skills are validated, provenance-stamped and quarantined until a
+  separate HITL activation decision.
+- Team Memory ACL now denies unknown or incomplete visibility configurations.
+
+### Fixed
+
+- RAG no longer invents random query vectors. Missing embeddings degrade
+  deterministically to BM25 and emit `rag.retrieval.degraded`.
+- Retrieved evidence is escaped, digest-labelled, size-bounded and explicitly
+  presented to the model as untrusted data.
+- Added a reproducible `bundle exec rake verify` command and CI compatibility
+  matrix. The suite contains 310 examples.
+
 ## 0.3.1 — Unreleased
 
 ### Fixed

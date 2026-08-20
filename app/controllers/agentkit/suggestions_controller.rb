@@ -10,25 +10,26 @@ module Agentkit
     def index
       @scope       = { tenant_key: agentkit_context.tenant_key }.compact
       @suggestions = Agentkit::HITL.pending(@scope)
-      @ledger      = Agentkit::HITL.ledger.summary(since: Time.now - window)
+      @ledger      = Agentkit::HITL.ledger.summary(since: Time.now - window, scope: suggestion_scope)
       @codes       = Agentkit.config.hitl.rejection_codes
     end
 
     def show
-      @suggestion = Agentkit::HITL.fetch!(params[:id].to_i)
+      @suggestion = Agentkit::HITL.fetch!(params[:id].to_i, scope: @scope || suggestion_scope)
       @provenance = provenance_for(@suggestion)
     end
 
     def approve
       final = params[:payload].present? ? params[:payload].to_unsafe_h : nil
-      @suggestion = Agentkit::HITL.approve(params[:id].to_i, actor: actor, final_payload: final)
+      @suggestion = Agentkit::HITL.approve(params[:id].to_i, actor: actor, final_payload: final,
+                                           scope: suggestion_scope)
       respond_with_suggestion("Aprobada")
     end
 
     def reject
       @suggestion = Agentkit::HITL.reject(params[:id].to_i, actor: actor,
                                           code: params.require(:code),
-                                          note: params[:note])
+                                          note: params[:note], scope: suggestion_scope)
       respond_with_suggestion("Rechazada")
     rescue Agentkit::UnknownRejectionCode => e
       redirect_to suggestions_path, alert: e.message
@@ -40,6 +41,8 @@ module Agentkit
     end
 
     private
+
+    def suggestion_scope = Agentkit::Scope.resolve(context: agentkit_context)
 
     def respond_with_suggestion(message)
       respond_to do |format|

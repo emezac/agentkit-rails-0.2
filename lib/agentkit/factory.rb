@@ -24,7 +24,7 @@ module Agentkit
                          :suggested_level, :created_at, :status, :fingerprint,
                          :occurrence_count, :first_seen_at, :last_seen_at,
                          :resolved_at, :resolved_by, :resolution_reason,
-                         :clean_cycles,
+                         :clean_cycles, :tenant_key, :account_id,
                          keyword_init: true) do
       def to_h
         { id: id, detector: detector, severity: severity, subject: subject,
@@ -39,10 +39,12 @@ module Agentkit
     Experiment = Struct.new(:id, :name, :level, :target, :control, :variant, :traffic_pct,
                             :bucket_by, :status, :finding_id, :started_at, :finished_at,
                             :last_evaluated_at, :cohort, :results,
+                            :tenant_key, :account_id,
                             keyword_init: true)
 
     GoldenCase = Struct.new(:id, :agent_name, :suggestion_id, :input, :expected,
                             :label, :rejection_code, :frozen, :captured_at,
+                            :tenant_key, :account_id,
                             keyword_init: true) do
       def to_h
         members.to_h { |member| [member, public_send(member)] }
@@ -93,28 +95,29 @@ module Agentkit
     # Read-only view over telemetry + ledger for the detectors, so a detector is
     # a pure function of measurements.
     class Snapshot
-      attr_reader :window, :since
+      attr_reader :window, :since, :scope
 
       def initialize(window:)
         @window = window
         @since  = Time.now - window
+        @scope  = Scope.resolve
       end
 
       def ledger = HITL.ledger
 
       def agents
-        ledger.entries(since: since).map(&:agent_name).compact.uniq
+        ledger.entries(since: since, scope: scope).map(&:agent_name).compact.uniq
       end
 
-      def acceptance_rate(agent: nil)       = ledger.acceptance_rate(agent: agent, since: since)
-      def clean_acceptance_rate(agent: nil) = ledger.clean_acceptance_rate(agent: agent, since: since)
-      def ignore_rate(agent: nil)           = ledger.ignore_rate(agent: agent, since: since)
-      def rejection_profile(agent: nil)     = ledger.rejection_profile(agent: agent, since: since)
-      def cost_per_accepted(agent: nil)     = ledger.cost_per_accepted(agent: agent, since: since)
+      def acceptance_rate(agent: nil)       = ledger.acceptance_rate(agent: agent, since: since, scope: scope)
+      def clean_acceptance_rate(agent: nil) = ledger.clean_acceptance_rate(agent: agent, since: since, scope: scope)
+      def ignore_rate(agent: nil)           = ledger.ignore_rate(agent: agent, since: since, scope: scope)
+      def rejection_profile(agent: nil)     = ledger.rejection_profile(agent: agent, since: since, scope: scope)
+      def cost_per_accepted(agent: nil)     = ledger.cost_per_accepted(agent: agent, since: since, scope: scope)
 
       def previous(agent: nil, metric: :acceptance_rate)
         prev_since = since - window
-        entries = ledger.entries(agent: agent).select { |e| e.created_at.between?(prev_since, since) }
+        entries = ledger.entries(agent: agent, scope: scope).select { |e| e.created_at.between?(prev_since, since) }
         return nil if entries.empty?
 
         judged = entries.select { |e| e.mode == "human" }
@@ -130,7 +133,11 @@ module Agentkit
         Telemetry.stats("llm.call", measure: measure, by: by, since: since)
       end
 
-      def events(name) = Telemetry.events(name: name, since: since)
+      def events(name)
+        Telemetry.events(name: name, since: since).select do |event|
+          scope.tenant_key.nil? || event.dims[:tenant].to_s == scope.tenant_key.to_s
+        end
+      end
 
       def rate(name, measure) = Telemetry.rate(name, measure: measure, since: since)
 
@@ -216,15 +223,15 @@ module Agentkit
       attr_writer :persistence
 
       def findings
-        return @findings ||= [] unless persisted?
+        return (@findings ||= []).select { |finding| factory_scope.match?(finding) } unless persisted?
 
-        Agentkit::FindingRecord.order(created_at: :desc).map { |r| finding_from(r) }
+        finding_relation.order(created_at: :desc).map { |r| finding_from(r) }
       end
 
       def experiments
-        return @experiments ||= [] unless persisted?
+        return (@experiments ||= []).select { |experiment| factory_scope.match?(experiment) } unless persisted?
 
-        Agentkit::ExperimentRecord.order(created_at: :desc).map { |r| experiment_from(r) }
+        experiment_relation.order(created_at: :desc).map { |r| experiment_from(r) }
       end
 
       def finding_from(row)
@@ -240,7 +247,8 @@ module Agentkit
                     resolved_at: attribute(row, :resolved_at),
                     resolved_by: attribute(row, :resolved_by),
                     resolution_reason: attribute(row, :resolution_reason),
-                    clean_cycles: attribute(row, :clean_cycles) || 0)
+                    clean_cycles: attribute(row, :clean_cycles) || 0,
+                    tenant_key: attribute(row, :tenant_key), account_id: attribute(row, :account_id))
       end
 
       def experiment_from(row)
@@ -250,13 +258,14 @@ module Agentkit
                        finding_id: row.finding_id&.to_s, started_at: row.started_at,
                        finished_at: row.finished_at,
                        last_evaluated_at: attribute(row, :last_evaluated_at),
-                       cohort: attribute(row, :cohort) || {}, results: row.results || {})
+                       cohort: attribute(row, :cohort) || {}, results: row.results || {},
+                       tenant_key: attribute(row, :tenant_key), account_id: attribute(row, :account_id))
       end
 
       def golden_sets
         return @golden_sets ||= Hash.new { |h, k| h[k] = [] } unless golden_persisted?
 
-        Agentkit::GoldenCaseRecord.order(:id).map { |row| golden_case_from(row) }
+        golden_relation.order(:id).map { |row| golden_case_from(row) }
                                   .group_by(&:agent_name)
                                   .tap { |groups| groups.default_proc = ->(h, k) { h[k] = [] } }
       end
@@ -267,7 +276,8 @@ module Agentkit
           suggestion_id: row.suggestion_id, input: row.input,
           expected: row.expected, label: row.label,
           rejection_code: row.rejection_code, frozen: row.reviewed,
-          captured_at: row.created_at
+          captured_at: row.created_at, tenant_key: attribute(row, :tenant_key),
+          account_id: attribute(row, :account_id)
         )
       end
 
@@ -361,6 +371,9 @@ module Agentkit
       end
 
       def record_finding(finding)
+        scope = factory_scope
+        finding.tenant_key ||= scope.tenant_key || "__global__"
+        finding.account_id ||= scope.account_id
         fingerprint = finding_fingerprint(finding.detector, finding.subject)
         now = Time.now
 
@@ -385,8 +398,8 @@ module Agentkit
           return [finding, true]
         end
 
-        active = Agentkit::FindingRecord.where(fingerprint: fingerprint,
-                                               status: ACTIVE_FINDING_STATUSES).first
+        active = finding_relation.where(fingerprint: fingerprint,
+                                        status: ACTIVE_FINDING_STATUSES).first
         if active
           active.with_lock do
             active.update!(
@@ -398,7 +411,7 @@ module Agentkit
           return [finding_from(active.reload), false]
         end
 
-        recent = Agentkit::FindingRecord.where(fingerprint: fingerprint)
+        recent = finding_relation.where(fingerprint: fingerprint)
                                         .order(last_seen_at: :desc, id: :desc).first
         cooldown = Agentkit.config.factory.finding_cooldown.to_f
         if recent && recent.last_seen_at && now - recent.last_seen_at < cooldown
@@ -413,12 +426,13 @@ module Agentkit
           evidence: finding.evidence || {}, fingerprint: fingerprint,
           occurrence_count: 1, first_seen_at: now, last_seen_at: now,
           clean_cycles: 0,
+          tenant_key: finding.tenant_key, account_id: finding.account_id,
           suggested_level: finding.suggested_level.to_s, status: finding.status || "open"
         )
         [finding_from(row), true]
       rescue ActiveRecord::RecordNotUnique
-        active = Agentkit::FindingRecord.find_by!(fingerprint: fingerprint,
-                                                  status: ACTIVE_FINDING_STATUSES)
+        active = finding_relation.find_by!(fingerprint: fingerprint,
+                                           status: ACTIVE_FINDING_STATUSES)
         active.with_lock do
           active.update!(occurrence_count: active.occurrence_count.to_i + 1,
                          last_seen_at: now, clean_cycles: 0,
@@ -437,7 +451,7 @@ module Agentkit
         terminal = %w[dismissed resolved].include?(status)
 
         if persisted?
-          row = Agentkit::FindingRecord.find_by(id: id)
+          row = finding_relation.find_by(id: id)
           raise ConfigurationError, "Finding #{id} not found" unless row
 
           row.with_lock do
@@ -493,7 +507,8 @@ module Agentkit
           target: target.to_s, control: control, variant: variant,
           traffic_pct: traffic_pct, bucket_by: bucket_by.to_s, status: "running",
           finding_id: finding&.id, started_at: now, cohort: stringify_keys(cohort),
-          results: baseline
+          results: baseline, tenant_key: factory_scope.tenant_key || "__global__",
+          account_id: factory_scope.account_id
         )
 
         if persisted?
@@ -506,15 +521,16 @@ module Agentkit
               variant: exp.variant.nil? ? {} : exp.variant,
               traffic_pct: exp.traffic_pct, bucket_by: exp.bucket_by,
               status: exp.status, finding_id: finding&.id, started_at: exp.started_at,
-              cohort: exp.cohort, results: exp.results
+              cohort: exp.cohort, results: exp.results,
+              tenant_key: exp.tenant_key, account_id: exp.account_id
             )
             exp.id = row.id.to_s
-            Agentkit::FindingRecord.lock.where(id: finding.id).update_all(
+            finding_relation.lock.where(id: finding.id).update_all(
               status: "experimenting", resolved_at: nil, updated_at: now
             ) if finding
             apply_variant(exp)
           end
-          exp = experiment_from(Agentkit::ExperimentRecord.find(exp.id))
+          exp = experiment_from(experiment_relation.find(exp.id))
         else
           (@experiments ||= []) << exp
           apply_variant(exp)
@@ -542,7 +558,7 @@ module Agentkit
         end
 
         if persisted?
-          row = Agentkit::ExperimentRecord.find(experiment.id)
+          row = experiment_relation.find(experiment.id)
           verdict = row.with_lock do
             current = experiment_from(row)
             evaluate_unlocked(current, row: row)
@@ -678,7 +694,7 @@ module Agentkit
       # was throwing it away.
       def capture_golden!(since: nil)
         rules   = Agentkit.config.factory.golden_set
-        entries = HITL.ledger.entries(since: since, mode: "human")
+        entries = HITL.ledger.entries(since: since, mode: "human", scope: factory_scope)
         captured = 0
 
         entries.each do |entry|
@@ -696,7 +712,8 @@ module Agentkit
             input: entry.proposed_payload || {},
             expected: blank_payload?(entry.final_payload) ? (entry.proposed_payload || {}) : entry.final_payload,
             label: entry.decision, rejection_code: entry.rejection_code,
-            frozen: !rules[:freeze_after_review], captured_at: Time.now
+            frozen: !rules[:freeze_after_review], captured_at: Time.now,
+            tenant_key: factory_scope.tenant_key || "__global__", account_id: factory_scope.account_id
           )
           if golden_persisted?
             Agentkit::GoldenCaseRecord.create!(
@@ -704,7 +721,8 @@ module Agentkit
               suggestion_id: golden_case.suggestion_id,
               input: golden_case.input, expected: golden_case.expected,
               label: golden_case.label, rejection_code: golden_case.rejection_code,
-              reviewed: golden_case.frozen
+              reviewed: golden_case.frozen, tenant_key: golden_case.tenant_key,
+              account_id: golden_case.account_id
             )
           else
             golden_sets[entry.agent_name] << golden_case
@@ -717,7 +735,7 @@ module Agentkit
 
       def freeze_golden!(agent, case_id)
         if golden_persisted?
-          row = Agentkit::GoldenCaseRecord.find_by(id: case_id, agent_name: agent.to_s)
+          row = golden_relation.find_by(id: case_id, agent_name: agent.to_s)
           return nil unless row
 
           row.update!(reviewed: true)
@@ -1009,7 +1027,7 @@ module Agentkit
         experiment.finished_at = now
         experiment.results = stringify_keys(results || {})
         if persisted?
-          row ||= Agentkit::ExperimentRecord.find(experiment.id)
+          row ||= experiment_relation.find(experiment.id)
           row.update!(status: status, results: experiment.results,
                       finished_at: now, last_evaluated_at: experiment.last_evaluated_at || now)
         end
@@ -1019,7 +1037,7 @@ module Agentkit
       def persist_experiment_progress!(experiment, row: nil)
         return experiment unless persisted?
 
-        row ||= Agentkit::ExperimentRecord.find(experiment.id)
+        row ||= experiment_relation.find(experiment.id)
         row.update!(status: experiment.status, results: stringify_keys(experiment.results || {}),
                     last_evaluated_at: experiment.last_evaluated_at || Time.now)
         experiment
@@ -1029,7 +1047,7 @@ module Agentkit
         return if finding_id.nil?
 
         if persisted?
-          row = Agentkit::FindingRecord.find_by(id: finding_id)
+          row = finding_relation.find_by(id: finding_id)
           return unless row
 
           terminal = status == "resolved"
@@ -1053,7 +1071,7 @@ module Agentkit
 
         return experiment unless persisted?
 
-        row = Agentkit::ExperimentRecord.find_by(id: experiment.id)
+        row = experiment_relation.find_by(id: experiment.id)
         raise ConfigurationError, "Experiment #{experiment.id} not found" unless row
 
         experiment_from(row)
@@ -1072,7 +1090,7 @@ module Agentkit
         # isolation boundary. Global reversible adapters use a temporal control
         # captured before they are applied and therefore have no runtime arm id.
         filters[:experiment_id] = experiment.id if experiment.level == "n2"
-        entries = HITL.ledger.entries(**filters)
+        entries = HITL.ledger.entries(**filters, scope: factory_scope)
         entries.select { |entry| cohort_match?(entry, experiment) }
       end
 
@@ -1189,7 +1207,7 @@ module Agentkit
       def ensure_no_overlapping_experiment!(target, cohort)
         running =
           if persisted?
-            Agentkit::ExperimentRecord.running.map { |row| experiment_from(row) }
+            experiment_relation.where(status: "running").map { |row| experiment_from(row) }
           else
             (@experiments || []).select { |experiment| experiment.status == "running" }
           end
@@ -1215,7 +1233,8 @@ module Agentkit
         connection = Agentkit::ExperimentRecord.connection
         return unless connection.adapter_name.to_s.downcase.include?("postgres")
 
-        connection.execute("SELECT pg_advisory_xact_lock(hashtext('agentkit_factory_experiments'))")
+        key = "agentkit_factory_experiments:#{factory_scope.tenant_key || '__global__'}"
+        connection.execute("SELECT pg_advisory_xact_lock(hashtext(#{connection.quote(key)}))")
       end
 
       def finding_fingerprint(detector, subject)
@@ -1227,7 +1246,7 @@ module Agentkit
         return if threshold <= 0
 
         if persisted?
-          Agentkit::FindingRecord.where(status: "open").find_each do |row|
+          finding_relation.where(status: "open").find_each do |row|
             next if fired_fingerprints.include?(row.fingerprint)
             next if failed_detectors.include?(row.detector.to_s)
 
@@ -1258,6 +1277,27 @@ module Agentkit
 
       def golden_persisted?
         persisted? && defined?(Agentkit::GoldenCaseRecord) && Agentkit::GoldenCaseRecord.table_exists?
+      end
+
+      def factory_scope = Scope.resolve
+
+      def finding_relation
+        apply_factory_scope(Agentkit::FindingRecord.all)
+      end
+
+      def experiment_relation
+        apply_factory_scope(Agentkit::ExperimentRecord.all)
+      end
+
+      def golden_relation
+        apply_factory_scope(Agentkit::GoldenCaseRecord.all)
+      end
+
+      def apply_factory_scope(relation)
+        scope = factory_scope
+        relation = relation.where(tenant_key: scope.tenant_key) if scope.tenant_key
+        relation = relation.where(account_id: scope.account_id) if scope.account_id && relation.column_names.include?("account_id")
+        relation
       end
 
       def golden_runners = @golden_runners ||= {}

@@ -44,7 +44,7 @@ module Agentkit
       def enqueue(record, config)
         @store.update(record.id, embedding_status: "pending")
         record.embedding_status = "pending"
-        @mutex.synchronize { @pending << record.id }
+        @mutex.synchronize { @pending << [record.id, scope_for(record)] }
         flush!(config) if should_flush?(config)
         record
       end
@@ -55,12 +55,21 @@ module Agentkit
       end
 
       # Embed everything pending in as few provider calls as possible.
-      def flush!(config = nil, limit: nil)
+      def flush!(config = nil, limit: nil, scope: nil)
         config ||= Agentkit.config.memory
-        ids = @mutex.synchronize { @pending.shift(limit || @pending.size) }
+        resolved = Scope.resolve(scope)
+        selected = @mutex.synchronize do
+          matching, remaining = @pending.partition do |_id, item_scope|
+            resolved.match?(Struct.new(:tenant_key, :account_id).new(item_scope[:tenant_key], item_scope[:account_id]))
+          end
+          chosen = matching.shift(limit || matching.size)
+          @pending = remaining + matching
+          chosen
+        end
         @last_flush = Time.now
-        records = ids.filter_map { |id| @store.find(id) }
-        records.concat(@store.pending_embedding(limit: config.embedding.batch_size)) if records.empty?
+        filters = resolved.apply
+        records = selected.filter_map { |id, _item_scope| @store.find(id, scope: filters) }
+        records.concat(@store.pending_embedding(limit: config.embedding.batch_size, scope: filters)) if records.empty?
         return 0 if records.empty?
 
         embed_records(records.uniq(&:id), config)

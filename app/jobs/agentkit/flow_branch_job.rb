@@ -12,8 +12,8 @@ module Agentkit
     # Retries are handled inside the step (`retry:` on the node). A job-level
     # retry here would risk double-decrementing the barrier, so failures are
     # recorded on the step instead.
-    def perform(run_uuid, step_id)
-      Agentkit::Flow::Worker.run_branch(run_uuid, step_id)
+    def perform(run_uuid, step_id, scope = nil)
+      Agentkit::Flow::Worker.run_branch(run_uuid, step_id, scope)
     end
   end
 end

@@ -15,11 +15,11 @@ module Agentkit
   #
   #   Agentkit::Context.current   # => ctx (thread-local, fiber-safe)
   class Context
-    attr_reader :user, :account, :tenant_key, :run_id, :trace_id, :metadata, :parent
+    attr_reader :user, :account, :tenant_key, :run_id, :trace_id, :metadata, :parent, :principal
     attr_accessor :budget
 
     def initialize(user: nil, account: nil, tenant_key: nil, run_id: nil, trace_id: nil,
-                   budget: nil, config: nil, metadata: {}, parent: nil)
+                   budget: nil, config: nil, metadata: {}, parent: nil, principal: nil)
       @user       = user
       @account    = account
       @tenant_key = tenant_key || derive_tenant_key(account)
@@ -29,6 +29,7 @@ module Agentkit
       @config     = config
       @metadata   = metadata || {}
       @parent     = parent
+      @principal  = principal
     end
 
     # Effective configuration for this context, with per-tenant overrides applied
@@ -48,7 +49,8 @@ module Agentkit
         budget:     overrides.fetch(:budget, budget),
         config:     overrides.fetch(:config, @config),
         metadata:   metadata.merge(overrides.fetch(:metadata, {})),
-        parent:     self
+        parent:     self,
+        principal:  overrides.fetch(:principal, principal)
       )
     end
 
@@ -68,7 +70,8 @@ module Agentkit
         tenant_key: tenant_key,
         run_id:     run_id,
         trace_id:   trace_id,
-        metadata:   metadata
+        metadata:   metadata,
+        principal:  principal
       }.compact
     end
 

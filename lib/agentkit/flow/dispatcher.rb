@@ -23,17 +23,17 @@ module Agentkit
       end
 
       class Base
-        def advance(run_uuid)                      = raise NotImplementedError
-        def branch(run_uuid, step_id)              = raise NotImplementedError
-        def join_timeout(run_uuid, step_id, delay:, policy:) = raise NotImplementedError
+        def advance(run_uuid, scope = nil)                      = raise NotImplementedError
+        def branch(run_uuid, step_id, scope = nil)              = raise NotImplementedError
+        def join_timeout(run_uuid, step_id, scope = nil, delay:, policy:) = raise NotImplementedError
         def async? = true
       end
 
       # Executes immediately. Used by the sync executor and as the fallback when
       # no job backend is loaded — better than silently dropping the work.
       class Inline < Base
-        def advance(run_uuid)         = Worker.advance(run_uuid)
-        def branch(run_uuid, step_id) = Worker.run_branch(run_uuid, step_id)
+        def advance(run_uuid, scope = nil)         = Worker.advance(run_uuid, scope)
+        def branch(run_uuid, step_id, scope = nil) = Worker.run_branch(run_uuid, step_id, scope)
 
         # Nothing to schedule: an inline run cannot outlive its own call.
         def join_timeout(*, **) = nil
@@ -41,20 +41,25 @@ module Agentkit
       end
 
       class ActiveJobDispatcher < Base
-        def advance(run_uuid)
-          Agentkit::FlowAdvanceJob.perform_later(run_uuid)
+        def advance(run_uuid, scope = nil)
+          Agentkit::FlowAdvanceJob.perform_later(run_uuid, serialized_scope(scope))
         end
 
-        def branch(run_uuid, step_id)
-          Agentkit::FlowBranchJob.perform_later(run_uuid, step_id)
+        def branch(run_uuid, step_id, scope = nil)
+          Agentkit::FlowBranchJob.perform_later(run_uuid, step_id, serialized_scope(scope))
         end
 
         # One scheduled job per join, at fan-out time. Not a poller.
-        def join_timeout(run_uuid, step_id, delay:, policy:)
+        def join_timeout(run_uuid, step_id, scope = nil, delay:, policy:)
           return if delay.nil?
 
-          Agentkit::FlowJoinTimeoutJob.set(wait: delay).perform_later(run_uuid, step_id, policy.to_s)
+          Agentkit::FlowJoinTimeoutJob.set(wait: delay).perform_later(run_uuid, step_id, policy.to_s,
+                                                                      serialized_scope(scope))
         end
+
+        private
+
+        def serialized_scope(scope) = Scope.resolve(scope).to_h
       end
 
       # Deterministic queue for specs.
@@ -67,11 +72,11 @@ module Agentkit
 
         attr_reader :jobs
 
-        def advance(run_uuid)         = enqueue(:advance, [run_uuid])
-        def branch(run_uuid, step_id) = enqueue(:branch, [run_uuid, step_id])
+        def advance(run_uuid, scope = nil)         = enqueue(:advance, [run_uuid, serialized_scope(scope)])
+        def branch(run_uuid, step_id, scope = nil) = enqueue(:branch, [run_uuid, step_id, serialized_scope(scope)])
 
-        def join_timeout(run_uuid, step_id, delay:, policy:)
-          enqueue(:join_timeout, [run_uuid, step_id, policy.to_s], delay)
+        def join_timeout(run_uuid, step_id, scope = nil, delay:, policy:)
+          enqueue(:join_timeout, [run_uuid, step_id, policy.to_s, serialized_scope(scope)], delay)
         end
 
         def enqueue(kind, args, delay = nil)
@@ -116,6 +121,8 @@ module Agentkit
         end
 
         private
+
+        def serialized_scope(scope) = Scope.resolve(scope).to_h
 
         def take(order)
           return nil if @jobs.empty?

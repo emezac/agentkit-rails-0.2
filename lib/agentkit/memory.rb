@@ -151,12 +151,12 @@ module Agentkit
         used
       end
 
-      def find(id) = store_backend.find(id)
-      def all(scope = {}) = store_backend.all(scope)
+      def find(id, scope: nil) = store_backend.find(id, scope: memory_scope(scope))
+      def all(scope = {}) = store_backend.all(memory_scope(scope))
 
       # How many memories match a scope. Counted in the store rather than by
       # loading them, so a dashboard tile costs one query instead of the table.
-      def count(scope = {}) = store_backend.count(scope)
+      def count(scope = {}) = store_backend.count(memory_scope(scope))
 
       def perspectives_of(record)
         store_backend.all(derived_from: record.id)
@@ -164,7 +164,7 @@ module Agentkit
 
       # ─── Maintenance ─────────────────────────────────────────────────────────
 
-      def flush_embeddings!(limit: nil) = embedder.flush!(nil, limit: limit)
+      def flush_embeddings!(limit: nil, scope: nil) = embedder.flush!(nil, limit: limit, scope: scope)
       def gc!(scope: {})                = embedder.gc!(nil, scope: scope)
 
       # Predicts the bill of a policy before you turn it on — so the decision is
@@ -192,6 +192,11 @@ module Agentkit
       end
 
       private
+
+      def memory_scope(filters = nil)
+        raw = filters || {}
+        Scope.resolve(raw).apply(raw)
+      end
 
       def keyword(query, scope, k)
         store_backend.keyword_search(query, scope: scope, limit: k)

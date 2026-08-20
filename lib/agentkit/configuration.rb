@@ -271,6 +271,7 @@ module Agentkit
     setting :chapter_detection, default: :heading_regex
     setting :store,             default: :active_record
     setting :embedding_dimensions, default: 1536
+    setting :max_context_bytes,  default: 32 * 1024
   end
 
   # ─── Team Memory ─────────────────────────────────────────────────────────────

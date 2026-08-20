@@ -138,6 +138,38 @@ RSpec.describe Agentkit::A2A do
       expect(suggestion.payload["via"]).to eq("a2a")
     end
 
+    it "does not let force_sync bypass approval" do
+      response = rpc("capabilities.invoke",
+                     { "capability" => "issue_refund", "inputs" => { "order_id" => 42 },
+                       "force_sync" => true })
+
+      expect(response[:result][:status]).to eq("pending_approval")
+      expect(executed).to be_empty
+    end
+
+    it "binds approval to the exact proposed arguments" do
+      task = rpc("capabilities.invoke",
+                 { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]
+
+      expect do
+        Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1",
+                              final_payload: { "order_id" => 99, "via" => "a2a" })
+      end.to raise_error(Agentkit::HITLError, /payload does not match/)
+      expect(executed).to be_empty
+    end
+
+    it "namespaces idempotency by tenant" do
+      params = { "capability" => "issue_refund", "inputs" => { "order_id" => 42 },
+                 "idempotency_key" => "same-key" }
+      a = Agentkit::Context.new(tenant_key: "a", principal: "peer:a")
+      b = Agentkit::Context.new(tenant_key: "b", principal: "peer:b")
+
+      first = described_class.handle({ "jsonrpc" => "2.0", "id" => "a", "method" => "capabilities.invoke", "params" => params }, context: a)
+      second = described_class.handle({ "jsonrpc" => "2.0", "id" => "b", "method" => "capabilities.invoke", "params" => params }, context: b)
+
+      expect(first[:result][:taskId]).not_to eq(second[:result][:taskId])
+    end
+
     it "lets the caller poll the parked task until a human decides" do
       task = rpc("capabilities.invoke",
                  { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]

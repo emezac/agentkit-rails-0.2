@@ -13,6 +13,7 @@ module Agentkit
     before_validation :populate_factory_identity, on: :create
 
     validates :fingerprint, presence: true, if: -> { has_attribute?(:fingerprint) }
+    validates :tenant_key, presence: true
     validates :status, inclusion: { in: Agentkit::Factory::FINDING_STATUSES }
 
     private
@@ -20,7 +21,7 @@ module Agentkit
     def populate_factory_identity
       now = Time.current
       self.fingerprint ||= Digest::SHA256.hexdigest(
-        [ detector, subject ].map { |value| value.to_s.strip.downcase }.join(":")
+        [ tenant_key, detector, subject ].map { |value| value.to_s.strip.downcase }.join(":")
       ) if has_attribute?(:fingerprint)
       self.first_seen_at ||= now if has_attribute?(:first_seen_at)
       self.last_seen_at ||= now if has_attribute?(:last_seen_at)

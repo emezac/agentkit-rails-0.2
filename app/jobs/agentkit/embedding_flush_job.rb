@@ -7,8 +7,11 @@ module Agentkit
   class EmbeddingFlushJob < ApplicationJob
     queue_as :agentkit_embeddings
 
-    def perform(limit = nil)
-      count = Agentkit::Memory.flush_embeddings!(limit: limit)
+    def perform(limit = nil, scope = nil)
+      resolved = Agentkit::Scope.resolve(scope)
+      count = Agentkit.with_context(Agentkit::Context.new(tenant_key: resolved.tenant_key)) do
+        Agentkit::Memory.flush_embeddings!(limit: limit, scope: resolved)
+      end
       Rails.logger.info("[AgentKit] flushed #{count} pending embeddings")
       count
     end

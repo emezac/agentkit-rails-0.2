@@ -167,13 +167,14 @@ module Agentkit
       end
 
       def dispatch_async(node, barrier, children)
-        children.each { |child| Flow.dispatcher.branch(run.run_id, child.id) unless child.settled? }
+        scope = { tenant_key: run.tenant_key, account_id: run.account_id }
+        children.each { |child| Flow.dispatcher.branch(run.run_id, child.id, scope) unless child.settled? }
 
         join = definition.flatten_nodes.find { |n| n.is_a?(Nodes::JoinNode) && n.target == node.name }
         return if join.nil?
 
         Flow.dispatcher.join_timeout(
-          run.run_id, barrier.id,
+          run.run_id, barrier.id, { tenant_key: run.tenant_key, account_id: run.account_id },
           delay: join.timeout || Agentkit.config.flow.default_join_timeout,
           policy: join.on_timeout
         )

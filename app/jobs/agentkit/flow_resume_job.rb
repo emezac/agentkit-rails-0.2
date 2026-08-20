@@ -6,8 +6,8 @@ module Agentkit
   class FlowResumeJob < ApplicationJob
     queue_as :agentkit_flows
 
-    def perform(_flow_name, run_uuid)
-      Agentkit::Flow::Worker.advance(run_uuid)
+    def perform(_flow_name, run_uuid, scope = nil)
+      Agentkit::Flow::Worker.advance(run_uuid, scope)
     end
   end
 end

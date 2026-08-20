@@ -12,8 +12,8 @@ module Agentkit
     # A run that cannot be advanced now is not a failure to retry forever.
     discard_on ActiveRecord::RecordNotFound
 
-    def perform(run_uuid)
-      Agentkit::Flow::Worker.advance(run_uuid)
+    def perform(run_uuid, scope = nil)
+      Agentkit::Flow::Worker.advance(run_uuid, scope)
     end
   end
 

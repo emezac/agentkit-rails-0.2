@@ -2,6 +2,8 @@
 
 require_relative "hitl/ledger"
 require_relative "hitl/stores"
+require "digest"
+require "json"
 
 module Agentkit
   # Human-in-the-loop with a real apply step, a decision ledger and idempotency.
@@ -116,7 +118,7 @@ module Agentkit
                        {}
                      end
 
-        if idempotency_key && (existing = find_by_idempotency(idempotency_key, config))
+        if idempotency_key && (existing = find_by_idempotency(idempotency_key, config, ctx))
           Telemetry.emit("hitl.deduped", dims: { type: type.to_s, agent: source_agent })
           return existing
         end
@@ -125,7 +127,7 @@ module Agentkit
           suggestion_type: type.to_s, title: title, description: description,
           priority: priority.to_s, source_agent: source_agent, payload: payload || {},
           suggestable: suggestable, status: config.level == :silent ? "silenced" : "pending",
-          user_id: id_of(ctx.user), account_id: id_of(ctx.account), tenant_key: ctx.tenant_key,
+          user_id: id_of(ctx.user), account_id: id_of(ctx.account), tenant_key: ctx.tenant_key || "__global__",
           idempotency_key: idempotency_key, prompt_id: prompt_id, prompt_version: prompt_version,
           model: model, run_id: ctx.run_id, gate_key: gate_key, created_at: Time.now,
           experiment_id: assignment[:experiment_id], experiment_arm: assignment[:experiment_arm],
@@ -150,12 +152,15 @@ module Agentkit
 
       # ─── Resolve ─────────────────────────────────────────────────────────────
 
-      def approve(id, actor: "human", final_payload: nil, mode: "human")
-        suggestion = fetch!(id)
+      def approve(id, actor: "human", final_payload: nil, mode: "human", scope: nil)
+        suggestion = fetch!(id, scope: scope)
+        raise HITLError, "Suggestion #{id} is already resolved" unless suggestion.pending?
+        validate_approval!(suggestion, actor, final_payload)
         edited     = !final_payload.nil? && final_payload != suggestion.payload
 
         suggestion.status      = mode == "auto" ? "auto_applied" : "accepted"
         suggestion.resolved_at = Time.now
+        suggestion.metadata = (suggestion.metadata || {}).merge("decision_actor" => actor.to_s)
 
         # Record BEFORE overwriting the payload: the ledger's edit distance is
         # the difference between what the agent proposed and what the human
@@ -170,8 +175,9 @@ module Agentkit
         suggestion
       end
 
-      def reject(id, actor: "human", code: nil, note: nil, mode: "human")
-        suggestion = fetch!(id)
+      def reject(id, actor: "human", code: nil, note: nil, mode: "human", scope: nil)
+        suggestion = fetch!(id, scope: scope)
+        raise HITLError, "Suggestion #{id} is already resolved" unless suggestion.pending?
         config     = Agentkit.config.hitl
         validate_code!(code, config)
 
@@ -206,18 +212,23 @@ module Agentkit
 
       # ─── Query ───────────────────────────────────────────────────────────────
 
-      def find(id) = store[id]
+      def find(id, scope: nil)
+        resolved_scope = Scope.resolve(scope)
+        suggestion = store[id]
+        resolved_scope.match?(suggestion) ? suggestion : nil
+      end
 
-      def fetch!(id)
-        store[id] || raise(SuggestionNotFound, "Suggestion #{id} not found")
+      def fetch!(id, scope: nil)
+        find(id, scope: scope) || raise(SuggestionNotFound, "Suggestion #{id} not found")
       end
 
       def pending(scope = {})
+        resource_scope = Scope.resolve(scope)
+        filters = scope.is_a?(Hash) ? scope : {}
         store.values.select do |s|
-          s.pending? &&
-            (scope[:tenant_key].nil? || s.tenant_key == scope[:tenant_key]) &&
-            (scope[:type].nil?       || s.suggestion_type == scope[:type].to_s) &&
-            (scope[:priority].nil?   || s.priority == scope[:priority].to_s)
+          s.pending? && resource_scope.match?(s) &&
+            (filters[:type].nil?       || s.suggestion_type == filters[:type].to_s) &&
+            (filters[:priority].nil?   || s.priority == filters[:priority].to_s)
         end.sort_by { |s| [-PRIORITIES.index(s.priority).to_i, s.created_at] }
       end
 
@@ -240,9 +251,40 @@ module Agentkit
 
       private
 
-      def find_by_idempotency(key, config)
+      def canonical_digest(payload)
+        normalized = normalize_json(payload)
+        "sha256:#{Digest::SHA256.hexdigest(JSON.generate(normalized))}"
+      end
+
+      def normalize_json(value)
+        case value
+        when Hash then value.map { |k, v| [k.to_s, normalize_json(v)] }.sort.to_h
+        when Array then value.map { |v| normalize_json(v) }
+        else value
+        end
+      end
+
+      def validate_approval!(suggestion, actor, final_payload)
+        metadata = suggestion.metadata || {}
+        requester = metadata["requester_principal"] || metadata[:requester_principal]
+        if requester && requester.to_s == actor.to_s
+          raise HITLError, "requester cannot approve its own proposal"
+        end
+
+        expected = metadata["arguments_digest"] || metadata[:arguments_digest]
+        return unless expected
+
+        candidate = final_payload || suggestion.payload
+        actual = canonical_digest(candidate.reject { |k, _| k.to_s == "via" })
+        raise HITLError, "approved payload does not match the proposed arguments digest" unless actual == expected
+      end
+
+      def find_by_idempotency(key, config, context)
         window = Time.now - config.dedupe_window
-        store.values.find { |s| s.idempotency_key == key && s.created_at >= window }
+        tenant_key = context.tenant_key || "__global__"
+        store.values.find do |s|
+          s.idempotency_key == key && s.tenant_key.to_s == tenant_key.to_s && s.created_at >= window
+        end
       end
 
       def validate_code!(code, config)
@@ -287,7 +329,8 @@ module Agentkit
         delay = config.auto_apply_delays[suggestion.suggestion_type] ||
                 config.auto_apply_delays[suggestion.suggestion_type.to_sym] ||
                 config.auto_apply_delay
-        scheduler.call(delay, suggestion.id)
+        scope = { tenant_key: suggestion.tenant_key, account_id: suggestion.account_id }
+        scheduler.arity == 2 ? scheduler.call(delay, suggestion.id) : scheduler.call(delay, suggestion.id, scope)
       # NotImplementedError descends from ScriptError, not StandardError, so a
       # bare `rescue` would sail right past it — which is exactly how the
       # inline adapter took down suggest!.
@@ -304,7 +347,7 @@ module Agentkit
       # `set(wait:).perform_later`; in the core it is a no-op so tests stay
       # deterministic and nothing silently auto-applies.
       def default_scheduler
-        lambda do |delay, suggestion_id|
+        lambda do |delay, suggestion_id, _scope = nil|
           Telemetry.emit("hitl.auto_apply_scheduled",
                          dims: { suggestion_id: suggestion_id }, measures: { delay: delay })
         end

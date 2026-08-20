@@ -128,17 +128,18 @@ module Agentkit
         end
 
         def entries(agent: nil, type: nil, since: nil, mode: nil, experiment_id: nil,
-                    experiment_arm: nil, prompt_id: nil, tenant_key: nil)
-          scope = Agentkit::DecisionRecord.all
-          scope = scope.where(agent_name: agent.to_s) if agent
-          scope = scope.where(suggestion_type: type.to_s) if type
-          scope = scope.where(created_at: since..) if since
-          scope = scope.where(mode: mode.to_s) if mode
-          scope = scope.where(experiment_id: experiment_id) if experiment_id
-          scope = scope.where(experiment_arm: experiment_arm.to_s) if experiment_arm
-          scope = scope.where(prompt_id: prompt_id.to_s) if prompt_id
-          scope = scope.where(tenant_key: tenant_key.to_s) if tenant_key
-          scope.order(:id).map { |r| to_entry(r) }
+                    experiment_arm: nil, prompt_id: nil, tenant_key: nil, scope: nil)
+          resolved = Scope.resolve(scope || { tenant_key: tenant_key })
+          relation = Agentkit::DecisionRecord.all
+          relation = relation.where(tenant_key: resolved.tenant_key) if resolved.tenant_key
+          relation = relation.where(agent_name: agent.to_s) if agent
+          relation = relation.where(suggestion_type: type.to_s) if type
+          relation = relation.where(created_at: since..) if since
+          relation = relation.where(mode: mode.to_s) if mode
+          relation = relation.where(experiment_id: experiment_id) if experiment_id
+          relation = relation.where(experiment_arm: experiment_arm.to_s) if experiment_arm
+          relation = relation.where(prompt_id: prompt_id.to_s) if prompt_id
+          relation.order(:id).map { |r| to_entry(r) }
         end
 
         def clear = Agentkit::DecisionRecord.delete_all

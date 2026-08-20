@@ -8,8 +8,8 @@ module Agentkit
   class FlowJoinTimeoutJob < ApplicationJob
     queue_as :agentkit_flows
 
-    def perform(run_uuid, step_id, policy = "fail")
-      Agentkit::Flow::Worker.join_timeout(run_uuid, step_id, policy)
+    def perform(run_uuid, step_id, policy = "fail", scope = nil)
+      Agentkit::Flow::Worker.join_timeout(run_uuid, step_id, policy, scope)
     end
   end
 end

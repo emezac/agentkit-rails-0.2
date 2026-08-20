@@ -14,27 +14,32 @@ module Agentkit
 
       # Walk the graph as far as it can go, then stop. Called on start, after a
       # barrier releases, and after a human gate resolves.
-      def advance(run_uuid)
+      def advance(run_uuid, scope = nil)
         store = Flow.shared_store
-        run   = store.find_run_by_uuid(run_uuid)
+        resolved_scope = Scope.resolve(scope)
+        run   = store.find_run_by_uuid(run_uuid, scope: resolved_scope)
         return log("run #{run_uuid} not found") if run.nil?
         return if run.finished?
 
         flow = Registry.find(run.flow_name)
         return log("flow #{run.flow_name} is not loaded") if flow.nil?
 
-        Executor.new(definition: flow.definition, run: run, store: store,
-                     context: rebuild_context(run), input: run.input, mode: :async).call
+        ctx = rebuild_context(run)
+        Agentkit.with_context(ctx) do
+          Executor.new(definition: flow.definition, run: run, store: store,
+                       context: ctx, input: run.input, mode: :async).call
+        end
       end
 
       # One branch of a fan-out. Everything it needs is in its own step row, so
       # it can execute on any worker without the parent still being alive.
-      def run_branch(run_uuid, step_id)
+      def run_branch(run_uuid, step_id, scope = nil)
         store = Flow.shared_store
-        run   = store.find_run_by_uuid(run_uuid)
+        resolved_scope = Scope.resolve(scope)
+        run   = store.find_run_by_uuid(run_uuid, scope: resolved_scope)
         return log("run #{run_uuid} not found") if run.nil?
 
-        step = store.find_step(run, step_id)
+        step = store.find_step(run, step_id, scope: resolved_scope)
         return log("step #{step_id} not found") if step.nil?
 
         # Redelivery: the step already closed. Do NOT execute and do NOT
@@ -45,7 +50,7 @@ module Agentkit
           return
         end
 
-        barrier = store.find_step(run, step.parent_step_id)
+        barrier = store.find_step(run, step.parent_step_id, scope: resolved_scope)
         flow    = Registry.find(run.flow_name)
         node    = flow&.definition&.node(step.step_name)
         return log("node #{step.step_name} missing") if node.nil?
@@ -66,16 +71,17 @@ module Agentkit
 
         # "Last one turns off the lights": exactly one branch sees zero and
         # releases the join. No polling, no arbitrary delay.
-        Flow.dispatcher.advance(run_uuid) if remaining && remaining <= 0
+        Flow.dispatcher.advance(run_uuid, resolved_scope) if remaining && remaining <= 0
       end
 
       # Fired once per join, scheduled at fan-out time.
-      def join_timeout(run_uuid, step_id, policy = "fail")
+      def join_timeout(run_uuid, step_id, policy = "fail", scope = nil)
         store   = Flow.shared_store
-        run     = store.find_run_by_uuid(run_uuid)
+        resolved_scope = Scope.resolve(scope)
+        run     = store.find_run_by_uuid(run_uuid, scope: resolved_scope)
         return if run.nil? || run.finished?
 
-        barrier = store.find_step(run, step_id)
+        barrier = store.find_step(run, step_id, scope: resolved_scope)
         return if barrier.nil? || barrier.pending_count.to_i <= 0 # already released
 
         Telemetry.emit("flow.join.timeout",
@@ -87,13 +93,13 @@ module Agentkit
         case policy.to_s
         when "continue_with_partial"
           store.update_step(barrier, pending_count: 0, status: "completed", finished_at: Time.now)
-          Flow.dispatcher.advance(run_uuid)
+          Flow.dispatcher.advance(run_uuid, resolved_scope)
         when "compensate"
           # Route the failure back through the executor so `on_error` handlers
           # and the saga compensations actually run. Marking the run failed here
           # would skip both.
           store.update_step(barrier, pending_count: 0, status: "timed_out", finished_at: Time.now)
-          Flow.dispatcher.advance(run_uuid)
+          Flow.dispatcher.advance(run_uuid, resolved_scope)
         else # :fail — stop now, no compensation
           store.update_step(barrier, pending_count: 0, status: "timed_out", finished_at: Time.now)
           store.update_run(run, status: "failed", finished_at: Time.now,

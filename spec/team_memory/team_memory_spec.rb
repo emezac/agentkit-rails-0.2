@@ -34,6 +34,19 @@ RSpec.describe Agentkit::TeamMemory do
       expect(described_class::ACL.accessible?(asset, team_id: 999)).to be false
     end
 
+    it "denies unknown visibility and team assets without a valid team" do
+      unknown = { visibility: "mystery", tenant_key: "__global__" }
+      orphan = { visibility: "team", team_id: nil, tenant_key: "__global__" }
+
+      expect(Agentkit::TeamMemory::ACL.accessible?(unknown, team_id: 1)).to be(false)
+      expect(Agentkit::TeamMemory::ACL.accessible?(orphan, team_id: 1)).to be(false)
+    end
+
+    it "checks tenant before ACL grants" do
+      asset = { visibility: "private", owner_id: 7, tenant_key: "tenant:a" }
+      expect(Agentkit::TeamMemory::ACL.accessible?(asset, owner_id: 7, tenant_key: "tenant:b")).to be(false)
+    end
+
     it "restricts private assets to matching owners" do
       asset = described_class.create_asset(
         asset_type: "chat_memory",
