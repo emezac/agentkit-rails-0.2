@@ -42,6 +42,9 @@ module Agentkit
           Agentkit::HITL.store  = Agentkit::HITL::Stores::ActiveRecordStore.new
           Agentkit::HITL.ledger = Agentkit::HITL::Stores::ActiveRecordLedger.new
         end
+        if defined?(Agentkit::A2aTaskRecord) && Agentkit::A2aTaskRecord.table_exists?
+          Agentkit::A2A::V1.task_store = Agentkit::A2A::V1::ActiveRecordTaskStore.new
+        end
       end
     end
 
@@ -109,8 +112,15 @@ module Agentkit
       config.after_initialize do
         next unless Agentkit.config.a2a.enabled
 
+        # Load through the engine's pinned A2A inflection before host routes
+        # attempt to constantize the controller with the host inflector.
+        Agentkit::A2AController
+
         Rails.application.routes.prepend do
-          get "/.well-known/agent.json", to: "agentkit/a2a#card", as: :agentkit_well_known_agent
+          get "/.well-known/agent-card.json", to: "agentkit/a2a#card", as: :agentkit_well_known_agent_card
+          if Agentkit.config.a2a.legacy
+            get "/.well-known/agent.json", to: "agentkit/a2a#legacy_card", as: :agentkit_well_known_agent
+          end
         end
       end
     end

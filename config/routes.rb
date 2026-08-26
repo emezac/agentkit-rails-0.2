@@ -29,6 +29,10 @@ Agentkit::Engine.routes.draw do
   post "a2a/rpc",      to: "a2a#rpc",      as: :a2a_rpc
   get  "a2a",          to: "a2a#card",     as: :a2a_card
   post "a2a/register", to: "a2a#register", as: :a2a_register
+  post "a2a/message:send",   to: "a2a#send_message", as: :a2a_send_message
+  get  "a2a/tasks/:id",      to: "a2a#get_task",     as: :a2a_get_task
+  get  "a2a/tasks",          to: "a2a#list_tasks",   as: :a2a_list_tasks
+  post "a2a/tasks/:id:cancel", to: "a2a#cancel_task", as: :a2a_cancel_task
   # Convenience REST alias over the same dispatcher.
   # ─── Team Memory Hub ───────────────────────────────────────────────────────
   get  "team_memory",              to: "team_memory#index",        as: :team_memory_index

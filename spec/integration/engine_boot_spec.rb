@@ -30,6 +30,13 @@ RSpec.describe "Engine boot", :integration do
 
     expect(Rails.application.routes.recognize_path("/agentkit"))
       .to include(controller: "agentkit/suggestions", action: "index")
+
+    expect(Rails.application.routes.recognize_path("/.well-known/agent-card.json"))
+      .to include(controller: "agentkit/a2a", action: "card")
+    expect(Rails.application.routes.recognize_path("/agentkit/a2a/message:send", method: :post))
+      .to include(controller: "agentkit/a2a", action: "send_message")
+    expect(Rails.application.routes.recognize_path("/agentkit/a2a/tasks/task-1", method: :get))
+      .to include(controller: "agentkit/a2a", action: "get_task", id: "task-1")
   end
 
   it "swaps the in-memory ports for the ActiveRecord ones" do
@@ -78,7 +85,7 @@ RSpec.describe "Engine boot", :integration do
         "agentkit_memories", "agentkit_runs", "agentkit_run_steps",
         "agentkit_suggestions", "agentkit_decisions", "agentkit_events",
         "agentkit_audit_logs", "agentkit_traces", "agentkit_trace_phases",
-        "agentkit_artifacts"
+        "agentkit_artifacts", "agentkit_a2a_tasks"
       )
     end
 
@@ -135,7 +142,7 @@ RSpec.describe "Eager loading", :integration do
   it "names the A2A controller the same way regardless of host inflections" do
     expect(Agentkit::A2AController.superclass).to eq(ActionController::API)
     expect(Agentkit::A2AController.action_methods).to include("rpc", "card", "register", "invoke")
-    expect(defined?(Agentkit::A2aController)).to be_nil
+    expect(Agentkit::A2aController).to equal(Agentkit::A2AController)
   end
 
   it "pins that inflection on every autoloader" do

@@ -1,3 +1,43 @@
+# Upgrading 0.3.2 → 0.4.0
+
+AgentKit 0.4 adds A2A 1.0 without removing the 0.3 JSON-RPC API. New peers
+should discover `/.well-known/agent-card.json` and use the HTTP+JSON endpoints
+under `/agentkit/a2a`.
+
+Install and run migration `014_create_agentkit_a2a_tasks`. It provides durable,
+tenant-scoped task polling across restarts and multiple Rails workers.
+
+For multi-tenant applications, resolve the account from the Rails request and
+optionally customize domain fields in the generated card:
+
+```ruby
+config.a2a.tenant_resolver = ->(request) { Vendor.find_by(subdomain: request.subdomains.first) }
+config.a2a.card_builder = lambda do |card, context|
+  card.merge(iconUrl: context.account.logo_url)
+end
+```
+
+Use `security_schemes` and `security_requirements` to advertise the host's real
+authentication mechanism. The default declares HTTP Bearer authentication;
+`X-A2A-Key` remains accepted for legacy callers.
+
+Card signatures are optional. To publish an RS256 signature:
+
+```ruby
+config.a2a.signing_key = ENV.fetch("AGENTKIT_A2A_SIGNING_KEY_PEM")
+config.a2a.signing_key_id = "provider-2026-01"
+config.a2a.signing_jwks_url = "https://agents.example/.well-known/jwks.json"
+```
+
+Outbound verification accepts `:disabled`, `:if_present` (the default), or
+`:required`. Populate `trusted_keys` with `kid => public_key` entries. AgentKit
+does not automatically trust arbitrary `jku` URLs.
+
+Once every peer uses A2A 1.0, disable the old discovery route with
+`config.a2a.legacy = false`.
+
+---
+
 # Upgrading 0.3.1 → 0.3.2
 
 Install and run migrations `011`, `012` and `013`. Historical unscoped rows are

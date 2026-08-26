@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.4.0 — Unreleased
+
+### Added
+
+- Added an A2A 1.0 HTTP+JSON adapter with the standard Agent Card discovery
+  route, version negotiation, Message/Task/Artifact projection and task states
+  for completed, failed, input-required and authorization-required work.
+- Added tenant-aware Agent Cards and task isolation through `tenant_resolver`,
+  `card_builder` and the standard `AgentInterface.tenant` routing hint.
+- Added standard bearer security declarations and configurable Agent Card
+  signing and verification using RS256 JWS over canonical JSON.
+- Added an outbound A2A 1.0 client with signature policy and HTTPS enforcement.
+- Added tenant-scoped durable storage for A2A tasks so polling survives process
+  restarts and works consistently across web workers.
+
+### Compatibility
+
+- The pre-1.0 JSON-RPC dispatcher and `/.well-known/agent.json` remain enabled
+  by default. Set `config.a2a.legacy = false` after all existing peers migrate.
+
 ## 0.3.2 — Unreleased
 
 ### Security

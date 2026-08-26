@@ -195,6 +195,22 @@ module Agentkit
     setting :mount_path,  default: "/agentkit/a2a"
     setting :secret_key,  default: -> { ENV.fetch("AGENTKIT_A2A_KEY", nil) }
     setting :key_resolver                          # ->(key) { Account.find_by(a2a_key: key) }
+    setting :tenant_resolver                       # ->(request_or_tenant) { Account.find_by(...) }
+    setting :card_builder                          # ->(card, context) { card.merge(...) }
+    setting :provider_name
+    setting :provider_url
+    setting :documentation_url
+    setting :security_schemes, default: -> {
+      { bearerAuth: { type: "http", scheme: "bearer", description: "A2A peer credential" } }
+    }
+    setting :security_requirements, default: -> { [{ bearerAuth: [] }] }
+    setting :signing_key                           # PEM, OpenSSL::PKey or ->(context) { key }
+    setting :signing_key_id
+    setting :signing_jwks_url
+    setting :signature_algorithm, default: "RS256", in: %w[RS256]
+    setting :verification, default: :if_present, in: %i[disabled if_present required]
+    setting :trusted_keys, default: -> { {} }      # kid => PEM/OpenSSL::PKey
+    setting :legacy, default: true
     # Which capabilities are visible to peers. nil = all eligible ones.
     setting :expose
     setting :hide,         default: -> { [] }

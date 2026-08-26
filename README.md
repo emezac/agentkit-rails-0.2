@@ -1,9 +1,9 @@
-# AgentKit Rails v0.3
+# AgentKit Rails v0.4
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.3"
+gem "agentkit-rails", "~> 0.4.0"
 ```
 
 ```bash
@@ -14,6 +14,10 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
+La versión 0.4 añade interoperabilidad A2A 1.0 sobre HTTP+JSON, identidad
+multi-tenant, tareas persistentes y Agent Cards firmables, manteniendo el
+transporte JSON-RPC anterior durante la migración.
+
 El instalador registra el engine durante `config/application.rb`; hacerlo por
 primera vez desde un initializer es demasiado tarde para que Rails incorpore
 sus modelos y tareas. El generador puede ejecutarse de nuevo de forma segura si
@@ -21,7 +25,22 @@ una instalación anterior no encuentra las migraciones.
 
 ---
 
-## 🚀 Novedades en la Versión 0.3.0
+## Novedades en la versión 0.4.0
+
+- Agent Card A2A 1.0 en `/.well-known/agent-card.json`.
+- Binding `HTTP+JSON`, negociación mediante `A2A-Version: 1.0` y media type
+  `application/a2a+json`.
+- Mensajes, tareas, artefactos y estados `INPUT_REQUIRED`/`AUTH_REQUIRED`.
+- Identidad y almacenamiento durable de tareas aislados por tenant.
+- Autenticación Bearer, firma RS256/JWS y verificación configurable.
+- Cliente A2A 1.0 saliente con HTTPS obligatorio para peers remotos.
+- Compatibilidad opt-out con JSON-RPC 0.2 y `/.well-known/agent.json`.
+
+Para actualizar desde 0.3, instala las migraciones del engine y ejecuta
+`rails db:migrate`; la migración `014_create_agentkit_a2a_tasks` agrega la
+persistencia A2A.
+
+## Novedades en la versión 0.3.0
 
 La versión **0.3.0** incorpora una arquitectura completa de **RAG Nativo**, **Orquestación Distribuida para Documentos Masivos**, el **Team Memory Hub** (basado en TencentDB Agent Memory) y **Mejoras Avanzadas de Memoria**.
 
@@ -318,38 +337,67 @@ es un hallazgo para la fábrica.
 
 ---
 
-## A2A: la card se genera, no se escribe a mano
+## A2A 1.0: identidad multi-tenant y tareas estándar
 
 ```ruby
 config.a2a.enabled    = true
 config.a2a.secret_key = ENV["AGENTKIT_A2A_KEY"]
 config.a2a.expose     = %i[import_contacts]   # nil = todas las elegibles
+config.a2a.tenant_resolver = ->(request) {
+  Account.find_by(subdomain: request.subdomains.first)
+}
+config.a2a.key_resolver = ->(token) { Account.find_by(a2a_token: token) }
 ```
 
-`GET /.well-known/agent.json` devuelve las capacidades cuyas **precondiciones se
-cumplen ahora mismo**, con su riesgo y si van a requerir un humano:
+`GET /.well-known/agent-card.json` devuelve una Agent Card A2A 1.0 generada para
+el tenant actual. Solo anuncia capacidades cuyas **precondiciones se cumplen**.
+La interfaz preferida es `HTTP+JSON` y declara `protocolVersion: "1.0"`.
 
-```json
-{ "id": "issue_refund", "risk": "irreversible", "requiresHumanApproval": true }
-```
-
-Una invocación remota entra por el mismo carril que una propuesta local —
+Un mensaje remoto entra por el mismo carril que una propuesta local —
 Capability → Flow → HITL → auditoría. Lo irreversible **no se ejecuta**: se
-aparca como sugerencia y el par recibe un `taskId` para consultar.
+representa como `TASK_STATE_AUTH_REQUIRED`. Los argumentos faltantes producen
+`TASK_STATE_INPUT_REQUIRED` y pueden completarse en otro mensaje.
 
 ```bash
-curl -X POST https://acme.test/agentkit/a2a/rpc -H "X-A2A-Key: $KEY" -d '{
-  "jsonrpc":"2.0","id":"1","method":"capabilities.invoke",
-  "params":{"capability":"issue_refund","inputs":{"order_id":42}}}'
-# => { "result": { "status": "pending_approval", "taskId": "suggestion:17" } }
+curl -X POST https://acme.test/agentkit/a2a/message:send \
+  -H "Authorization: Bearer $KEY" -H "A2A-Version: 1.0" \
+  -H "Content-Type: application/a2a+json" -d '{
+  "message":{"role":"ROLE_USER","messageId":"msg-1",
+    "metadata":{"skillId":"issue_refund"},
+    "parts":[{"data":{"order_id":42}}]}}'
 ```
 
 Y hacia afuera, para federar:
 
 ```ruby
-peer = Agentkit::A2A::Client.new(base_url: "https://peer.test", key: ENV["PEER_KEY"])
-peer.call_capability(:reserve_slot, { date: "2026-08-01" }, poll: true)
+peer = Agentkit::A2A::V1::Client.new(base_url: "https://peer.test", token: ENV["PEER_KEY"])
+peer.send_message({
+  role: "ROLE_USER", messageId: SecureRandom.uuid,
+  metadata: { skillId: "reserve_slot" },
+  parts: [{ data: { date: "2026-08-01" } }]
+})
 ```
+
+El cliente JSON-RPC anterior y `/.well-known/agent.json` siguen disponibles
+durante la migración. Se desactivan con `config.a2a.legacy = false`.
+
+### Firmar y verificar Agent Cards
+
+```ruby
+config.a2a.signing_key = ENV["AGENTKIT_A2A_SIGNING_KEY_PEM"]
+config.a2a.signing_key_id = "provider-2026-01"
+config.a2a.signing_jwks_url = "https://acme.test/.well-known/jwks.json"
+
+# Cliente saliente: :disabled | :if_present | :required
+config.a2a.verification = :required
+config.a2a.trusted_keys = {
+  "peer-2026-01" => ENV["PEER_A2A_PUBLIC_KEY_PEM"]
+}
+```
+
+La firma es opcional. AgentKit no descarga ni confía automáticamente en claves
+indicadas por `jku`; el operador debe incorporarlas explícitamente a
+`trusted_keys`.
 
 ## Consola
 

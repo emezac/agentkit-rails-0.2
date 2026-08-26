@@ -1,4 +1,4 @@
-# Guía Completa de agentkit-rails v0.3.1
+# Guía completa de agentkit-rails v0.4.0
 
 > **Kernel de Agentes de IA para Aplicaciones Rails** — Orquestación distribuida, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria semántica por capas (L0-L3), HITL con ledger de decisiones y Fábrica de mejora continua desde el día 0.
 
@@ -6,8 +6,8 @@
 
 ## Tabla de contenidos
 
-1. [¿Qué es agentkit-rails v0.3?](#1-qué-es-agentkit-rails-v03)
-2. [Principales Novedades de la Versión 0.3.0](#2-principales-novedades-de-la-versión-030)
+1. [¿Qué es agentkit-rails v0.4?](#1-qué-es-agentkit-rails-v04)
+2. [Principales novedades de la versión 0.4.0](#2-principales-novedades-de-la-versión-040)
 3. [Instalación y Configuración](#3-instalación-y-configuración)
 4. [Arquitectura y los Pilares del Kernel](#4-arquitectura-y-los-pilares-del-kernel)
 5. [RAG Nativo y Orquestación Distribuida](#5-rag-nativo-y-orquestación-distribuida)
@@ -26,7 +26,7 @@
 
 ---
 
-## 1. ¿Qué es agentkit-rails v0.3?
+## 1. ¿Qué es agentkit-rails v0.4?
 
 `agentkit-rails` es un `Rails::Engine` de grado de producción que transforma cualquier aplicación Rails 8 en una plataforma avanzada de agentes autónomos y colaborativos. Proporciona:
 
@@ -36,14 +36,15 @@
 - **Memoria Semántica por Capas (L0-L3)**: Ingesta de conversaciones históricas (`ColdStart`), plantillas dinámicas por tenant (`CustomPrompts`), filtrado temporal (`since:`, `until:`) e intercepción de comandos interactivos (`mem:`).
 - **HITL (Human-in-the-Loop) & Decision Ledger**: Taxonomía cerrada de rechazos, ejecución automática de handlers y métricas de desempeño.
 - **Fábrica de Auto-Mejora**: Detección determinista con evidencia de cuellos de botella y experimentos con escalera N1–N5.
-- **Protocolo A2A**: Exposición e interacción entre agentes locales y remotos vía JSON-RPC 2.0.
+- **Protocolo A2A 1.0**: Agent Cards multi-tenant, HTTP+JSON, tareas
+  persistentes, HITL, firmas JWS y cliente saliente verificable.
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        Tu Aplicación Rails                             │
 │   (Modelos AR, Controllers, Jobs, UI de Negocio)                       │
 ├────────────────────────────────────────────────────────────────────────┤
-│                     agentkit-rails Engine v0.3                         │
+│                     agentkit-rails Engine v0.4                         │
 │  Flows · Native RAG · Team Memory Hub · Memory L0-L3 · HITL · A2A      │
 ├────────────────────────────────────────────────────────────────────────┤
 │                 Infraestructura de Datos y Modelos                     │
@@ -53,7 +54,24 @@
 
 ---
 
-## 2. Principales Novedades de la Versión 0.3.0
+## 2. Principales novedades de la versión 0.4.0
+
+1. **A2A 1.0 sobre HTTP+JSON**: descubrimiento estándar, mensajes, tareas,
+   artefactos, negociación de versión y respuestas `application/a2a+json`.
+2. **Identidad multi-tenant**: una Agent Card por cuenta o subdominio y tareas
+   aisladas por `tenant_key`.
+3. **Interacción progresiva y HITL**: datos faltantes producen
+   `TASK_STATE_INPUT_REQUIRED`; operaciones con aprobación producen
+   `TASK_STATE_AUTH_REQUIRED`.
+4. **Confianza configurable**: Bearer, Agent Cards RS256/JWS y verificación
+   `:disabled`, `:if_present` o `:required`.
+5. **Migración compatible**: JSON-RPC y `/.well-known/agent.json` permanecen
+   disponibles hasta establecer `config.a2a.legacy = false`.
+
+Las capacidades incorporadas en 0.3 —RAG nativo, CoordinatorFlow, Team Memory
+Hub y memoria L0-L3— permanecen disponibles sin cambios incompatibles.
+
+### Componentes incorporados originalmente en 0.3
 
 1. **Épica 1 — RAG Nativo**:
    - Ingestador BM25 (`BM25Index`), Chunkers (sliding, semantic, sentence, `ChapterChunker`).
@@ -83,7 +101,7 @@
 Add to your `Gemfile`:
 
 ```ruby
-gem "agentkit-rails", "~> 0.3.1"
+gem "agentkit-rails", "~> 0.4.0"
 ```
 
 Ejecutá los generadores para instalar el engine, la configuración RAG y el Team Memory Hub:
@@ -98,7 +116,8 @@ rails g agentkit:rag
 # 3. Scaffolding de Team Memory Hub (Migración 009)
 rails g agentkit:team_memory
 
-# 4. Correr las migraciones de PostgreSQL
+# 4. Instalar las migraciones del engine y migrar PostgreSQL
+rails agentkit:install:migrations
 rails db:migrate
 
 # 5. Diagnóstico de componentes
@@ -363,12 +382,111 @@ Agentkit::Chat.say("mem:help")   # => Muestra el menú de ayuda
 
 ## 13. Protocolo A2A (Agent-to-Agent)
 
-Permite la federación e interacción segura entre agentes de distintas aplicaciones:
+AgentKit expone las capacidades registradas como skills de una Agent Card A2A
+1.0. Las mismas precondiciones, aislamiento tenant, HITL y auditoría aplican a
+las invocaciones locales y remotas.
+
+### 13.1 Configuración multi-tenant
 
 ```ruby
-# Consultar capacidades publicadas por un par
-peer = Agentkit::A2A::Client.new(base_url: "https://peer-agent.acme.test", key: ENV["PEER_KEY"])
-response = peer.call_capability(:security_audit, { target_host: "10.0.0.1" }, poll: true)
+Agentkit.configure do |config|
+  config.a2a.enabled = true
+  config.a2a.expose = %i[quote_event check_availability reserve_date]
+
+  # Identidad pública según dominio o subdominio.
+  config.a2a.tenant_resolver = lambda do |request|
+    Vendor.find_by(subdomain: request.subdomains.first)
+  end
+
+  # Credencial del peer → contexto privado de ejecución.
+  config.a2a.key_resolver = ->(token) { Vendor.find_by(a2a_token: token) }
+end
+```
+
+Cada tenant obtiene su propia tarjeta en:
+
+```text
+GET /.well-known/agent-card.json
+Accept: application/a2a+json
+```
+
+La tarjeta anuncia `supportedInterfaces`, `protocolVersion: "1.0"`, esquemas
+de seguridad y solamente los skills elegibles para ese contexto.
+
+### 13.2 Enviar mensajes y consultar tareas
+
+```bash
+curl -X POST https://vendor.example/agentkit/a2a/message:send \
+  -H "Authorization: Bearer $A2A_TOKEN" \
+  -H "A2A-Version: 1.0" \
+  -H "Content-Type: application/a2a+json" \
+  -d '{
+    "message": {
+      "role": "ROLE_USER",
+      "messageId": "msg-001",
+      "metadata": { "skillId": "quote_event" },
+      "parts": [{ "data": { "budget": 25000 } }]
+    }
+  }'
+```
+
+Endpoints disponibles:
+
+- `POST /agentkit/a2a/message:send`
+- `GET /agentkit/a2a/tasks/:id`
+- `GET /agentkit/a2a/tasks`
+- `POST /agentkit/a2a/tasks/:id:cancel`
+
+Las tareas se almacenan en `agentkit_a2a_tasks` y están separadas por tenant.
+Una capacidad irreversible conserva su aprobación humana y aparece como
+`TASK_STATE_AUTH_REQUIRED`. Si faltan argumentos, la respuesta usa
+`TASK_STATE_INPUT_REQUIRED`.
+
+### 13.3 Cliente saliente
+
+```ruby
+peer = Agentkit::A2A::V1::Client.new(
+  base_url: "https://peer-agent.acme.test",
+  token: ENV["PEER_KEY"]
+)
+
+card = peer.card
+response = peer.send_message({
+  role: "ROLE_USER",
+  messageId: SecureRandom.uuid,
+  metadata: { skillId: "security_audit" },
+  parts: [{ data: { target_host: "10.0.0.1" } }]
+})
+```
+
+El cliente exige HTTPS para hosts remotos. `localhost` se permite para
+desarrollo.
+
+### 13.4 Agent Cards firmadas
+
+```ruby
+config.a2a.signing_key = ENV["AGENTKIT_A2A_SIGNING_KEY_PEM"]
+config.a2a.signing_key_id = "provider-2026-01"
+config.a2a.signing_jwks_url = "https://agents.example/.well-known/jwks.json"
+
+config.a2a.verification = :required
+config.a2a.trusted_keys = {
+  "peer-2026-01" => ENV["PEER_A2A_PUBLIC_KEY_PEM"]
+}
+```
+
+Las firmas RS256/JWS son opcionales. La política predeterminada es
+`:if_present`: acepta tarjetas sin firma, pero verifica las que sí la incluyen.
+AgentKit no confía automáticamente en una clave indicada mediante `jku`.
+
+### 13.5 Compatibilidad con 0.3
+
+El cliente `Agentkit::A2A::Client`, JSON-RPC y
+`/.well-known/agent.json` siguen disponibles por defecto. Después de migrar
+todos los peers:
+
+```ruby
+config.a2a.legacy = false
 ```
 
 ---
@@ -440,6 +558,12 @@ Agentkit.configure do |config|
 
   config.a2a.enabled = true
   config.a2a.secret_key = ENV["AGENTKIT_A2A_KEY"]
+  config.a2a.key_resolver = ->(token) { Account.find_by(a2a_token: token) }
+  config.a2a.tenant_resolver = ->(request) {
+    Account.find_by(subdomain: request.subdomains.first)
+  }
+  config.a2a.expose = %i[quote_event check_availability]
+  config.a2a.verification = :if_present
 end
 ```
 
