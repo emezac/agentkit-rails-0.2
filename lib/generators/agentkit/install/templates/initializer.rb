@@ -38,6 +38,19 @@ Agentkit.configure do |config|
   # ─── Human in the loop ─────────────────────────────────────────────────────
   config.hitl.level = :strict        # :strict | :advisory | :silent
 
+  # Idempotency keys are durable in 0.4.1. Retain suggestion rows for the full
+  # retry-safety horizon promised by your application.
+
+  # ─── Audit: prompt capture is opt-in ───────────────────────────────────────
+  config.audit.prompt_preview_chars = 0
+  config.audit.failure_mode = :best_effort # :best_effort | :required
+
+  # ─── Console: disabled in every environment until both hooks are set ──────
+  config.console.enabled = false
+  # config.console.principal_resolver = -> { current_user }
+  # config.console.guard = ->(principal) { principal.admin? }
+  # config.console.payload_guard = ->(principal) { principal.security_admin? }
+
   # ─── Telemetry: on from day 0, otherwise the factory has nothing to read ───
   config.telemetry.enabled  = true
   config.telemetry.backends = [:db]

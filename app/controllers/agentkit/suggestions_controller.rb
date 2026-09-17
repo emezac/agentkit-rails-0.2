@@ -36,7 +36,8 @@ module Agentkit
     end
 
     def snooze
-      @suggestion = Agentkit::HITL.snooze(params[:id].to_i, actor: actor)
+      @suggestion = Agentkit::HITL.snooze(params[:id].to_i, actor: actor,
+                                           scope: suggestion_scope)
       respond_with_suggestion("Pospuesta")
     end
 

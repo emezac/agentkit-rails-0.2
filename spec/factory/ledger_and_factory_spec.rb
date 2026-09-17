@@ -22,7 +22,9 @@ RSpec.describe Agentkit::HITL do
       described_class.on("follow_up") { raise "handler exploded" }
       s = propose
 
-      expect { described_class.approve(s.id, actor: "human:1") }.not_to raise_error
+      result = described_class.approve(s.id, actor: "human:1")
+
+      expect(result.status).to eq("execution_unknown")
       expect(emitted("hitl.handler_failed")).not_to be_empty
     end
   end
@@ -51,6 +53,48 @@ RSpec.describe Agentkit::HITL do
 
       expect(b.id).to eq(a.id)
       expect(emitted("hitl.deduped")).not_to be_empty
+    end
+
+    it "rejects reuse of a key with different arguments" do
+      described_class.suggest!(type: "x", title: "first", idempotency_key: "k1")
+
+      expect do
+        described_class.suggest!(type: "x", title: "different", idempotency_key: "k1")
+      end.to raise_error(Agentkit::IdempotencyConflict, /different arguments/)
+    end
+
+    it "allows the same key in independent operation namespaces" do
+      a = described_class.suggest!(type: "x", title: "a", idempotency_key: "k1",
+                                   operation_namespace: "billing.refund")
+      b = described_class.suggest!(type: "x", title: "b", idempotency_key: "k1",
+                                   operation_namespace: "crm.follow_up")
+
+      expect(a.id).not_to eq(b.id)
+    end
+  end
+
+  describe "concurrent decisions" do
+    it "records exactly one winner in the in-memory adapter" do
+      suggestion = propose
+      outcomes = Queue.new
+      threads = [
+        Thread.new do
+          outcomes << described_class.approve(suggestion.id, actor: "human:1")
+        rescue StandardError => e
+          outcomes << e
+        end,
+        Thread.new do
+          outcomes << described_class.reject(suggestion.id, actor: "human:2", code: :too_risky)
+        rescue StandardError => e
+          outcomes << e
+        end
+      ]
+      threads.each(&:join)
+      results = 2.times.map { outcomes.pop }
+
+      expect(results.count { |item| item.is_a?(Agentkit::HITL::Suggestion) }).to eq(1)
+      expect(results.count { |item| item.is_a?(Agentkit::DecisionConflict) }).to eq(1)
+      expect(described_class.ledger.size).to eq(1)
     end
   end
 end

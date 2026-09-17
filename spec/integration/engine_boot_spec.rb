@@ -2,6 +2,7 @@
 
 require "rails_helper"
 require "rake"
+require_relative "../../db/migrate/015_harden_agentkit_hitl_and_audit"
 
 # Gap #1 and #5 from the totallook pilot: the engine has to boot, its rake tasks
 # have to load, and code under app/capabilities has to be reachable. None of
@@ -48,6 +49,26 @@ RSpec.describe "Engine boot", :integration do
   it "installs the ActiveJob scheduler instead of the no-op one" do
     expect(Agentkit::HITL.scheduler).to be_a(Proc)
     expect(Agentkit::AutoApplySuggestionJob).to be < ActiveJob::Base
+    expect(Agentkit::ExecuteSuggestionJob).to be < ActiveJob::Base
+  end
+
+  it "keeps the console closed unless an explicit guard and principal are configured" do
+    status, headers, = Rails.application.call(Rack::MockRequest.env_for("/agentkit"))
+
+    expect(status).to eq(404)
+    expect(headers["cache-control"]).to include("no-store")
+    expect(headers["x-frame-options"]).to eq("DENY")
+  end
+
+  it "opens the console only through the configured fail-closed policy" do
+    Agentkit.config.console.enabled = true
+    Agentkit.config.console.principal_resolver = -> { "operator:7" }
+    Agentkit.config.console.guard = ->(principal) { principal == "operator:7" }
+
+    status, headers, = Rails.application.call(Rack::MockRequest.env_for("/agentkit"))
+
+    expect(status).to eq(200)
+    expect(headers["content-security-policy"]).to include("frame-ancestors 'none'")
   end
 
   describe "Zeitwerk loading" do
@@ -103,6 +124,39 @@ RSpec.describe "Engine boot", :integration do
                                 .find { |i| i.columns == %w[run_id step_key] }
       expect(index).not_to be_nil
       expect(index.unique).to be(true)
+    end
+
+    it "upgrades historical duplicate idempotency keys without deleting rows" do
+      migration = HardenAgentkitHitlAndAudit.new
+      connection = ActiveRecord::Base.connection
+      Agentkit::SuggestionRecord.delete_all
+
+      ActiveRecord::Migration.suppress_messages { migration.down }
+      connection.execute <<~SQL
+        INSERT INTO agentkit_suggestions
+          (suggestion_type, title, priority, status, payload, metadata,
+           tenant_key, idempotency_key, created_at, updated_at)
+        VALUES
+          ('review', 'old one', 'medium', 'pending', '{}', '{}',
+           'account:legacy', 'same-key', NOW(), NOW()),
+          ('review', 'old two', 'medium', 'pending', '{}', '{}',
+           'account:legacy', 'same-key', NOW(), NOW())
+      SQL
+      ActiveRecord::Migration.suppress_messages { migration.up }
+      Agentkit::SuggestionRecord.reset_column_information
+
+      rows = Agentkit::SuggestionRecord.where(tenant_key: "account:legacy",
+                                               idempotency_key: "same-key").order(:id)
+      expect(rows.count).to eq(2)
+      expect(rows.first.operation_namespace).to eq("hitl.suggest:review")
+      expect(rows.last.operation_namespace).to match(/hitl\.suggest:review:legacy:\d+/)
+    ensure
+      connection ||= ActiveRecord::Base.connection
+      migration ||= HardenAgentkitHitlAndAudit.new
+      unless connection.column_exists?(:agentkit_suggestions, :operation_namespace)
+        ActiveRecord::Migration.suppress_messages { migration.up }
+      end
+      Agentkit::SuggestionRecord.reset_column_information
     end
 
 

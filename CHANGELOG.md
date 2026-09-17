@@ -1,6 +1,34 @@
 # Changelog
 
-## 0.4.0 — Unreleased
+## 0.4.1 — Unreleased
+
+### Security
+
+- HITL decisions now use a database row lock/atomic transition. Only one
+  approve/reject operation can consume a pending suggestion, and the decision
+  ledger is written in the same transaction.
+- Approval and execution are separate phases. Side effects run through
+  `ExecuteSuggestionJob`; terminal failures are visible as
+  `execution_failed` or `execution_unknown` instead of being swallowed.
+- Idempotency keys are durable and unique by
+  `(tenant_key, operation_namespace, idempotency_key)`. Reuse with different
+  arguments raises `Agentkit::IdempotencyConflict`.
+- Audit payload redaction is recursive, prompt capture is opt-in, and required
+  audit writes can fail closed with `failure_mode = :required`.
+- The web console is disabled by default in every environment and requires an
+  explicit principal resolver and authorization guard. Responses now carry
+  no-store, CSP, frame, referrer and MIME-sniffing protections.
+- Unexpected A2A errors return a correlation id and a generic message instead
+  of exposing exception classes or messages.
+
+### Added
+
+- Migration `015_harden_agentkit_hitl_and_audit.rb` and PostgreSQL concurrency
+  coverage for approve/approve and approve/reject races.
+- `bundle exec rake release:verify` builds the gem, emits a SHA-256 checksum
+  and SPDX 2.3 SBOM, and verifies installation from the built artifact.
+
+## 0.4.0 — 2026-08-26
 
 ### Added
 

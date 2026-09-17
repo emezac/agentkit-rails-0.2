@@ -376,11 +376,32 @@ module Agentkit
           req.body = JSON.generate(body) if body
           response = http.request(req)
           parsed = JSON.parse(response.body.to_s)
-          raise ProtocolError.new(parsed["detail"] || "peer request failed", status: response.code.to_i,
-                                  type: "peer-error") unless response.code.to_i.between?(200, 299)
+          unless response.code.to_i.between?(200, 299)
+            request_id = SecureRandom.uuid
+            Agentkit.logger&.error(
+              "[AgentKit::A2A::V1::Client] request_id=#{request_id} " \
+              "peer=#{base_url} status=#{response.code.to_i}"
+            )
+            raise ProtocolError.new("peer request failed (request_id=#{request_id})",
+                                    status: response.code.to_i, type: "peer-error")
+          end
           parsed
-        rescue JSON::ParserError => e
-          raise ProtocolError.new("invalid peer response: #{e.message}", status: 502, type: "peer-error")
+        rescue ProtocolError
+          raise
+        rescue JSON::ParserError
+          request_id = SecureRandom.uuid
+          Agentkit.logger&.error(
+            "[AgentKit::A2A::V1::Client] request_id=#{request_id} peer=#{base_url} invalid_json=true"
+          )
+          raise ProtocolError.new("invalid peer response (request_id=#{request_id})",
+                                  status: 502, type: "peer-error")
+        rescue StandardError => e
+          request_id = SecureRandom.uuid
+          Agentkit.logger&.error(
+            "[AgentKit::A2A::V1::Client] request_id=#{request_id} peer=#{base_url} error=#{e.class}"
+          )
+          raise ProtocolError.new("peer request failed (request_id=#{request_id})",
+                                  status: 502, type: "peer-error")
         end
 
         def headers

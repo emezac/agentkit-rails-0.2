@@ -71,15 +71,15 @@ RSpec.describe "RAG and Team Memory tenant isolation", :integration do
     store = Agentkit::Flow.shared_store
 
     artifact_id = with_account(account_a) do
-      Agentkit::Audit.record(event_type: "tenant.event", payload: { secret: "alpha" })
+      Agentkit::Audit.record(event_type: "tenant.event", payload: { marker: "alpha" })
       Agentkit::Memory.store("alpha count")
       store.put_artifact("alpha artifact")
     end
     with_account(account_b) do
-      Agentkit::Audit.record(event_type: "tenant.event", payload: { secret: "beta" })
+      Agentkit::Audit.record(event_type: "tenant.event", payload: { marker: "beta" })
       Agentkit::Memory.store("beta count")
 
-      expect(Agentkit::Audit.entries(event_type: "tenant.event").map { |e| e.payload["secret"] })
+      expect(Agentkit::Audit.entries(event_type: "tenant.event").map { |e| e.payload["marker"] })
         .to eq(["beta"])
       expect(Agentkit::Memory.count).to eq(1)
       expect(store.get_artifact(artifact_id)).to be_nil

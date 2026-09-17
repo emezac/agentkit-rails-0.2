@@ -22,12 +22,17 @@ module Agentkit
       :payload, :suggestable, :user_id, :account_id, :tenant_key, :idempotency_key,
       :prompt_id, :prompt_version, :model, :created_at, :resolved_at, :expires_at,
       :run_id, :gate_key, :experiment_id, :experiment_arm, :metadata,
+      :operation_namespace, :arguments_digest, :lock_version,
+      :execution_error_code, :execution_started_at, :execution_finished_at,
       keyword_init: true
     ) do
       def pending?  = status.to_s == "pending"
-      def resolved? = %w[accepted rejected auto_applied expired].include?(status.to_s)
-      def accepted? = %w[accepted auto_applied].include?(status.to_s)
+      def resolved? = %w[approved executing executed execution_failed execution_unknown
+                         accepted rejected auto_applied expired].include?(status.to_s)
+      def accepted? = %w[approved executing executed execution_failed execution_unknown
+                         accepted auto_applied].include?(status.to_s)
       def approved? = accepted?
+      def execution_terminal? = %w[executed execution_failed execution_unknown].include?(status.to_s)
       def high_priority? = %w[high critical].include?(priority.to_s)
     end
 
@@ -56,11 +61,19 @@ module Agentkit
 
       attr_writer :scheduler
 
+      def executor
+        @executor ||= default_executor
+      end
+
+      attr_writer :executor
+
       def reset!
         @ledger    = Ledger.new
         @store     = Stores::InMemory.new
         @observers = []
         @handlers  = nil
+        @handler_keys = nil
+        @executor  = nil
         @seq       = 0
         @auto_approve = {}
         @gate_listeners = []
@@ -72,10 +85,17 @@ module Agentkit
       # What should happen when a suggestion of this type is accepted.
       #
       #   Agentkit::HITL.on("council_recommendation") { |s| ApplyDecision.call(s) }
-      def on(type, &block)
+      def on(type, key: nil, &block)
+        if key
+          previous = handler_keys[[type.to_s, key.to_s]]
+          handlers[type.to_s].delete(previous) if previous
+          handler_keys[[type.to_s, key.to_s]] = block
+        end
         handlers[type.to_s] << block
         block
       end
+
+      def handler_keys = @handler_keys ||= {}
 
       # Flows subscribe here so an approval can resume a suspended run.
       def on_gate_resolved(&block)
@@ -107,7 +127,8 @@ module Agentkit
       def suggest!(type:, title:, description: nil, source_agent: nil, priority: "medium",
                    payload: {}, suggestable: nil, idempotency_key: nil, prompt_id: nil,
                    prompt_version: nil, model: nil, gate_key: nil, context: nil,
-                   experiment_id: nil, experiment_arm: nil, metadata: {})
+                   experiment_id: nil, experiment_arm: nil, metadata: {},
+                   operation_namespace: nil)
         ctx    = context || Context.resolve
         config = ctx.config.hitl
         assignment = if experiment_id
@@ -118,10 +139,12 @@ module Agentkit
                        {}
                      end
 
-        if idempotency_key && (existing = find_by_idempotency(idempotency_key, config, ctx))
-          Telemetry.emit("hitl.deduped", dims: { type: type.to_s, agent: source_agent })
-          return existing
-        end
+        namespace = operation_namespace || "hitl.suggest:#{type}"
+        digest = canonical_digest(
+          type: type.to_s, title: title, description: description, priority: priority.to_s,
+          source_agent: source_agent, payload: payload || {}, gate_key: gate_key,
+          prompt_id: prompt_id, prompt_version: prompt_version
+        )
 
         suggestion = Suggestion.new(
           suggestion_type: type.to_s, title: title, description: description,
@@ -131,11 +154,22 @@ module Agentkit
           idempotency_key: idempotency_key, prompt_id: prompt_id, prompt_version: prompt_version,
           model: model, run_id: ctx.run_id, gate_key: gate_key, created_at: Time.now,
           experiment_id: assignment[:experiment_id], experiment_arm: assignment[:experiment_arm],
-          metadata: metadata || {}
+          metadata: metadata || {}, operation_namespace: namespace,
+          arguments_digest: digest
         )
         # The store assigns the id — the database in production, the sequence
         # in memory. Pre-assigning here would collide with real primary keys.
-        store.insert(suggestion)
+        suggestion, created = if store.respond_to?(:insert_idempotent)
+                                store.insert_idempotent(suggestion)
+                              else
+                                [store.insert(suggestion), true]
+                              end
+        unless created
+          Telemetry.emit("hitl.deduped",
+                         dims: { type: type.to_s, agent: source_agent,
+                                 operation_namespace: namespace })
+          return suggestion
+        end
 
         Telemetry.emit("hitl.propose",
                        dims: { agent: source_agent, type: type.to_s, priority: priority.to_s,
@@ -153,61 +187,85 @@ module Agentkit
       # ─── Resolve ─────────────────────────────────────────────────────────────
 
       def approve(id, actor: "human", final_payload: nil, mode: "human", scope: nil)
-        suggestion = fetch!(id, scope: scope)
-        raise HITLError, "Suggestion #{id} is already resolved" unless suggestion.pending?
-        validate_approval!(suggestion, actor, final_payload)
-        edited     = !final_payload.nil? && final_payload != suggestion.payload
+        suggestion = store.transition(id, from: "pending", to: "approved", scope: scope) do |current|
+          validate_approval!(current, actor, final_payload)
+          edited = !final_payload.nil? && final_payload != current.payload
+          current.resolved_at = Time.now
+          current.metadata = (current.metadata || {}).merge(
+            "decision_actor" => actor.to_s, "decision_mode" => mode.to_s
+          )
 
-        suggestion.status      = mode == "auto" ? "auto_applied" : "accepted"
-        suggestion.resolved_at = Time.now
-        suggestion.metadata = (suggestion.metadata || {}).merge("decision_actor" => actor.to_s)
+          # The ledger write participates in the same transaction/critical
+          # section as the state transition. A decision cannot exist without
+          # consuming the pending proposal exactly once.
+          ledger.record(current, decision: edited ? "edited" : "accepted",
+                                  actor: actor, mode: mode, final_payload: final_payload,
+                                  required: true)
+          current.payload = final_payload if edited
+        end
 
-        # Record BEFORE overwriting the payload: the ledger's edit distance is
-        # the difference between what the agent proposed and what the human
-        # actually approved, and that difference is the training signal.
-        ledger.record(suggestion, decision: edited ? "edited" : "accepted",
-                                  actor: actor, mode: mode, final_payload: final_payload)
-        suggestion.payload = final_payload if edited
-        store[suggestion.id] = suggestion
-        run_handlers(suggestion)
-        notify_gate(suggestion)
         notify(:resolved, suggestion)
-        suggestion
+        dispatch_execution(suggestion)
       end
 
       def reject(id, actor: "human", code: nil, note: nil, mode: "human", scope: nil)
-        suggestion = fetch!(id, scope: scope)
-        raise HITLError, "Suggestion #{id} is already resolved" unless suggestion.pending?
-        config     = Agentkit.config.hitl
+        config = Agentkit.config.hitl
         validate_code!(code, config)
+        suggestion = store.transition(id, from: "pending", to: "rejected", scope: scope) do |current|
+          current.resolved_at = Time.now
+          current.metadata = (current.metadata || {}).merge(
+            "decision_actor" => actor.to_s, "decision_mode" => mode.to_s
+          )
+          ledger.record(current, decision: "rejected", actor: actor, mode: mode,
+                                  rejection_code: code, rejection_note: note, required: true)
+        end
 
-        suggestion.status      = "rejected"
-        suggestion.resolved_at = Time.now
-
-        ledger.record(suggestion, decision: "rejected", actor: actor, mode: mode,
-                                  rejection_code: code, rejection_note: note)
-        store[suggestion.id] = suggestion
         notify_gate(suggestion)
         notify(:resolved, suggestion)
         suggestion
       end
 
-      def snooze(id, until_time: nil, actor: "human")
-        suggestion = fetch!(id)
-        suggestion.status  = "snoozed"
-        suggestion.expires_at = until_time || (Time.now + 86_400)
-        store[suggestion.id] = suggestion
+      def snooze(id, until_time: nil, actor: "human", scope: nil)
+        store.transition(id, from: "pending", to: "snoozed", scope: scope) do |suggestion|
+          suggestion.expires_at = until_time || (Time.now + 86_400)
+          suggestion.metadata = (suggestion.metadata || {}).merge("snoozed_by" => actor.to_s)
+        end
+      end
+
+      def expire!(id, actor: "system", scope: nil)
+        suggestion = store.transition(id, from: %w[pending snoozed], to: "expired", scope: scope) do |current|
+          current.resolved_at = Time.now
+          ledger.record(current, decision: "expired", actor: actor, mode: "auto", required: true)
+        end
+        notify_gate(suggestion)
         suggestion
       end
 
-      def expire!(id, actor: "system")
-        suggestion = fetch!(id)
-        suggestion.status = "expired"
-        suggestion.resolved_at = Time.now
-        ledger.record(suggestion, decision: "expired", actor: actor, mode: "auto")
-        store[suggestion.id] = suggestion
+      # Claims an approved decision exactly once and performs its effects. A
+      # redelivered job observes a non-approved state and becomes a no-op.
+      def execute!(id, scope: nil)
+        suggestion = store.claim_execution(id, scope: scope)
+        return fetch!(id, scope: scope) if suggestion.nil?
+
+        run_handlers(suggestion)
         notify_gate(suggestion)
-        suggestion
+        finished = store.finish_execution(id, status: "executed", scope: scope)
+        Telemetry.emit("hitl.execution.completed",
+                       dims: { type: finished.suggestion_type }, measures: { count: 1 })
+        notify(:executed, finished)
+        finished
+      rescue StandardError => e
+        Telemetry.emit("hitl.handler_failed",
+                       dims: { type: suggestion&.suggestion_type, error_class: e.class.name })
+        Agentkit.logger&.error(
+          "[AgentKit::HITL] execution failed suggestion=#{id} error=#{e.class}"
+        )
+        if suggestion
+          failed = store.finish_execution(id, status: "execution_unknown",
+                                              error_code: e.class.name, scope: scope)
+          notify(:execution_failed, failed)
+          failed
+        end
       end
 
       # ─── Query ───────────────────────────────────────────────────────────────
@@ -279,14 +337,6 @@ module Agentkit
         raise HITLError, "approved payload does not match the proposed arguments digest" unless actual == expected
       end
 
-      def find_by_idempotency(key, config, context)
-        window = Time.now - config.dedupe_window
-        tenant_key = context.tenant_key || "__global__"
-        store.values.find do |s|
-          s.idempotency_key == key && s.tenant_key.to_s == tenant_key.to_s && s.created_at >= window
-        end
-      end
-
       def validate_code!(code, config)
         return unless config.require_rejection_code
         return if code && Array(config.rejection_codes).map(&:to_s).include?(code.to_s)
@@ -296,13 +346,7 @@ module Agentkit
       end
 
       def run_handlers(suggestion)
-        handlers[suggestion.suggestion_type].each do |handler|
-          handler.call(suggestion)
-        rescue StandardError => e
-          Telemetry.emit("hitl.handler_failed",
-                         dims: { type: suggestion.suggestion_type, error_class: e.class.name })
-          Agentkit.logger&.error("[AgentKit::HITL] handler for #{suggestion.suggestion_type}: #{e.message}")
-        end
+        handlers[suggestion.suggestion_type].each { |handler| handler.call(suggestion) }
       end
 
       def notify_gate(suggestion)
@@ -351,6 +395,29 @@ module Agentkit
           Telemetry.emit("hitl.auto_apply_scheduled",
                          dims: { suggestion_id: suggestion_id }, measures: { delay: delay })
         end
+      end
+
+      def default_executor
+        lambda do |suggestion_id, scope = nil|
+          execute!(suggestion_id, scope: scope)
+        end
+      end
+
+      def dispatch_execution(suggestion)
+        scope = { tenant_key: suggestion.tenant_key, account_id: suggestion.account_id }.compact
+        executor.call(suggestion.id, scope)
+        fetch!(suggestion.id, scope: scope)
+      rescue StandardError => e
+        failed = store.transition(suggestion.id, from: "approved", to: "execution_failed",
+                                                   scope: scope) do |current|
+          current.execution_error_code = e.class.name
+          current.execution_finished_at = Time.now
+        end
+        Telemetry.emit("hitl.execution.dispatch_failed",
+                       dims: { type: suggestion.suggestion_type, error_class: e.class.name },
+                       measures: { count: 1 })
+        notify(:execution_failed, failed)
+        failed
       end
 
       def id_of(obj) = obj.respond_to?(:id) ? obj.id : obj

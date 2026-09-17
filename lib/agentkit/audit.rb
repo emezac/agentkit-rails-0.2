@@ -101,11 +101,17 @@ module Agentkit
 
       # ─── Write ───────────────────────────────────────────────────────────────
 
-      # Never raises: an audit failure must not take down the action it records.
+      # Best-effort remains appropriate for ordinary diagnostics. Sensitive
+      # operations can pass failure_mode: :required (or configure it globally)
+      # so the action fails closed when its evidence cannot be persisted.
       def record(event_type:, agent_name: nil, status: nil, payload: {}, prompt: nil,
                  model: nil, usage: nil, trace_id: nil, step_key: nil, subject: nil,
-                 context: nil)
-        return nil unless enabled?
+                 context: nil, failure_mode: nil)
+        return nil unless enabled? || required_failure_mode?(failure_mode)
+        unless enabled?
+          handle_write_failure(ConfigurationError.new("audit is disabled"),
+                               operation: :record, failure_mode: failure_mode)
+        end
 
         ctx = context || Context.current
         entry = Entry.new(
@@ -132,21 +138,27 @@ module Agentkit
         )
         store.append(entry)
         entry
+      rescue AuditPersistenceError
+        raise
       rescue StandardError => e
-        Agentkit.logger&.warn("[AgentKit::Audit] record failed: #{e.message}")
-        nil
+        handle_write_failure(e, operation: :record, failure_mode: failure_mode)
       end
 
-      def persist_trace(trace)
-        return nil unless enabled?
+      def persist_trace(trace, failure_mode: nil)
+        return nil unless enabled? || required_failure_mode?(failure_mode)
+        unless enabled?
+          handle_write_failure(ConfigurationError.new("audit is disabled"),
+                               operation: :trace, failure_mode: failure_mode)
+        end
 
         store.append_trace(trace)
         traces << trace
         traces.shift while traces.size > 500   # in-process convenience cache
         trace
+      rescue AuditPersistenceError
+        raise
       rescue StandardError => e
-        Agentkit.logger&.warn("[AgentKit::Audit] trace failed: #{e.message}")
-        nil
+        handle_write_failure(e, operation: :trace, failure_mode: failure_mode)
       end
 
       # ─── Read ────────────────────────────────────────────────────────────────
@@ -166,6 +178,12 @@ module Agentkit
 
       def traces_for(kind: nil, since: nil, scope: nil)
         store.traces(kind: kind, since: since, scope: Scope.resolve(scope))
+      end
+
+      # Shared presentation boundary for administrative surfaces. It applies
+      # the same recursive policy used before durable audit writes.
+      def sanitize_payload(payload)
+        sanitize(payload)
       end
 
       # Everything that happened under one correlation id: agent actions, the
@@ -200,6 +218,10 @@ module Agentkit
 
       def enabled? = Agentkit.config.audit.enabled
 
+      def required_failure_mode?(failure_mode)
+        (failure_mode || Agentkit.config.audit.failure_mode).to_sym == :required
+      end
+
       # Prompt previews can carry personal data. Length is configurable and the
       # redaction list is applied before storage — set chars to 0 to disable.
       def preview(prompt)
@@ -215,13 +237,46 @@ module Agentkit
         end
       end
 
-      def sanitize(payload)
-        return {} if payload.nil?
-        return { "value" => payload.to_s } unless payload.is_a?(Hash)
+      def sanitize(value, key: nil)
+        return "[REDACTED]" if key && sensitive_key?(key)
 
-        payload.each_with_object({}) do |(k, v), acc|
-          acc[k.to_s] = v.is_a?(String) ? redact(v) : v
+        case value
+        when nil then key.nil? ? {} : nil
+        when Hash
+          value.each_with_object({}) do |(nested_key, nested_value), acc|
+            acc[nested_key.to_s] = sanitize(nested_value, key: nested_key)
+          end
+        when Array then value.map { |item| sanitize(item) }
+        when String then redact(value)
+        when Numeric, TrueClass, FalseClass then value
+        else redact(value.to_s)
         end
+      end
+
+      def sensitive_key?(key)
+        normalized = key.to_s.downcase.tr("-", "_")
+        Array(Agentkit.config.audit.redact_keys).any? do |candidate|
+          token = candidate.to_s.downcase.tr("-", "_")
+          normalized == token || normalized.end_with?("_#{token}")
+        end
+      end
+
+      def handle_write_failure(error, operation:, failure_mode: nil)
+        mode = (failure_mode || Agentkit.config.audit.failure_mode).to_sym
+        request_id = SecureRandom.uuid
+        Telemetry.emit("audit.write_failed",
+                       dims: { operation: operation.to_s, error_class: error.class.name,
+                               failure_mode: mode.to_s, request_id: request_id },
+                       measures: { count: 1 })
+        Agentkit.logger&.warn(
+          "[AgentKit::Audit] #{operation} failed request_id=#{request_id} error=#{error.class}"
+        )
+        if mode == :required
+          raise AuditPersistenceError,
+                "required audit persistence failed (request_id=#{request_id})"
+        end
+
+        nil
       end
 
       def id_of(obj) = obj.respond_to?(:id) ? obj.id : nil

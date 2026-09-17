@@ -28,9 +28,18 @@ RSpec.configure do |config|
   # Each example runs inside a transaction that is rolled back, so state never
   # leaks between examples the way it did when the HITL store was a Hash.
   config.around(:each, :integration) do |example|
-    ActiveRecord::Base.transaction do
-      example.run
-      raise ActiveRecord::Rollback
+    if example.metadata[:real_concurrency]
+      DummySchema.truncate!
+      begin
+        example.run
+      ensure
+        DummySchema.truncate!
+      end
+    else
+      ActiveRecord::Base.transaction do
+        example.run
+        raise ActiveRecord::Rollback
+      end
     end
   end
 
@@ -47,6 +56,12 @@ RSpec.configure do |config|
     Agentkit.config.memory.level    = :hybrid
     Agentkit.config.memory.embedding.policy = :on_promotion
     Agentkit.config.audit.store     = :active_record
+    Agentkit.config.audit.failure_mode = :best_effort
+    Agentkit.config.audit.prompt_preview_chars = 0
+    Agentkit.config.console.enabled = false
+    Agentkit.config.console.guard = nil
+    Agentkit.config.console.principal_resolver = nil
+    Agentkit.config.console.payload_guard = nil
     Agentkit.config.a2a.expose      = nil
     Agentkit.config.a2a.hide        = []
     Agentkit.config.telemetry.backends = [:memory]
@@ -63,6 +78,9 @@ RSpec.configure do |config|
     Agentkit::Factory.reset!
     Agentkit::HITL.ledger = Agentkit::HITL::Stores::ActiveRecordLedger.new
     Agentkit::HITL.store  = Agentkit::HITL::Stores::ActiveRecordStore.new
+    Agentkit::HITL.executor = lambda do |suggestion_id, scope|
+      Agentkit::HITL.execute!(suggestion_id, scope: scope)
+    end
 
     # Agentkit.reset! (called by the unit suite) clears the capability registry;
     # re-running the registration is exactly what Rails' to_prepare does on a

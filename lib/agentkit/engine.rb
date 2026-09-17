@@ -56,6 +56,9 @@ module Agentkit
         Agentkit::HITL.scheduler = lambda do |delay, suggestion_id, scope|
           Agentkit::AutoApplySuggestionJob.set(wait: delay).perform_later(suggestion_id, scope)
         end
+        Agentkit::HITL.executor = lambda do |suggestion_id, scope|
+          Agentkit::ExecuteSuggestionJob.perform_later(suggestion_id, scope)
+        end
 
         # An approval resumes the suspended run instead of ending the process.
         Agentkit::HITL.on_gate_resolved do |suggestion|
@@ -67,6 +70,23 @@ module Agentkit
                                                 { tenant_key: suggestion.tenant_key,
                                                   account_id: suggestion.account_id }.compact)
         end
+      end
+    end
+
+    # The console exposes prompts, traces and executable approvals. It is off
+    # by default in every environment and cannot be enabled without an
+    # application-owned authentication/authorization policy.
+    initializer "agentkit.console_security" do
+      config.after_initialize do
+        next unless Agentkit.config.console.enabled
+
+        missing = []
+        missing << "console.guard" unless Agentkit.config.console.guard.respond_to?(:call)
+        missing << "console.principal_resolver" unless Agentkit.config.console.principal_resolver.respond_to?(:call)
+        next if missing.empty?
+
+        raise Agentkit::ConfigurationError,
+              "AgentKit console is enabled but #{missing.join(' and ')} is not configured"
       end
     end
 

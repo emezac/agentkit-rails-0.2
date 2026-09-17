@@ -41,6 +41,7 @@ RSpec.describe Agentkit::Audit do
 
   describe "prompt preview" do
     it "captures what was actually sent to the model" do
+      Agentkit.config.audit.prompt_preview_chars = 500
       Agentkit::LLM.complete("analiza el contrato de Acme", model: :default, agent: "SomeAgent")
 
       entry = described_class.entries(event_type: "llm.call").last
@@ -64,12 +65,19 @@ RSpec.describe Agentkit::Audit do
     end
 
     it "redacts emails, card-like numbers and api keys before storing" do
+      Agentkit.config.audit.prompt_preview_chars = 500
       Agentkit::LLM.complete("escribile a juan@acme.com con la tarjeta 4111 1111 1111 1111")
 
       preview = described_class.entries(event_type: "llm.call").last.prompt_preview
       expect(preview).to include("[REDACTED]")
       expect(preview).not_to include("juan@acme.com")
       expect(preview).not_to include("4111")
+    end
+
+    it "is disabled by default" do
+      Agentkit::LLM.complete("un prompt privado")
+
+      expect(described_class.entries(event_type: "llm.call").last.prompt_preview).to be_nil
     end
   end
 
@@ -95,6 +103,35 @@ RSpec.describe Agentkit::Audit do
       allow(described_class.store).to receive(:append).and_raise("audit store down")
 
       expect { agent_class.new.call("x") }.not_to raise_error
+      expect(emitted("audit.write_failed")).not_to be_empty
+    end
+
+    it "fails closed when evidence is required" do
+      allow(described_class.store).to receive(:append).and_raise("audit store down")
+
+      expect do
+        described_class.record(event_type: "security.decision", failure_mode: :required)
+      end.to raise_error(Agentkit::AuditPersistenceError, /request_id=/)
+    end
+
+    it "fails closed when required evidence has been disabled" do
+      Agentkit.config.audit.enabled = false
+
+      expect do
+        described_class.record(event_type: "security.decision", failure_mode: :required)
+      end.to raise_error(Agentkit::AuditPersistenceError, /request_id=/)
+    end
+
+    it "redacts sensitive keys recursively" do
+      described_class.record(
+        event_type: "tool.call",
+        payload: { request: { headers: { authorization: "Bearer secret" } },
+                   items: [{ "api-key" => "sk-super-secret-value" }] }
+      )
+
+      payload = described_class.entries(event_type: "tool.call").last.payload
+      expect(payload.dig("request", "headers", "authorization")).to eq("[REDACTED]")
+      expect(payload.dig("items", 0, "api-key")).to eq("[REDACTED]")
     end
   end
 

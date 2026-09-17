@@ -11,8 +11,13 @@ module Agentkit
     has_many :decisions, class_name: "Agentkit::DecisionRecord",
                          foreign_key: :suggestion_id, dependent: :destroy, inverse_of: :suggestion
 
-    scope :pending,  -> { where(status: "pending") }
-    scope :resolved, -> { where(status: %w[accepted rejected auto_applied expired]) }
+    scope :pending,  -> { where(status: %w[pending snoozed]) }
+    scope :approved, -> { where(status: "approved") }
+    scope :executing, -> { where(status: "executing") }
+    scope :resolved, -> {
+      where(status: %w[approved executing executed execution_failed execution_unknown
+                       accepted rejected auto_applied expired])
+    }
     scope :for_gate, ->(key) { where(gate_key: key) }
   end
 end

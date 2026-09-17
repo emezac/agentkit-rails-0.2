@@ -118,5 +118,17 @@ RSpec.describe Agentkit::A2A::V1 do
       expect(captured[0..1]).to eq([:post, "https://peer.test/agentkit/a2a/message:send"])
       expect(captured[3]).to include("A2A-Version" => "1.0", "Authorization" => "Bearer secret")
     end
+
+    it "replaces transport exceptions with a generic correlated error" do
+      transport = ->(*) { raise "connection failed at /private/app.rb" }
+      client = described_class.new(base_url: "https://peer.test", transport: transport)
+
+      expect do
+        client.send_message({ role: "ROLE_USER", messageId: "m", parts: [] })
+      end.to raise_error(Agentkit::A2A::V1::ProtocolError,
+                         /peer request failed \(request_id=/) do |error|
+        expect(error.message).not_to include("/private/app.rb")
+      end
+    end
   end
 end

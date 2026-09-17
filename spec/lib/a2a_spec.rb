@@ -180,6 +180,29 @@ RSpec.describe Agentkit::A2A do
       expect(rpc("tasks.get", { "taskId" => task })[:result][:status]).to eq("completed")
     end
 
+    it "reinstalls the approved executor after a process reload" do
+      task = rpc("capabilities.invoke",
+                 { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]
+      Agentkit::HITL.instance_variable_set(:@handlers, nil)
+      Agentkit::A2A::Server.install_hitl_handler!("a2a:issue_refund")
+
+      result = Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1")
+
+      expect(result.status).to eq("executed")
+      expect(executed).to eq([:refunded])
+    end
+
+    it "blocks an irreversible effect when required audit evidence cannot persist" do
+      task = rpc("capabilities.invoke",
+                 { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]
+      allow(Agentkit::Audit.store).to receive(:append).and_raise("audit unavailable")
+
+      result = Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1")
+
+      expect(result.status).to eq("execution_unknown")
+      expect(executed).to be_empty
+    end
+
     it "records the rejection so the peer learns why" do
       task = rpc("capabilities.invoke",
                  { "capability" => "issue_refund", "inputs" => { "order_id" => 1 } })[:result][:taskId]
@@ -227,6 +250,17 @@ RSpec.describe Agentkit::A2A do
     it "maps errors onto sane HTTP statuses" do
       expect(described_class.http_status_for(rpc("capabilities.list", {}, key: nil))).to eq(401)
       expect(described_class.http_status_for(rpc("agent.card"))).to eq(200)
+    end
+
+    it "does not expose unexpected exception details" do
+      allow(described_class::Server).to receive(:capabilities_list)
+        .and_raise("SELECT * FROM secrets at /private/app.rb")
+
+      response = rpc("capabilities.list")
+
+      expect(response.dig(:error, :message)).to eq("internal error")
+      expect(response.dig(:error, :data, :requestId)).to be_a(String)
+      expect(response.to_s).not_to include("secrets", "/private/app.rb")
     end
   end
 

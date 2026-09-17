@@ -155,9 +155,10 @@ module Agentkit
 
         result.is_a?(Error) ? rpc_error(id, result.code, result.message, result.data) : rpc_result(id, result)
       rescue StandardError => e
-        Agentkit.logger&.error("[AgentKit::A2A] #{e.class}: #{e.message}")
+        request_id = SecureRandom.uuid
+        Agentkit.logger&.error("[AgentKit::A2A] request_id=#{request_id} error=#{e.class}")
         emit(method, context, nil, "error")
-        rpc_error(id, :internal_error, "#{e.class}: #{e.message.to_s[0, 200]}")
+        rpc_error(id, :internal_error, "internal error", { requestId: request_id })
       end
 
       def public_method?(method) = %w[agent.card].include?(method)
@@ -243,10 +244,11 @@ module Agentkit
               priority: cap.irreversible? ? "high" : "medium",
               source_agent: "A2A", payload: inputs.merge("via" => "a2a"),
               idempotency_key: params["idempotency_key"],
+              operation_namespace: "a2a.capability:#{cap.name}",
               metadata: { "arguments_digest" => digest, "requester_principal" => requester.to_s,
                           "force_sync" => !!params["force_sync"] }
             )
-            register_approved_execution(suggestion, cap)
+            install_hitl_handler!(suggestion.suggestion_type)
             return { status: "pending_approval", taskId: "suggestion:#{suggestion.id}",
                      capability: cap.name.to_s, risk: cap.risk.to_s }
           end
@@ -301,37 +303,61 @@ module Agentkit
                                           confidence: m.confidence, ontological: m.ontological_type } } }
         end
 
-        private
+        # Installed by both request handling and the durable execution job, so
+        # an approval queued before a process restart still resolves its
+        # capability at execution time instead of depending on a captured Proc.
+        def install_hitl_handler!(suggestion_type)
+          name = suggestion_type.to_s.delete_prefix("a2a:")
+          return unless suggestion_type.to_s.start_with?("a2a:")
 
-        def register_approved_execution(suggestion, capability)
-          HITL.on(suggestion.suggestion_type) do |approved|
-            next unless approved.id == suggestion.id
-            next if approved.metadata&.dig("execution_status") == "completed"
+          capability = Capability[name]
+          return unless capability
 
-            unless A2A.requires_approval?(capability) &&
-                   capability.eligible?(Setup.current || Setup.build, Context.current)
-              approved.metadata = (approved.metadata || {}).merge("execution_status" => "failed",
-                                                                   "execution_error" => "policy_or_precondition_changed")
-              HITL.store[approved.id] = approved
-              next
-            end
-
-            exact_inputs = approved.payload.reject { |key, _| key.to_s == "via" }
-            result = capability.execute(symbolize(exact_inputs), context: Context.current)
-            status = result.respond_to?(:ok?) && !result.ok? ? "failed" : "completed"
-            approved.metadata = (approved.metadata || {}).merge("execution_status" => status)
-            HITL.store[approved.id] = approved
-          rescue StandardError => e
-            approved.metadata = (approved.metadata || {}).merge("execution_status" => "failed",
-                                                                 "execution_error" => e.class.name)
-            HITL.store[approved.id] = approved
+          HITL.on(suggestion_type, key: "a2a:#{name}") do |approved|
+            execute_approved!(approved)
           end
         end
+
+        def execute_approved!(approved)
+          name = approved.suggestion_type.to_s.delete_prefix("a2a:")
+          capability = Capability[name]
+          raise CapabilityError, "approved capability is no longer registered" unless capability
+
+          unless A2A.requires_approval?(capability) &&
+                 capability.eligible?(Setup.current || Setup.build, Context.current)
+            raise CapabilityError, "approved capability policy or precondition changed"
+          end
+
+          exact_inputs = approved.payload.reject { |key, _| key.to_s == "via" }
+          Audit.record(
+            event_type: "a2a.capability.execution_authorized",
+            agent_name: "A2A",
+            status: "approved",
+            payload: {
+              capability: name,
+              arguments_digest: approved.metadata&.dig("arguments_digest"),
+              suggestion_id: approved.id
+            },
+            context: Context.current,
+            failure_mode: :required
+          )
+          result = capability.execute(symbolize(exact_inputs), context: Context.current)
+          if result.respond_to?(:err?) && result.err?
+            raise(result.error.is_a?(Exception) ? result.error : CapabilityError.new(result.error.to_s))
+          end
+
+          result
+        end
+
+        private
 
         def task_status(suggestion)
           case suggestion.status.to_s
           when "pending", "snoozed" then "pending_approval"
-          when "accepted", "auto_applied" then suggestion.metadata&.dig("execution_status") || "approved"
+          when "approved" then "approved"
+          when "executing" then "working"
+          when "executed", "accepted", "auto_applied" then "completed"
+          when "execution_failed", "execution_unknown" then "failed"
           when "rejected" then "rejected"
           else suggestion.status.to_s
           end
@@ -418,12 +444,16 @@ module Agentkit
         return @transport.call(:post, base_url + path, body, headers) if @transport
 
         http_json(:post, base_url + path, body)
+      rescue StandardError => e
+        failure_response(e)
       end
 
       def get(path)
         return @transport.call(:get, base_url + path, nil, headers) if @transport
 
         http_json(:get, base_url + path, nil)
+      rescue StandardError => e
+        failure_response(e)
       end
 
       def headers
@@ -444,7 +474,16 @@ module Agentkit
         response = http.request(request)
         JSON.parse(response.body.to_s)
       rescue StandardError => e
-        { "error" => { "code" => ERRORS[:internal_error], "message" => e.message } }
+        failure_response(e)
+      end
+
+      def failure_response(error)
+        request_id = SecureRandom.uuid
+        Agentkit.logger&.error(
+          "[AgentKit::A2A::Client] request_id=#{request_id} peer=#{base_url} error=#{error.class}"
+        )
+        { "error" => { "code" => ERRORS[:internal_error], "message" => "request failed",
+                       "data" => { "requestId" => request_id } } }
       end
     end
   end

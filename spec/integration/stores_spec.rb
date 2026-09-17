@@ -222,7 +222,127 @@ RSpec.describe "ActiveRecord adapters", :integration do
       expect(row.decision).to eq("edited")
       expect(row.mode).to eq("human")
       expect(row.edit_distance).to be > 0
-      expect(Agentkit::SuggestionRecord.find(s.id).status).to eq("accepted")
+      expect(Agentkit::SuggestionRecord.find(s.id).status).to eq("executed")
+    end
+
+    it "enforces durable idempotency in PostgreSQL" do
+      account = account!
+      first = with_account(account) do
+        Agentkit::HITL.suggest!(type: "review", title: "same", idempotency_key: "durable-1")
+      end
+      duplicate = with_account(account) do
+        Agentkit::HITL.suggest!(type: "review", title: "same", idempotency_key: "durable-1")
+      end
+
+      expect(duplicate.id).to eq(first.id)
+      expect do
+        with_account(account) do
+          Agentkit::HITL.suggest!(type: "review", title: "changed", idempotency_key: "durable-1")
+        end
+      end.to raise_error(Agentkit::IdempotencyConflict)
+
+      index = ActiveRecord::Base.connection.indexes(:agentkit_suggestions)
+                          .find { |item| item.name == "idx_agentkit_suggestions_durable_idempotency" }
+      expect(index.unique).to be(true)
+      expect(index.columns).to eq(%w[tenant_key operation_namespace idempotency_key])
+    end
+
+    it "allows only one of two simultaneous approvals", :real_concurrency do
+      account = account!
+      suggestion = with_account(account) do
+        Agentkit::HITL.suggest!(type: "review", title: "race")
+      end
+      scope = { tenant_key: account.tenant_key, account_id: account.id }
+      ready = Queue.new
+      start = Queue.new
+      outcomes = Queue.new
+
+      threads = 2.times.map do |index|
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            ready << true
+            start.pop
+            outcomes << Agentkit::HITL.approve(suggestion.id, actor: "human:#{index}", scope: scope)
+          rescue StandardError => e
+            outcomes << e
+          end
+        end
+      end
+      2.times { ready.pop }
+      2.times { start << true }
+      threads.each(&:join)
+      results = 2.times.map { outcomes.pop }
+
+      expect(results.count { |item| item.is_a?(Agentkit::DecisionConflict) }).to eq(1)
+      expect(Agentkit::DecisionRecord.where(suggestion_id: suggestion.id).count).to eq(1)
+      expect(Agentkit::SuggestionRecord.find(suggestion.id).status).to eq("executed")
+    end
+
+    it "returns one durable response for concurrent idempotent redelivery", :real_concurrency do
+      account = account!
+      ready = Queue.new
+      start = Queue.new
+      outcomes = Queue.new
+
+      threads = 2.times.map do
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            ready << true
+            start.pop
+            context = Agentkit::Context.new(account: account)
+            outcomes << Agentkit::HITL.suggest!(
+              type: "review", title: "same request", idempotency_key: "race-key",
+              context: context
+            )
+          rescue StandardError => e
+            outcomes << e
+          end
+        end
+      end
+      2.times { ready.pop }
+      2.times { start << true }
+      threads.each(&:join)
+      results = 2.times.map { outcomes.pop }
+
+      expect(results).to all(be_a(Agentkit::HITL::Suggestion))
+      expect(results.map(&:id).uniq.size).to eq(1)
+      expect(Agentkit::SuggestionRecord.where(tenant_key: account.tenant_key,
+                                               idempotency_key: "race-key").count).to eq(1)
+    end
+
+    it "allows only one winner in an approve/reject race", :real_concurrency do
+      account = account!
+      suggestion = with_account(account) do
+        Agentkit::HITL.suggest!(type: "review", title: "race")
+      end
+      scope = { tenant_key: account.tenant_key, account_id: account.id }
+      ready = Queue.new
+      start = Queue.new
+      outcomes = Queue.new
+      actions = [
+        -> { Agentkit::HITL.approve(suggestion.id, actor: "human:approve", scope: scope) },
+        -> { Agentkit::HITL.reject(suggestion.id, actor: "human:reject", code: :too_risky, scope: scope) }
+      ]
+
+      threads = actions.map do |action|
+        Thread.new do
+          ActiveRecord::Base.connection_pool.with_connection do
+            ready << true
+            start.pop
+            outcomes << action.call
+          rescue StandardError => e
+            outcomes << e
+          end
+        end
+      end
+      2.times { ready.pop }
+      2.times { start << true }
+      threads.each(&:join)
+      results = 2.times.map { outcomes.pop }
+
+      expect(results.count { |item| item.is_a?(Agentkit::DecisionConflict) }).to eq(1)
+      expect(Agentkit::DecisionRecord.where(suggestion_id: suggestion.id).count).to eq(1)
+      expect(Agentkit::SuggestionRecord.find(suggestion.id).status).to be_in(%w[executed rejected])
     end
 
     it "computes ledger metrics from the table" do

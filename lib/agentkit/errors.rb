@@ -87,6 +87,9 @@ module Agentkit
   class HITLError < Error; end
   class UnknownRejectionCode < HITLError; end
   class SuggestionNotFound < HITLError; end
+  class DecisionConflict < HITLError; end
+  class IdempotencyConflict < HITLError; end
+  class AuditPersistenceError < Error; end
 
   # ─── Capabilities / proposals ──────────────────────────────────────────────
   class CapabilityError < Error; end

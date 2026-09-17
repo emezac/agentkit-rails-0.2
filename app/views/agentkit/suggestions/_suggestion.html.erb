@@ -40,7 +40,7 @@
   <% if suggestion.payload.except("proposal_id").any? %>
     <details style="margin-top:8px">
       <summary>Payload</summary>
-      <pre class="mono dim"><%= JSON.pretty_generate(suggestion.payload) %></pre>
+      <pre class="mono dim"><%= JSON.pretty_generate(agentkit_payload(suggestion.payload)) %></pre>
     </details>
   <% end %>
 </div>

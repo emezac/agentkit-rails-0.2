@@ -36,7 +36,7 @@ module Agentkit
       end
 
       def record(suggestion, decision:, actor:, mode: "human", rejection_code: nil,
-                 rejection_note: nil, final_payload: nil)
+                 rejection_note: nil, final_payload: nil, required: false)
         entry = Entry.new(
           id: (@seq += 1),
           suggestion_id: suggestion.id, agent_name: suggestion.source_agent,

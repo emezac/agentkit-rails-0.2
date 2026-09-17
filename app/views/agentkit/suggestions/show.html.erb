@@ -2,7 +2,7 @@
   <span class="pill <%= @suggestion.priority %>"><%= @suggestion.priority %></span>
   <h2 style="margin:8px 0"><%= @suggestion.title %></h2>
   <p class="dim"><%= @suggestion.description %></p>
-  <pre class="mono dim"><%= JSON.pretty_generate(@suggestion.payload) %></pre>
+  <pre class="mono dim"><%= JSON.pretty_generate(agentkit_payload(@suggestion.payload)) %></pre>
 </div>
 
 <%# Provenance: why does this proposal exist? For an imagined scenario this
@@ -21,7 +21,7 @@
           <% trace[:phases].each do |phase| %>
             <tr>
               <td class="mono"><%= phase[:name] %></td>
-              <td class="mono dim"><%= phase.except(:name, :at).inspect.truncate(160) %></td>
+              <td class="mono dim"><%= agentkit_payload(phase.except(:name, :at)).inspect.truncate(160) %></td>
             </tr>
           <% end %>
         </tbody>

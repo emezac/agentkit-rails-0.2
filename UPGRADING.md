@@ -1,3 +1,51 @@
+# Upgrading 0.4.0 → 0.4.1
+
+Install and run migration `015_harden_agentkit_hitl_and_audit`. It adds the
+execution lifecycle fields and a partial unique index for durable HITL
+idempotency. Historical duplicate keys are preserved under stable `:legacy:`
+namespaces instead of being deleted.
+
+Approvals now move through `pending → approved → executing → executed`. Queue
+dispatch failures become `execution_failed`; failures after a worker has
+claimed the operation become `execution_unknown`. Code that previously tested
+for the persisted values `accepted` or `auto_applied` should use
+`suggestion.approved?` or the new lifecycle states.
+
+Idempotency keys no longer expire after `hitl.dedupe_window`. Supply a stable
+`operation_namespace:` when a key could be reused by independent operations.
+Reusing the same tuple with different canonical arguments raises
+`Agentkit::IdempotencyConflict`. Rows must be retained for at least as long as
+the host promises retry safety; deleting them also deletes that guarantee.
+
+Prompt previews are now disabled by default. Opt in only where the data policy
+allows it, and select whether audit storage may fail open:
+
+```ruby
+config.audit.prompt_preview_chars = 0
+config.audit.failure_mode = :best_effort # or :required
+```
+
+The AgentKit console is also disabled by default, including development and
+test. Enabling it requires both an authenticated principal and a fail-closed
+authorization policy:
+
+```ruby
+config.console.enabled = true
+config.console.principal_resolver = -> { current_user }
+config.console.guard = ->(principal) { principal.admin? }
+# Without this optional permission, payloads are recursively redacted.
+config.console.payload_guard = ->(principal) { principal.security_admin? }
+```
+
+In multi-tenant applications, the mounted controller must also expose a
+non-null `current_account`; otherwise console access is rejected.
+
+Release maintainers should run `bundle exec rake release:verify`. It executes
+the reproducible suite, builds the gem, emits `.sha256` and `.spdx.json`
+artifacts, and installs the generated gem into an isolated temporary directory.
+
+---
+
 # Upgrading 0.3.2 → 0.4.0
 
 AgentKit 0.4 adds A2A 1.0 without removing the 0.3 JSON-RPC API. New peers

@@ -153,7 +153,9 @@ module Agentkit
       %i[wrong_target bad_timing wrong_tone factually_wrong already_done
          not_valuable too_risky missing_context]
     }
-    setting :dedupe_window, default: 24 * 3600       # idempotency_key reuse window
+    # Kept for source compatibility. Since 0.4.1 an idempotency key is durable
+    # and namespaced; this value only informs host retention policies.
+    setting :dedupe_window, default: 24 * 3600
   end
 
   # ─── Flow ────────────────────────────────────────────────────────────────────
@@ -226,7 +228,8 @@ module Agentkit
   class AuditSettings < Settings
     setting :enabled, default: true
     setting :store,   default: :active_record, in: %i[active_record memory]
-    setting :prompt_preview_chars, default: 500   # 0 disables prompt capture
+    setting :failure_mode, default: :best_effort, in: %i[best_effort required]
+    setting :prompt_preview_chars, default: 0     # opt in; prompts may contain secrets/PII
     setting :redact, default: lambda {
       [
         /\b[\w.+-]+@[\w-]+\.[\w.-]+\b/,                       # emails
@@ -234,7 +237,20 @@ module Agentkit
         /\b(?:sk|pk|api)[-_][A-Za-z0-9]{16,}\b/               # api keys
       ]
     }
+    setting :redact_keys, default: lambda {
+      %w[authorization cookie set-cookie token access_token refresh_token password
+         secret api_key api-key document attachment raw_payload tool_payload]
+    }
     setting :retention_days, default: nil          # nil = keep forever
+  end
+
+  # ─── Rails console ──────────────────────────────────────────────────────────
+
+  class ConsoleSettings < Settings
+    setting :enabled, default: false
+    setting :guard                         # -> { current_user&.admin? }
+    setting :principal_resolver            # -> { current_user }
+    setting :payload_guard                 # ->(principal) { principal.security_admin? }
   end
 
   # ─── Factory ─────────────────────────────────────────────────────────────────
@@ -322,6 +338,7 @@ module Agentkit
     group :flow,      FlowSettings
     group :telemetry, TelemetrySettings
     group :audit,     AuditSettings
+    group :console,   ConsoleSettings
     group :a2a,       A2ASettings
     group :factory,   FactorySettings
     group :chat,      ChatSettings

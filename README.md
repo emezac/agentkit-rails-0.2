@@ -1,9 +1,9 @@
-# AgentKit Rails v0.4
+# AgentKit Rails v0.4.1
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.4.0"
+gem "agentkit-rails", "~> 0.4.1"
 ```
 
 ```bash
@@ -22,6 +22,29 @@ El instalador registra el engine durante `config/application.rb`; hacerlo por
 primera vez desde un initializer es demasiado tarde para que Rails incorpore
 sus modelos y tareas. El generador puede ejecutarse de nuevo de forma segura si
 una instalación anterior no encuentra las migraciones.
+
+### Seguridad operacional en 0.4.1
+
+Las decisiones HITL son atómicas y sus efectos se ejecutan en
+`Agentkit::ExecuteSuggestionJob`. Las claves de idempotencia son durables por
+tenant y namespace; reutilizar una clave con argumentos distintos produce
+`Agentkit::IdempotencyConflict`.
+
+La captura de prompts y la consola web están desactivadas por defecto:
+
+```ruby
+config.audit.prompt_preview_chars = 0
+config.audit.failure_mode = :best_effort # usa :required para fallar cerrado
+
+config.console.enabled = true
+config.console.principal_resolver = -> { current_user }
+config.console.guard = ->(principal) { principal.admin? }
+# Optional: only this permission sees unredacted suggestion payloads.
+config.console.payload_guard = ->(principal) { principal.security_admin? }
+```
+
+Conserva las filas de `agentkit_suggestions` durante todo el horizonte en el
+que prometes reintentos idempotentes. Borrarlas elimina esa garantía.
 
 ---
 
