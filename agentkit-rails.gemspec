@@ -29,8 +29,8 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir[
     "lib/**/*", "app/**/*", "db/migrate/**/*", "config/**/*",
-    "*.gemspec", "README.md", "CHANGELOG.md", "UPGRADING.md", "LICENSE"
-  ]
+    "agentkit-rails.gemspec", "README.md", "CHANGELOG.md", "UPGRADING.md", "LICENSE"
+  ].reject { |path| path == "lib/agentkit/mcp.rb" || path.start_with?("lib/agentkit/mcp/") }
   spec.require_paths = ["lib"]
 
   # The core has no runtime dependencies on purpose: `require "agentkit"` works

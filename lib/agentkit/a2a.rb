@@ -71,6 +71,7 @@ module Agentkit
         allow = Agentkit.config.a2a.expose
 
         Capability.all.select do |cap|
+          next false unless cap.exposed?(:a2a)
           next false if allow.is_a?(Array) && !allow.map(&:to_sym).include?(cap.name)
           next false if Array(Agentkit.config.a2a.hide).map(&:to_sym).include?(cap.name)
 
@@ -86,7 +87,11 @@ module Agentkit
           tags:        capability.tags.map(&:to_s),
           inputModes:  %w[application/json],
           outputModes: %w[application/json],
-          parameters:  capability.inputs.transform_values { |t| { type: t.to_s } },
+          parameters:  capability.input_schema,
+          outputSchema: capability.output_schema,
+          effect:       capability.effect.to_s,
+          permission:   capability.required_permission,
+          exposureMode: capability.exposure_mode(:a2a).to_s,
           # Peers need to know what will happen before they call.
           risk:        capability.risk.to_s,
           requiresHumanApproval: requires_approval?(capability)
@@ -112,14 +117,17 @@ module Agentkit
           account = resolver.call(presented_key.to_s)
           return nil if account.nil?
 
-          return Context.new(account: account, metadata: { via: "a2a" })
+          principal = Principal.coerce(account, tenant_key: Context.new(account: account).tenant_key,
+                                                source: :a2a)
+          return Context.new(account: account, principal: principal, metadata: { via: "a2a" })
         end
 
         expected = Agentkit.config.a2a.secret_key.to_s
         return nil if expected.empty?
         return nil unless secure_compare(presented_key.to_s, expected)
 
-        Context.new(metadata: { via: "a2a" })
+        Context.new(principal: Principal.new(id: "peer:a2a", source: :a2a),
+                    metadata: { via: "a2a" })
       end
 
       def secure_compare(a, b)
@@ -233,33 +241,24 @@ module Agentkit
             return Error.new(code: :precondition, message: "preconditions not met for #{name}")
           end
 
-          # Irreversible or strict-gated work is parked as a suggestion and the
-          # caller is handed a task id to poll — never executed silently.
-          if A2A.requires_approval?(cap)
-            digest = HITL.send(:canonical_digest, inputs)
-            requester = Context.current&.principal || Context.current&.metadata&.dig(:principal) || "peer:a2a"
-            suggestion = HITL.suggest!(
-              type: "a2a:#{cap.name}", title: "A2A request: #{cap.title}",
-              description: "Remote peer requested `#{cap.name}`.",
-              priority: cap.irreversible? ? "high" : "medium",
-              source_agent: "A2A", payload: inputs.merge("via" => "a2a"),
-              idempotency_key: params["idempotency_key"],
-              operation_namespace: "a2a.capability:#{cap.name}",
-              metadata: { "arguments_digest" => digest, "requester_principal" => requester.to_s,
-                          "force_sync" => !!params["force_sync"] }
-            )
-            install_hitl_handler!(suggestion.suggestion_type)
-            return { status: "pending_approval", taskId: "suggestion:#{suggestion.id}",
-                     capability: cap.name.to_s, risk: cap.risk.to_s }
+          invocation = Actions.invoke(
+            capability: cap, arguments: inputs, principal: Context.current&.principal,
+            mode: cap.exposure_mode(:a2a), idempotency_key: params["idempotency_key"],
+            adapter: :a2a, context: Context.current
+          )
+          if invocation[:proposal]
+            { status: invocation[:status], taskId: invocation[:task_id],
+              capability: cap.name.to_s, risk: cap.risk.to_s,
+              result: invocation[:proposal].canonical_response }.compact
+          else
+            { status: invocation[:status], capability: cap.name.to_s,
+              result: serialize(invocation[:result]) }
           end
-
-          result = cap.execute(inputs, context: Context.current)
-          {
-            status: result.respond_to?(:ok?) && !result.ok? ? "failed" : "completed",
-            capability: cap.name.to_s,
-            taskId: task_id_for(result),
-            result: serialize(result)
-          }
+        rescue SchemaValidationError => e
+          Error.new(code: :invalid_params, message: e.message,
+                    data: { violations: e.violations })
+        rescue PolicyDenied => e
+          Error.new(code: :forbidden, message: e.message)
         end
 
         # Poll a parked approval or a long-running flow.
@@ -268,6 +267,12 @@ module Agentkit
           kind, ref = id.split(":", 2)
 
           case kind
+          when "action"
+            action = Actions.find(ref, scope: Scope.resolve)
+            return Error.new(code: :invalid_params, message: "unknown task") if action.nil?
+
+            { taskId: id, status: Actions.task_status(action), capability: action.action_type,
+              receipt: action.status == "executed" ? Receipt.action(action.id, scope: Scope.resolve) : nil }.compact
           when "suggestion"
             s = HITL.find(ref.to_i, scope: Scope.resolve)
             return Error.new(code: :invalid_params, message: "unknown task") if s.nil?

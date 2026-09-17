@@ -242,6 +242,20 @@ module Agentkit
          secret api_key api-key document attachment raw_payload tool_payload]
     }
     setting :retention_days, default: nil          # nil = keep forever
+    setting :schema_version, default: 2, in: [1, 2]
+    setting :active_key_id, default: -> { ENV.fetch("AGENTKIT_AUDIT_KEY_ID", "primary") }
+    setting :signing_keys, default: lambda {
+      key = ENV.fetch("AGENTKIT_AUDIT_KEY", nil)
+      key ? { ENV.fetch("AGENTKIT_AUDIT_KEY_ID", "primary") => key } : {}
+    }
+
+    def validate
+      problems = super
+      if schema_version.to_i == 2 && store.to_sym == :active_record && signing_keys.empty?
+        problems << "Agentkit::AuditSettings#signing_keys: audit v2 requires AGENTKIT_AUDIT_KEY or an explicit signing key"
+      end
+      problems
+    end
   end
 
   # ─── Rails console ──────────────────────────────────────────────────────────
@@ -251,6 +265,22 @@ module Agentkit
     setting :guard                         # -> { current_user&.admin? }
     setting :principal_resolver            # -> { current_user }
     setting :payload_guard                 # ->(principal) { principal.security_admin? }
+  end
+
+  # ─── Governed actions ──────────────────────────────────────────────────────
+
+  class ActionSettings < Settings
+    setting :store, default: :active_record, in: %i[active_record memory]
+    setting :queue, default: :agentkit_actions
+    setting :policy
+    setting :approved_without_job_after, default: 300
+    setting :execution_stale_after, default: 900
+  end
+
+  class WatchtowerSettings < Settings
+    setting :enabled, default: true
+    setting :store, default: :active_record, in: %i[active_record memory]
+    setting :join_stale_after, default: 900
   end
 
   # ─── Factory ─────────────────────────────────────────────────────────────────
@@ -339,6 +369,8 @@ module Agentkit
     group :telemetry, TelemetrySettings
     group :audit,     AuditSettings
     group :console,   ConsoleSettings
+    group :actions,   ActionSettings
+    group :watchtower, WatchtowerSettings
     group :a2a,       A2ASettings
     group :factory,   FactorySettings
     group :chat,      ChatSettings

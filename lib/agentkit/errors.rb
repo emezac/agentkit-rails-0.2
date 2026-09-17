@@ -94,4 +94,21 @@ module Agentkit
   # ─── Capabilities / proposals ──────────────────────────────────────────────
   class CapabilityError < Error; end
   class PreconditionFailed < CapabilityError; end
+  class SchemaValidationError < CapabilityError
+    attr_reader :violations
+
+    def initialize(message = nil, violations: [])
+      @violations = violations
+      super(message || "schema validation failed: #{violations.join(', ')}")
+    end
+  end
+
+  # ─── Governed actions / policy ────────────────────────────────────────────
+  class ActionError < Error; end
+  class ActionNotFound < ActionError; end
+  class ActionTransitionConflict < ActionError; end
+  class PolicyDenied < ActionError; end
+  class SeparationOfDutiesViolation < PolicyDenied; end
+  class ReconciliationRequired < ActionError; end
+  class AuditIntegrityError < Error; end
 end

@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.5.0 — 2026-09-17
+
+### Added
+
+- Durable governed actions with separate proposal, decision, execution attempt,
+  outbox and observed outcome records, plus a static retry/reconciliation state
+  machine and portable redacted receipts.
+- Capability contract v2: closed input/output schemas, effects, permissions,
+  idempotency and reconciliation requirements, execution limits, versions and
+  explicit per-adapter exposure.
+- Audit schema v2 with per-tenant sequence locking, SHA-256 hash chaining, HMAC
+  signatures, verification and retention checkpoints.
+- Watchtower invariant scans with stable, tenant-scoped finding fingerprints.
+- Optional `agentkit-mcp` package tested against official Ruby MCP SDK 1.5.1; its
+  registry is allow-list only and shares policy/action enforcement with A2A.
+- PostgreSQL coverage for audit-chain concurrency and transactional outbox
+  recovery.
+
+### Changed
+
+- A2A capability calls now use `Agentkit::Policy` and `Agentkit::Actions`.
+  Mutating work returns `action:<public_id>` tasks; no transport has a private
+  authorization path.
+- A2A and MCP publish only capabilities with explicit `expose` declarations.
+- Legacy `inputs` declarations remain executable but emit a deprecation warning;
+  new capabilities should use closed JSON schemas.
+
 ## 0.4.1 — Unreleased
 
 ### Security

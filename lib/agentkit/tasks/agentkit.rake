@@ -1,6 +1,23 @@
 # frozen_string_literal: true
 
 namespace :agentkit do
+  desc "Verify the tamper-evident audit chain (TENANT=__global__)"
+  task audit_verify: :environment do
+    report = Agentkit::Audit.verify!(tenant_key: ENV.fetch("TENANT", "__global__"))
+    puts JSON.pretty_generate(report)
+  end
+
+  desc "Scan AgentKit operational invariants"
+  task watchtower: :environment do
+    findings = Agentkit::Watchtower.scan!
+    puts JSON.pretty_generate(findings.map(&:to_h))
+  end
+
+  desc "Dispatch pending governed-action outbox entries (LIMIT=100)"
+  task dispatch_actions: :environment do
+    Agentkit::Actions.dispatch_pending!(limit: ENV.fetch("LIMIT", 100).to_i)
+  end
+
   desc "Conformance check: what is instrumented, what is missing, what cannot improve yet"
   task doctor: :environment do
     ok    = ->(msg) { puts "\e[32m✓\e[0m #{msg}" }

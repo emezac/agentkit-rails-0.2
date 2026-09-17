@@ -17,6 +17,8 @@ Agentkit.configure do |config|
   config.a2a.enabled     = true
   config.a2a.secret_key  = "dummy-a2a-key"
   config.telemetry.backends = [:memory]
+  config.audit.signing_keys = { "test" => "test-audit-signing-key" }
+  config.audit.active_key_id = "test"
 end
 
 Rails.application.config.to_prepare do

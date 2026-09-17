@@ -1,3 +1,52 @@
+# Upgrading 0.4.1 → 0.5.0
+
+Install and run migration `016_create_agentkit_governed_actions`. It creates
+the action proposal/decision/attempt/outbox/outcome tables, audit chain heads,
+Watchtower findings and adds audit-v2 columns.
+
+Configure an audit HMAC key before booting with the ActiveRecord audit store:
+
+```ruby
+config.audit.active_key_id = ENV.fetch("AGENTKIT_AUDIT_KEY_ID", "primary")
+config.audit.signing_keys = {
+  config.audit.active_key_id => ENV.fetch("AGENTKIT_AUDIT_KEY")
+}
+```
+
+Migrate externally visible capabilities to contract v2. `inputs` remains as a
+deprecated compatibility surface, but it is not a closed protocol contract.
+
+```ruby
+cap.input_schema(type: "object", properties: { id: { type: "integer" } },
+                 required: ["id"], additionalProperties: false)
+cap.output_schema(type: "object", properties: {}, additionalProperties: false)
+cap.effect :internal
+cap.required_permission "records.write"
+cap.expose :a2a, mode: :propose
+```
+
+Exposure is now deny-by-default. Add `cap.expose :a2a` for every intended A2A
+skill. Install `agentkit-mcp` separately and add `cap.expose :mcp`; merely
+registering a capability never publishes it.
+
+A2A authorization tasks now use ids such as `action:<public_id>`, not HITL
+suggestion ids. Approve or reject them through `Agentkit::Actions.decide!` with
+an authenticated principal. The requester cannot approve its own action.
+
+External capabilities must require a durable idempotency key and define a
+required reconciler. A timeout becomes `execution_unknown`, not `execution_failed`; reconcile it
+before retrying so an ambiguous side effect is never repeated blindly.
+
+After migration run:
+
+```bash
+rails agentkit:audit_verify TENANT=__global__
+rails agentkit:watchtower
+bundle exec rake verify
+```
+
+---
+
 # Upgrading 0.4.0 → 0.4.1
 
 Install and run migration `015_harden_agentkit_hitl_and_audit`. It adds the

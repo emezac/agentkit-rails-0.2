@@ -1,9 +1,9 @@
-# AgentKit Rails v0.4.1
+# AgentKit Rails v0.5.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.4.1"
+gem "agentkit-rails", "~> 0.5.0"
 ```
 
 ```bash
@@ -12,6 +12,77 @@ rails g agentkit:rag
 rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
+```
+
+## Control plane de acciones en 0.5
+
+0.5 separa intención, autorización, ejecución y resultado observado. Una
+capacidad que cambia estado ya no se ejecuta directamente desde A2A o MCP:
+ambos adaptadores pasan por `Agentkit::Policy` y `Agentkit::Actions`.
+
+```ruby
+Agentkit::Capability.register :charge_invoice do |cap|
+  cap.input_schema(
+    type: "object",
+    properties: { invoice_id: { type: "integer" }, cents: { type: "integer" } },
+    required: %w[invoice_id cents],
+    additionalProperties: false
+  )
+  cap.output_schema(type: "object", properties: { charge_id: { type: "string" } },
+                    required: ["charge_id"], additionalProperties: false)
+  cap.effect :external
+  cap.risk :irreversible
+  cap.required_permission "billing.charge"
+  cap.idempotency :required
+  cap.reconciliation :required
+  cap.executor { |args, idempotency_key:| Payments.charge(**args, idempotency_key:) }
+  cap.reconciler { |_args, idempotency_key:| Payments.lookup(idempotency_key:) }
+  cap.expose :a2a, mode: :propose
+  cap.expose :mcp, mode: :propose
+end
+```
+
+El lifecycle durable es
+`draft → open → approved → executing → executed|execution_failed|execution_unknown`. Una decisión
+es un registro distinto de cada intento, y un `unknown` externo exige
+reconciliación antes de reintentar. `Agentkit::Receipt.action(id)` devuelve
+evidencia portable sin incluir argumentos crudos.
+
+Audit v2 encadena cada evento por tenant con SHA-256 y HMAC. Configura una clave
+estable antes de arrancar un store ActiveRecord:
+
+```ruby
+config.audit.active_key_id = "2026-09"
+config.audit.signing_keys = { "2026-09" => Rails.application.credentials.audit_key }
+```
+
+Verifica y vigila el control plane con:
+
+```bash
+rails agentkit:audit_verify TENANT=acct:42
+rails agentkit:watchtower
+rails agentkit:dispatch_actions
+```
+
+MCP es un paquete opcional que usa el SDK oficial y no se carga con el gem
+principal:
+
+```ruby
+gem "agentkit-mcp", "~> 0.5.0"
+```
+
+Definir una capacidad no la publica. Cada transporte requiere un `expose`
+explícito; MCP no ofrece una herramienta de aprobación.
+
+```ruby
+Agentkit::MCP.configure do |mcp|
+  mcp.enabled = true
+  mcp.authenticator = ->(env) { env["HTTP_AUTHORIZATION"]&.delete_prefix("Bearer ") }
+  mcp.principal_resolver = ->(token) { ApiPrincipal.from_token(token) }
+  mcp.expose :charge_invoice, mode: :propose
+end
+
+mount Agentkit::MCP.rack_app, at: "/mcp"
 ```
 
 La versión 0.4 añade interoperabilidad A2A 1.0 sobre HTTP+JSON, identidad

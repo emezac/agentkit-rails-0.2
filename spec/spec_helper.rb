@@ -24,6 +24,9 @@ RSpec.configure do |config|
     next if example.metadata[:integration]
 
     Agentkit.reset!
+    Agentkit.config.actions.store = :memory
+    Agentkit.config.watchtower.store = :memory
+    Agentkit.config.audit.store = :memory
     Agentkit::Flow.test_mode!
     Agentkit::Factory.persistence = :memory
     Agentkit::Factory.reset!

@@ -57,6 +57,8 @@ RSpec.configure do |config|
     Agentkit.config.memory.embedding.policy = :on_promotion
     Agentkit.config.audit.store     = :active_record
     Agentkit.config.audit.failure_mode = :best_effort
+    Agentkit.config.audit.signing_keys = { "test" => "test-audit-signing-key" }
+    Agentkit.config.audit.active_key_id = "test"
     Agentkit.config.audit.prompt_preview_chars = 0
     Agentkit.config.console.enabled = false
     Agentkit.config.console.guard = nil
@@ -67,6 +69,13 @@ RSpec.configure do |config|
     Agentkit.config.telemetry.backends = [:memory]
     Agentkit.config.llm.adapter     = :fake
     Agentkit::Audit.reset!
+    Agentkit.config.actions.store = :active_record
+    Agentkit::Actions.store = Agentkit::Actions::Stores::ActiveRecord.new
+    Agentkit::Actions.dispatcher = lambda do |proposal_id, scope|
+      Agentkit::Actions.execute!(proposal_id, scope: scope)
+    end
+    Agentkit.config.watchtower.store = :active_record
+    Agentkit::Watchtower.store = Agentkit::Watchtower::ActiveRecordStore.new
 
     Agentkit::LLM.reset!
     Agentkit::LLM::Adapters::Fake.reset!

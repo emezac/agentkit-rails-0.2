@@ -44,6 +44,14 @@ Agentkit.configure do |config|
   # ─── Audit: prompt capture is opt-in ───────────────────────────────────────
   config.audit.prompt_preview_chars = 0
   config.audit.failure_mode = :best_effort # :best_effort | :required
+  config.audit.active_key_id = ENV.fetch("AGENTKIT_AUDIT_KEY_ID", "primary")
+  config.audit.signing_keys = {
+    config.audit.active_key_id => ENV.fetch("AGENTKIT_AUDIT_KEY")
+  }
+
+  # ─── Governed actions ─────────────────────────────────────────────────────
+  config.actions.queue = :agentkit_actions
+  config.watchtower.enabled = true
 
   # ─── Console: disabled in every environment until both hooks are set ──────
   config.console.enabled = false

@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "openssl"
+require "time"
+
 module Agentkit
   # Immutable audit trail and XAI traces.
   #
@@ -24,7 +27,8 @@ module Agentkit
       :input_tokens, :output_tokens, :cost_usd, :duration_ms,
       :payload, :trace_id, :run_id, :step_key,
       :user_id, :account_id, :tenant_key, :subject_type, :subject_id,
-      :occurred_at,
+      :occurred_at, :schema_version, :sequence, :principal_id,
+      :payload_digest, :previous_hash, :event_hash, :signature, :key_id,
       keyword_init: true
     ) do
       def to_h = super.compact
@@ -134,7 +138,9 @@ module Agentkit
           tenant_key:    ctx&.tenant_key || "__global__",
           subject_type:  subject&.class&.name,
           subject_id:    id_of(subject),
-          occurred_at:   Time.now
+          occurred_at:   Time.now,
+          schema_version: Agentkit.config.audit.schema_version,
+          principal_id: principal_id(ctx)
         )
         store.append(entry)
         entry
@@ -197,6 +203,40 @@ module Agentkit
         }
       end
 
+      # Verifies the complete v2 chain for one tenant, including sequence,
+      # payload digest, event hash and HMAC signature. Legacy v1 rows remain
+      # readable but are intentionally outside the cryptographic chain.
+      def verify!(tenant_key: "__global__")
+        rows = store.entries(scope: { tenant_key: tenant_key })
+                    .select { |entry| entry.schema_version.to_i == 2 }
+                    .sort_by { |entry| entry.sequence.to_i }
+        previous = nil
+        rows.each_with_index do |entry, index|
+          expected_sequence = index + 1
+          raise AuditIntegrityError, "audit sequence gap at #{entry.id}" unless entry.sequence.to_i == expected_sequence
+          raise AuditIntegrityError, "audit previous hash mismatch at #{entry.id}" unless entry.previous_hash == previous
+          expected_payload = canonical_digest(entry.payload || {})
+          raise AuditIntegrityError, "audit payload digest mismatch at #{entry.id}" unless secure_equal?(entry.payload_digest, expected_payload)
+          expected_hash = event_hash(entry)
+          raise AuditIntegrityError, "audit event hash mismatch at #{entry.id}" unless secure_equal?(entry.event_hash, expected_hash)
+          key = signing_key(entry.key_id, store: store)
+          expected_signature = OpenSSL::HMAC.hexdigest("SHA256", key, entry.event_hash)
+          raise AuditIntegrityError, "audit signature mismatch at #{entry.id}" unless secure_equal?(entry.signature, expected_signature)
+          previous = entry.event_hash
+        end
+        { tenant_key: tenant_key, entries: rows.size, last_hash: previous, valid: true }
+      end
+
+      def seal!(entry, sequence:, previous_hash:, store:)
+        entry.sequence = sequence
+        entry.previous_hash = previous_hash
+        entry.payload_digest = canonical_digest(entry.payload || {})
+        entry.key_id = Agentkit.config.audit.active_key_id
+        entry.event_hash = event_hash(entry)
+        entry.signature = OpenSSL::HMAC.hexdigest("SHA256", signing_key(entry.key_id, store: store), entry.event_hash)
+        entry
+      end
+
       # Why does this memory exist? Walks derived_from and the trace that made it.
       def provenance(memory, scope: nil)
         resolved = Scope.resolve(scope)
@@ -215,6 +255,45 @@ module Agentkit
       end
 
       private
+
+      def principal_id(context)
+        value = context&.principal || context&.user
+        value.respond_to?(:id) ? value.id.to_s : value&.to_s
+      end
+
+      def canonical_digest(value)
+        "sha256:#{Digest::SHA256.hexdigest(JSON.generate(canonicalize(value)))}"
+      end
+
+      def canonicalize(value)
+        case value
+        when Hash then value.map { |key, item| [key.to_s, canonicalize(item)] }.sort.to_h
+        when Array then value.map { |item| canonicalize(item) }
+        when Time then value.utc.iso8601(6)
+        else value
+        end
+      end
+
+      def event_hash(entry)
+        fields = entry.to_h.reject { |key, _| %i[id event_hash signature].include?(key) }
+        "sha256:#{Digest::SHA256.hexdigest(JSON.generate(canonicalize(fields)))}"
+      end
+
+      def signing_key(key_id, store:)
+        key = Agentkit.config.audit.signing_keys[key_id] || Agentkit.config.audit.signing_keys[key_id.to_s]
+        return key.to_s unless key.to_s.empty?
+        return "agentkit-in-memory-audit-key" if store.is_a?(InMemory)
+
+        raise ConfigurationError, "audit v2 signing key #{key_id.inspect} is not configured"
+      end
+
+      def secure_equal?(left, right)
+        return false unless left && right && left.bytesize == right.bytesize
+
+        accumulator = 0
+        left.bytes.zip(right.bytes) { |a, b| accumulator |= a ^ b }
+        accumulator.zero?
+      end
 
       def enabled? = Agentkit.config.audit.enabled
 
@@ -302,6 +381,14 @@ module Agentkit
       def append(entry)
         @mutex.synchronize do
           entry.id = (@seq += 1)
+          if entry.schema_version.to_i == 2
+            tenant = entry.tenant_key || "__global__"
+            @heads ||= {}
+            head = @heads[tenant] || { sequence: 0, hash: nil }
+            Audit.seal!(entry, sequence: head[:sequence] + 1,
+                        previous_hash: head[:hash], store: self)
+            @heads[tenant] = { sequence: entry.sequence, hash: entry.event_hash }
+          end
           @entries << entry
           @entries.shift(@entries.size - LIMIT) if @entries.size > LIMIT
         end
@@ -338,7 +425,7 @@ module Agentkit
       end
 
       def clear
-        @mutex.synchronize { @entries = []; @traces = []; @seq = 0 }
+        @mutex.synchronize { @entries = []; @traces = []; @heads = {}; @seq = 0 }
       end
 
       def size = @entries.size
@@ -348,9 +435,19 @@ module Agentkit
     # explicit operation (`Agentkit::Audit::ActiveRecordStore#prune!`).
     class ActiveRecordStore
       def append(entry)
-        row = Agentkit::AuditRecord.create!(entry.to_h.except(:id))
-        entry.id = row.id
-        entry
+        Agentkit::AuditRecord.transaction do
+          if entry.schema_version.to_i == 2
+            head = locked_head(entry.tenant_key)
+            Audit.seal!(entry, sequence: head.sequence + 1,
+                        previous_hash: head.last_hash, store: self)
+            row = Agentkit::AuditRecord.create!(entry.to_h.except(:id))
+            head.update!(sequence: entry.sequence, last_hash: entry.event_hash)
+          else
+            row = Agentkit::AuditRecord.create!(entry.to_h.except(:id))
+          end
+          entry.id = row.id
+          entry
+        end
       end
 
       def append_trace(trace)
@@ -390,10 +487,25 @@ module Agentkit
 
       # The only way an audit row ever disappears, and it is deliberate.
       def prune!(older_than:)
-        Agentkit::AuditRecord.where(occurred_at: ...older_than).delete_all
+        relation = Agentkit::AuditRecord.where(occurred_at: ...older_than)
+        grouped = relation.group(:tenant_key).maximum(:event_hash)
+        grouped.each do |tenant, hash|
+          Audit.record(event_type: "audit.checkpoint", status: "created",
+                       payload: { pruned_before: older_than.utc.iso8601, last_pruned_hash: hash },
+                       context: Context.new(tenant_key: tenant,
+                                            principal: "system:audit_retention"),
+                       failure_mode: :required)
+        end
+        relation.delete_all
       end
 
       private
+
+      def locked_head(tenant_key)
+        tenant = tenant_key || "__global__"
+        Agentkit::AuditChainHeadRecord.create_or_find_by!(tenant_key: tenant)
+        Agentkit::AuditChainHeadRecord.lock.find_by!(tenant_key: tenant)
+      end
 
       def audit_relation(scope)
         resolved = Scope.resolve(scope)

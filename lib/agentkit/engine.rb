@@ -35,6 +35,8 @@ module Agentkit
         Agentkit::Memory.reset!
         Agentkit::Flow.shared_store = nil
         Agentkit::Flow.dispatcher   = nil
+        Agentkit::Actions.reset!
+        Agentkit::Watchtower.reset!
 
         # Without this, pending approvals live in a process-local Hash: they
         # vanish on restart and two web workers disagree about what is pending.
@@ -44,6 +46,12 @@ module Agentkit
         end
         if defined?(Agentkit::A2aTaskRecord) && Agentkit::A2aTaskRecord.table_exists?
           Agentkit::A2A::V1.task_store = Agentkit::A2A::V1::ActiveRecordTaskStore.new
+        end
+        if defined?(Agentkit::ActionProposalRecord) && Agentkit::ActionProposalRecord.table_exists?
+          Agentkit::Actions.store = Agentkit::Actions::Stores::ActiveRecord.new
+          Agentkit::Actions.dispatcher = lambda do |proposal_id, scope|
+            Agentkit::ExecuteActionJob.perform_later(proposal_id, scope)
+          end
         end
       end
     end

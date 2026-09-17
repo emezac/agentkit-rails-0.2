@@ -15,6 +15,7 @@ module DummyCapabilities
       c.risk :reversible
       c.hitl :auto
       c.preconditions { |_setup, ctx| ctx.account.present? }
+      c.expose :a2a
     end
 
     Agentkit::Capability.register :dangerous do |c|
@@ -23,6 +24,7 @@ module DummyCapabilities
       c.inputs text: :string
       c.risk :irreversible
       c.preconditions { |_setup, ctx| ctx.account.present? }
+      c.expose :a2a, mode: :propose
     end
   end
 end

@@ -11,6 +11,8 @@ require_relative "agentkit/configuration"
 require_relative "agentkit/context"
 require_relative "agentkit/scope"
 require_relative "agentkit/result"
+require_relative "agentkit/schema"
+require_relative "agentkit/principal"
 
 require_relative "agentkit/telemetry"
 require_relative "agentkit/audit"
@@ -25,6 +27,11 @@ require_relative "agentkit/flow"
 require_relative "agentkit/agent"
 require_relative "agentkit/cognition"
 require_relative "agentkit/capability"
+require_relative "agentkit/capability_v2"
+require_relative "agentkit/policy"
+require_relative "agentkit/actions"
+require_relative "agentkit/receipt"
+require_relative "agentkit/watchtower"
 require_relative "agentkit/setup"
 require_relative "agentkit/proposals"
 require_relative "agentkit/a2a"
@@ -69,6 +76,9 @@ module Agentkit
       Prompt.reset!
       SkillRegistry.reset!
       Capability.reset!
+      Actions.reset!
+      Watchtower.reset!
+      MCP.reset! if defined?(MCP) && MCP.respond_to?(:reset!)
       Memory.reset!
       Memory::CustomPrompts.reset! if defined?(Memory::CustomPrompts)
       HITL.reset!

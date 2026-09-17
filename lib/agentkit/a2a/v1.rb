@@ -173,12 +173,17 @@ module Agentkit
           missing = cap.inputs.keys - symbolize(inputs).keys
           return input_required_task(message, cap, missing, context) if missing.any?
 
+          trusted_context = context.principal ? context : context.derive(
+            run_id: context.run_id,
+            principal: Principal.coerce(context.account || "peer:a2a-v1",
+                                        tenant_key: context.tenant_key, source: :a2a)
+          )
           legacy = Agentkit::A2A.handle(
             { "jsonrpc" => "2.0", "id" => fetch(message, :messageId),
               "method" => "capabilities.invoke",
               "params" => { "capability" => cap.name.to_s, "inputs" => inputs,
                              "idempotency_key" => fetch(metadata, :idempotencyKey) } },
-            context: context
+            context: trusted_context
           )
           raise ProtocolError, legacy.dig(:error, :message) if legacy[:error]
 

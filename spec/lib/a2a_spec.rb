@@ -34,6 +34,7 @@ RSpec.describe Agentkit::A2A do
       c.tags :sales
       c.risk :reversible
       c.hitl :auto
+      c.expose :a2a
     end
 
     Agentkit::Capability.register :issue_refund do |c|
@@ -41,18 +42,29 @@ RSpec.describe Agentkit::A2A do
       c.flow risky_flow
       c.inputs order_id: :integer
       c.risk :irreversible          # money: never remote-triggered without a human
+      c.expose :a2a, mode: :propose
     end
 
     Agentkit::Capability.register :needs_integration do |c|
       c.title "Requiere integración"
       c.flow safe_flow
       c.preconditions { |_setup, _ctx| false }
+      c.expose :a2a
     end
   end
 
   def rpc(method, params = {}, key: "secret-key-123456")
     described_class.handle({ "jsonrpc" => "2.0", "id" => "1",
                              "method" => method, "params" => params }, key: key)
+  end
+
+  def action_for(task_id)
+    Agentkit::Actions.fetch!(task_id.delete_prefix("action:"))
+  end
+
+  def decide(task_id, decision, actor: "human:1", reason_code: nil)
+    Agentkit::Actions.decide!(action_for(task_id).id, decision: decision,
+                             actor: actor, reason_code: reason_code)
   end
 
   describe "the agent card is generated, not hand-written" do
@@ -130,12 +142,9 @@ RSpec.describe Agentkit::A2A do
                      { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })
 
       expect(response[:result][:status]).to eq("pending_approval")
-      expect(response[:result][:taskId]).to start_with("suggestion:")
+      expect(response[:result][:taskId]).to start_with("action:")
       expect(executed).to be_empty  # money did not move
-
-      suggestion = Agentkit::HITL.pending.last
-      expect(suggestion.priority).to eq("high")
-      expect(suggestion.payload["via"]).to eq("a2a")
+      expect(action_for(response[:result][:taskId]).risk).to eq("irreversible")
     end
 
     it "does not let force_sync bypass approval" do
@@ -151,10 +160,9 @@ RSpec.describe Agentkit::A2A do
       task = rpc("capabilities.invoke",
                  { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]
 
-      expect do
-        Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1",
-                              final_payload: { "order_id" => 99, "via" => "a2a" })
-      end.to raise_error(Agentkit::HITLError, /payload does not match/)
+      proposal = action_for(task)
+      expect(proposal.arguments_digest).to eq(Agentkit::Actions.canonical_digest(order_id: 42))
+      expect { proposal.arguments[:order_id] = 99 }.not_to change { action_for(task).arguments_digest }
       expect(executed).to be_empty
     end
 
@@ -176,19 +184,16 @@ RSpec.describe Agentkit::A2A do
 
       expect(rpc("tasks.get", { "taskId" => task })[:result][:status]).to eq("pending_approval")
 
-      Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1")
+      decide(task, "approved")
       expect(rpc("tasks.get", { "taskId" => task })[:result][:status]).to eq("completed")
     end
 
     it "reinstalls the approved executor after a process reload" do
       task = rpc("capabilities.invoke",
                  { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]
-      Agentkit::HITL.instance_variable_set(:@handlers, nil)
-      Agentkit::A2A::Server.install_hitl_handler!("a2a:issue_refund")
+      decide(task, "approved")
 
-      result = Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1")
-
-      expect(result.status).to eq("executed")
+      expect(action_for(task).status).to eq("executed")
       expect(executed).to eq([:refunded])
     end
 
@@ -197,19 +202,19 @@ RSpec.describe Agentkit::A2A do
                  { "capability" => "issue_refund", "inputs" => { "order_id" => 42 } })[:result][:taskId]
       allow(Agentkit::Audit.store).to receive(:append).and_raise("audit unavailable")
 
-      result = Agentkit::HITL.approve(task.split(":").last.to_i, actor: "human:1")
+      expect { decide(task, "approved") }.to raise_error(Agentkit::AuditPersistenceError)
 
-      expect(result.status).to eq("execution_unknown")
+      expect(action_for(task).status).to eq("approved")
       expect(executed).to be_empty
     end
 
     it "records the rejection so the peer learns why" do
       task = rpc("capabilities.invoke",
                  { "capability" => "issue_refund", "inputs" => { "order_id" => 1 } })[:result][:taskId]
-      Agentkit::HITL.reject(task.split(":").last.to_i, actor: "human:1", code: :too_risky)
+      decide(task, "rejected", reason_code: :too_risky)
 
       expect(rpc("tasks.get", { "taskId" => task })[:result][:status]).to eq("rejected")
-      expect(Agentkit::HITL.ledger.entries.last.rejection_code).to eq("too_risky")
+      expect(Agentkit::Actions.decisions(action_for(task).id).last.reason_code).to eq("too_risky")
     end
 
     it "refuses a capability that is not exposed" do

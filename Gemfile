@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 source "https://rubygems.org"
-gemspec
+gemspec name: "agentkit-rails"
 
 gem "rake"
 gem "rspec", "~> 3.13"
@@ -16,4 +16,6 @@ group :development, :test do
   gem "numo-narray"
   gem "pdf-reader"
   gem "rubyzip"
+  # Conformance tests exercise the optional adapter against the official SDK.
+  gem "mcp", "~> 1.5"
 end

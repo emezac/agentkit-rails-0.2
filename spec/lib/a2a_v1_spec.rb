@@ -25,6 +25,7 @@ RSpec.describe Agentkit::A2A::V1 do
       cap.tags :events
       cap.risk :reversible
       cap.hitl :auto
+      cap.expose :a2a
     end
   end
 

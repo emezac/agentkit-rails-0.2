@@ -106,7 +106,11 @@ RSpec.describe "Engine boot", :integration do
         "agentkit_memories", "agentkit_runs", "agentkit_run_steps",
         "agentkit_suggestions", "agentkit_decisions", "agentkit_events",
         "agentkit_audit_logs", "agentkit_traces", "agentkit_trace_phases",
-        "agentkit_artifacts", "agentkit_a2a_tasks"
+        "agentkit_artifacts", "agentkit_a2a_tasks",
+        "agentkit_action_proposals", "agentkit_action_decisions",
+        "agentkit_execution_attempts", "agentkit_action_outboxes",
+        "agentkit_action_outcomes", "agentkit_audit_chain_heads",
+        "agentkit_watchtower_issues"
       )
     end
 

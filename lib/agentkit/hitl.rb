@@ -187,6 +187,12 @@ module Agentkit
       # ─── Resolve ─────────────────────────────────────────────────────────────
 
       def approve(id, actor: "human", final_payload: nil, mode: "human", scope: nil)
+        if id.to_s.start_with?("action:")
+          raise HITLError, "governed action arguments are immutable after proposal" if final_payload
+
+          return Actions.decide!(id.to_s.delete_prefix("action:"), decision: :approved,
+                                 actor: actor, scope: scope)
+        end
         suggestion = store.transition(id, from: "pending", to: "approved", scope: scope) do |current|
           validate_approval!(current, actor, final_payload)
           edited = !final_payload.nil? && final_payload != current.payload
@@ -209,6 +215,10 @@ module Agentkit
       end
 
       def reject(id, actor: "human", code: nil, note: nil, mode: "human", scope: nil)
+        if id.to_s.start_with?("action:")
+          return Actions.decide!(id.to_s.delete_prefix("action:"), decision: :rejected,
+                                 actor: actor, reason_code: code || note, scope: scope)
+        end
         config = Agentkit.config.hitl
         validate_code!(code, config)
         suggestion = store.transition(id, from: "pending", to: "rejected", scope: scope) do |current|
