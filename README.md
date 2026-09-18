@@ -1,9 +1,9 @@
-# AgentKit Rails v0.5.0
+# AgentKit Rails v0.6.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.5.0"
+gem "agentkit-rails", "~> 0.6.0"
 ```
 
 ```bash
@@ -12,6 +12,50 @@ rails g agentkit:rag
 rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
+```
+
+## Recuperación sobre grafos en 0.6
+
+0.6 añade snapshots normalizados y versionados para Wiki, CodeGraph y chunks
+RAG. La activación sobre grafos es opt-in: el comportamiento default continúa
+siendo BM25/vector con RRF.
+
+```ruby
+snapshot = Agentkit::TeamMemory::Wiki.build_snapshot("EngineeringWiki")
+
+results = Agentkit::RAG.retrieve(
+  "cómo se valida un reembolso",
+  corpus_name: "engineering",
+  strategy: :hybrid_graph,
+  graph: "EngineeringWiki",
+  explain: true
+)
+```
+
+El pipeline filtra tenant, principal, ACL y lifecycle antes de construir la
+adyacencia. Después ejecuta Personalized PageRank acotado y fusiona los ranks
+vectorial, BM25 y graph mediante RRF. Los caminos explicativos usan aliases
+opacos; ante snapshot ausente/inválido o límites agotados vuelve al retrieval
+anterior y emite `graph.activation.degraded`.
+
+CodeGraph usa el AST de Ripper, IDs calificados y provenance/confidence. Limita
+raíces, tamaño y symlinks mediante `config.team_memory.graph_allowed_roots` y
+los límites `graph_max_*`.
+
+Los flows aceptan contratos topológicos y exponen un plan determinista:
+
+```ruby
+parallel :review, over: reviewers, branch_effect: :read_only,
+                  independence_key: ->(item) { item.id }, max_concurrency: 4
+reduce :synthesize, algebra: :associative, ordering: :stable
+
+MyFlow.explain_plan
+```
+
+Ejecuta la evaluación etiquetada sin publicar cifras inventadas:
+
+```bash
+DATASET=config/graph_retrieval_eval.json bundle exec rake agentkit:graph_eval
 ```
 
 ## Control plane de acciones en 0.5
@@ -68,7 +112,7 @@ MCP es un paquete opcional que usa el SDK oficial y no se carga con el gem
 principal:
 
 ```ruby
-gem "agentkit-mcp", "~> 0.5.0"
+gem "agentkit-mcp", "~> 0.6.0"
 ```
 
 Definir una capacidad no la publica. Cada transporte requiere un `expose`

@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0 — 2026-09-17
+
+### Added
+
+- Tenant-scoped normalized graph snapshots for Wiki, CodeGraph and RAG chunks,
+  with canonical digests, lifecycle/provenance fields and additive migration
+  `017_create_agentkit_graph_snapshots`.
+- Deterministic Wiki graph building with Unicode title normalization,
+  unresolved-link diagnostics and cycle reporting; CodeGraph now uses Ripper's
+  Ruby AST and enforces canonical roots, symlink rejection and file-size limits.
+- Bounded Personalized PageRank over a subgraph authorized before adjacency is
+  constructed. Direction, damping, edge multipliers, hops, nodes, edges,
+  iterations and wall time all have server-side limits.
+- Opt-in `RAG.retrieve(strategy: :hybrid_graph)` with three-rank RRF, opaque
+  supporting paths, deterministic fallback and graph activation telemetry.
+- Flow topology annotations, deterministic compiler warnings,
+  `Flow.explain_plan`, and measured transition/rework/topology metrics.
+- Principal-scoped ephemeral `ActivationTrace` visualization, an experimental
+  wave feature flag, and a labeled evaluation corpus/command reporting
+  Recall@K, nDCG@K, MRR, latency, convergence, traversal and hidden inference.
+
+### Compatibility
+
+- Graph retrieval remains opt-in. Existing Wiki keyword search and RAG hybrid
+  retrieval retain their default behavior.
+- Retrieved graph content remains untrusted evidence. Traces contain a query
+  digest and opaque path aliases, never the raw query or hidden node ids.
+
 ## 0.5.0 — 2026-09-17
 
 ### Added

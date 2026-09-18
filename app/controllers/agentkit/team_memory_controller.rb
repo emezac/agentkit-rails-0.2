@@ -26,6 +26,17 @@ module Agentkit
       redirect_to team_memory_index_path(team: params[:team]), notice: "Asset #{asset.name} creado."
     end
 
+    def activation
+      @trace = Agentkit::TeamMemory::Visualization.fetch(params[:id], context: agentkit_context)
+      return head(:not_found) unless @trace
+
+      @wave = Agentkit.config.feature?(:graph_wave_visualization)
+      respond_to do |format|
+        format.html
+        format.json { render json: @trace.to_h }
+      end
+    end
+
     private
 
     def tenant_scope

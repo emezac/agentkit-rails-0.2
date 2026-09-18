@@ -56,6 +56,39 @@ namespace :agentkit do
     no_fit = Agentkit::Capability.all.reject { |c| c.to_h[:has_fit] }
     no_fit.each { |c| warn_.call("Capability #{c.name} has no `fit` → its proposals rank by default") }
 
+    begin
+      snapshots = Agentkit::TeamMemory::Graph.store.all
+      invalid = snapshots.reject do |snapshot|
+        snapshot.active? && snapshot.node_count == snapshot.nodes.size &&
+          snapshot.edge_count == snapshot.edges.size && snapshot.digest.start_with?("sha256:")
+      end
+      if invalid.any?
+        bad.call("#{invalid.size} graph snapshots have invalid status, counts or digest")
+      elsif snapshots.any?
+        ok.call("Graph snapshots valid (#{snapshots.size})")
+      elsif Agentkit.config.team_memory.graph_enabled
+        bad.call("Graph retrieval enabled but no validated/active snapshot exists")
+      else
+        warn_.call("Graph retrieval is opt-in and currently disabled")
+      end
+
+      if defined?(ActiveRecord::Base) && ActiveRecord::Base.connected? &&
+         ActiveRecord::Base.connection.table_exists?(:agentkit_graph_snapshots)
+        required = {
+          agentkit_graph_snapshots: %w[idx_agentkit_graph_snapshots_digest idx_agentkit_graph_snapshots_scope],
+          agentkit_graph_nodes: %w[idx_agentkit_graph_nodes_identity],
+          agentkit_graph_edges: %w[idx_agentkit_graph_edges_path]
+        }
+        missing = required.flat_map do |table, names|
+          existing = ActiveRecord::Base.connection.indexes(table).map(&:name)
+          names.reject { |name| existing.include?(name) }
+        end
+        missing.empty? ? ok.call("Graph schema and indexes present") : bad.call("Missing graph indexes: #{missing.join(', ')}")
+      end
+    rescue StandardError => e
+      bad.call("Graph conformance unavailable (#{e.class})")
+    end
+
     ok.call("Memory level: #{Agentkit.config.memory.level}, embedding policy: #{Agentkit.config.memory.embedding.policy}")
     ok.call("Factory mode: #{Agentkit.config.factory.mode}")
   end
@@ -85,6 +118,14 @@ namespace :agentkit do
     Rails.application.eager_load!
     Agentkit::Flow::Registry.validate_all!
     puts "✓ #{Agentkit::Flow::Registry.all.size} flows valid"
+  end
+
+  desc "Evaluate keyword vs graph retrieval on a labeled dataset (DATASET=path.json)"
+  task graph_eval: :environment do
+    dataset = ENV["DATASET"]
+    abort "DATASET is required; no benchmark numbers are fabricated" if dataset.to_s.empty?
+
+    puts JSON.pretty_generate(Agentkit::TeamMemory::Evaluation.run(dataset))
   end
 
   desc "Drop vectors of archived/superseded memories"

@@ -18,11 +18,15 @@ module Agentkit
         "id"          => id,
         "asset_id"    => asset_id,
         "name"        => name,
+        "qualified_name" => respond_to?(:qualified_name) ? qualified_name : name,
         "symbol_type" => symbol_type,
         "file_path"   => file_path,
         "line_number" => line_number,
         "callers"     => callers,
         "callees"     => callees,
+        "file_digest" => respond_to?(:file_digest) ? file_digest : nil,
+        "provenance" => respond_to?(:provenance) ? provenance : {},
+        "confidence" => respond_to?(:confidence) ? confidence : 1.0,
         "created_at"  => created_at
       }
     end

@@ -1,3 +1,56 @@
+# Upgrading 0.5.0 → 0.6.0
+
+Install and run migration `017_create_agentkit_graph_snapshots`. It adds graph
+snapshot/node/edge tables and provenance fields to existing code symbols. The
+migration is additive; existing Wiki, CodeGraph and RAG APIs keep working.
+
+Graph retrieval is opt-in. Build a validated snapshot, then request the new
+strategy explicitly:
+
+```ruby
+wiki = Agentkit::TeamMemory::Wiki.build_snapshot("EngineeringWiki")
+
+Agentkit::RAG.retrieve(
+  "cómo se valida un reembolso",
+  corpus_name: "engineering",
+  strategy: :hybrid_graph,
+  graph: "EngineeringWiki",
+  explain: true
+)
+```
+
+Configure server-side bounds rather than accepting arbitrary values from a
+caller:
+
+```ruby
+config.team_memory.graph_enabled = true
+config.team_memory.graph_allowed_roots = [Rails.root.join("app").to_s]
+config.team_memory.graph_max_nodes = 2_000
+config.team_memory.graph_max_edges = 10_000
+config.team_memory.graph_max_hops = 3
+config.team_memory.graph_wall_time_ms = 250
+```
+
+Flow annotations are optional but make unsafe topology visible at boot and in
+`MyFlow.explain_plan`. A `side_effecting` parallel/map node now requires an
+explicit `idempotency_key` annotation.
+
+Run the included labeled evaluation before making graph retrieval a host-level
+default. The command reports measured values and refuses to run without a
+dataset:
+
+```bash
+DATASET=config/graph_retrieval_eval.json bundle exec rake agentkit:graph_eval
+bundle exec rake verify
+```
+
+The activation viewer is protected by the existing console guard. Publish an
+already-computed trace with `TeamMemory::Visualization.publish(result.trace,
+context:)` and open `/agentkit/team_memory/activation/:id`. It cannot change
+ranking or authorization state.
+
+---
+
 # Upgrading 0.4.1 → 0.5.0
 
 Install and run migration `016_create_agentkit_governed_actions`. It creates

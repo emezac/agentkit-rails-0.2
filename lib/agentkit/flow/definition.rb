@@ -20,6 +20,11 @@ module Agentkit
         def unless_guard = opts[:unless]
         def timeout   = opts[:timeout]
         def retry_spec = opts[:retry] || {}
+        def effect    = (opts[:effect] || :read_only).to_sym
+        def ordering  = (opts[:ordering] || :strict).to_sym
+        def depends_on = Array(opts[:depends_on]).map(&:to_sym)
+        def estimated_ms = [opts.fetch(:estimated_ms, 1).to_f, 0.0].max
+        def estimated_cost = [opts.fetch(:estimated_cost, 0).to_f, 0.0].max
         def to_s      = "#{kind}:#{name}"
       end
 
@@ -51,6 +56,10 @@ module Agentkit
         end
         def as              = opts[:as] || name
         def agent           = opts[:agent]
+        def branch_effect   = (opts[:branch_effect] || :read_only).to_sym
+        def independence_key = opts[:independence_key]
+        def conflict_key    = opts[:conflict_key] || independence_key
+        def idempotency_key = opts[:idempotency_key]
       end
 
       # Fan-in barrier. `on:` decides when the continuation fires.
@@ -72,6 +81,10 @@ module Agentkit
           val.respond_to?(:call) ? (ctx ? val.call(ctx) : val) : val
         end
         def batch_size      = opts[:batch_size] || 1
+        def branch_effect   = (opts[:branch_effect] || :read_only).to_sym
+        def independence_key = opts[:independence_key]
+        def conflict_key    = opts[:conflict_key] || independence_key
+        def idempotency_key = opts[:idempotency_key]
       end
 
       # Tree reduce: `chunk` items at a time until a single value remains, so a
@@ -81,6 +94,9 @@ module Agentkit
         def block  = opts[:block]
         def chunk  = opts[:chunk] || 5
         def target = opts[:target] || name
+        def algebra = opts[:algebra]&.to_sym
+        def commutative? = opts[:commutative] == true
+        def contract_test = opts[:contract_test]
       end
 
       class LoopNode < Base
@@ -113,6 +129,8 @@ module Agentkit
 
     # Compiled, immutable description of a flow class.
     class Definition
+      EFFECTS = %i[read_only idempotent side_effecting].freeze
+      ORDERINGS = %i[strict stable any].freeze
       attr_reader :flow_class, :nodes, :inputs, :compensations, :error_handlers,
                   :version, :queue, :timeout, :idempotency_fn
 
@@ -176,6 +194,9 @@ module Agentkit
           problems << "duplicate step name `#{n.name}`" if seen.include?(n.name)
           seen << n.name
 
+          problems << "step `#{n.name}` has unknown effect #{n.effect.inspect}" unless EFFECTS.include?(n.effect)
+          problems << "step `#{n.name}` has unknown ordering #{n.ordering.inspect}" unless ORDERINGS.include?(n.ordering)
+
           case n
           when Nodes::StepNode
             problems << "step `#{n.name}` has no agent, cognition or block" unless n.executable?
@@ -187,9 +208,15 @@ module Agentkit
             problems << "join `#{n.name}` has no matching parallel/map step" if fanout.nil?
           when Nodes::ParallelNode
             problems << "parallel `#{n.name}` needs `over:`" if n.over.nil?
+            if n.branch_effect == :side_effecting && n.idempotency_key.nil?
+              problems << "parallel `#{n.name}` has side-effecting branches without an idempotency key"
+            end
           when Nodes::MapNode
             problems << "map `#{n.name}` needs `over:`" if n.over.nil?
             problems << "map `#{n.name}` needs an agent or block" unless n.agent || n.block
+            if n.branch_effect == :side_effecting && n.idempotency_key.nil?
+              problems << "map `#{n.name}` has side-effecting branches without an idempotency key"
+            end
           when Nodes::ReduceNode
             problems << "reduce `#{n.name}` needs an agent or block" unless n.agent || n.block
             problems << "reduce `#{n.name}` has no matching map step" unless flatten_nodes.any? { |x| x.name == n.target && x.is_a?(Nodes::MapNode) }
@@ -212,6 +239,118 @@ module Agentkit
         end
 
         problems
+      end
+
+      def plan_warnings
+        warnings = []
+        flatten_nodes.each do |node|
+          if node.ordering == :any && node.depends_on.any?
+            warnings << "#{node.name}: ordering:any contradicts explicit dependencies"
+          end
+          if node.is_a?(Nodes::ReduceNode) && node.commutative? && !node.contract_test.respond_to?(:call)
+            warnings << "#{node.name}: commutative reducer has no contract test"
+          end
+          if (node.is_a?(Nodes::ParallelNode) || node.is_a?(Nodes::MapNode)) &&
+             node.over.is_a?(Array) && node.conflict_key.respond_to?(:call)
+            keys = node.over.map { |item| node.conflict_key.call(item) }
+            duplicates = keys.group_by(&:itself).select { |_key, values| values.size > 1 }.keys
+            warnings << "#{node.name}: fan-out shares conflict keys #{duplicates.map(&:inspect).join(', ')}" if duplicates.any?
+          end
+          if node.is_a?(Nodes::LoopNode) && (node.max.to_i <= 0 || !node.until_fn.respond_to?(:call))
+            warnings << "#{node.name}: cycle needs a positive bound and exit condition"
+          end
+        rescue StandardError => error
+          warnings << "#{node.name}: conflict analysis unavailable (#{error.class})"
+        end
+        warnings.sort
+      end
+
+      def explain_plan
+        flat = flatten_nodes
+        warnings = plan_warnings
+        warnings.each do |warning|
+          Telemetry.emit("flow.plan.warning",
+                         dims: { flow: flow_class.name.to_s, warning: warning_code(warning) },
+                         measures: { count: 1 })
+        end
+        node_rows = flat.map do |node|
+          row = { name: node.name, kind: node.kind, effect: node.effect, ordering: node.ordering,
+                  depends_on: node.depends_on, estimated_ms: node.estimated_ms,
+                  estimated_cost: node.estimated_cost }
+          row[:branch_effect] = node.branch_effect if node.respond_to?(:branch_effect)
+          row[:algebra] = node.algebra if node.respond_to?(:algebra)
+          row[:hitl] = true if node.is_a?(Nodes::HumanGateNode)
+          row[:timeout] = node.timeout if node.timeout
+          row
+        end
+        edges = flat.each_cons(2).map { |left, right| [left.name, right.name] }
+        flat.each { |node| node.depends_on.each { |dependency| edges << [dependency, node.name] } }
+        fanouts = flat.select { |node| node.is_a?(Nodes::ParallelNode) || node.is_a?(Nodes::MapNode) }
+        fanout_sizes = fanouts.map { |node| node.over.is_a?(Array) ? node.over.size : nil }.compact
+        joins = flat.grep(Nodes::JoinNode).map do |node|
+          { name: node.name, target: node.target, mode: node.mode, timeout: node.timeout,
+            partial_policy: node.on_timeout }
+        end
+        plan = {
+          flow: flow_class.name.to_s, version: version,
+          dag: { nodes: node_rows, edges: edges.uniq },
+          estimated_critical_path_ms: estimated_critical_path(flat),
+          max_fanout: fanout_sizes.max,
+          fanout_budget: fanouts.sum { |node| static_concurrency(node) },
+          joins: joins,
+          effects: node_rows.to_h { |row| [row[:name], row[:effect]] },
+          hitl_steps: flat.grep(Nodes::HumanGateNode).map(&:name),
+          idempotent: !idempotency_fn.nil?,
+          warnings: warnings,
+          estimated_cost: node_rows.sum { |row| row[:estimated_cost] },
+          estimated_wall_time_ms: estimated_critical_path(flat)
+        }
+        plan[:definition_digest] = graph_digest(plan)
+        plan
+      end
+
+      private
+
+      def estimated_critical_path(nodes)
+        nodes.sum do |node|
+          if (node.is_a?(Nodes::ParallelNode) || node.is_a?(Nodes::MapNode)) && node.over.is_a?(Array)
+            node.estimated_ms
+          elsif node.is_a?(Nodes::LoopNode)
+            node.estimated_ms * node.max.to_i
+          else
+            node.estimated_ms
+          end
+        end.round(3)
+      end
+
+      def graph_digest(value)
+        canonical = canonical_plan_value(value)
+        "sha256:#{Digest::SHA256.hexdigest(JSON.generate(canonical))}"
+      end
+
+      def static_concurrency(node)
+        value = node.max_concurrency(nil)
+        value.respond_to?(:call) ? 0 : value.to_i
+      end
+
+      def warning_code(warning)
+        case warning
+        when /commutative reducer/ then "reducer_contract_missing"
+        when /conflict keys/ then "fanout_conflict"
+        when /ordering:any/ then "ordering_dependency_conflict"
+        when /cycle needs/ then "cycle_contract_missing"
+        else "analysis_unavailable"
+        end
+      end
+
+      def canonical_plan_value(value)
+        case value
+        when Hash then value.sort_by { |key, _| key.to_s }.to_h { |key, item| [key.to_s, canonical_plan_value(item)] }
+        when Array then value.map { |item| canonical_plan_value(item) }
+        when Symbol then value.to_s
+        when Proc then value.source_location&.join(":") || "callable"
+        else value
+        end
       end
     end
   end

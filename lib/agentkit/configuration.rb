@@ -343,6 +343,21 @@ module Agentkit
     setting :default_visibility,  default: :team, in: %i[private team restricted agent]
     setting :store,               default: :active_record
     setting :auto_extract_skills, default: true
+    setting :graph_enabled,        default: false
+    setting :graph_allowed_roots,  default: -> { [] }
+    setting :graph_max_file_bytes, default: 1_048_576
+    setting :graph_max_nodes,      default: 2_000
+    setting :graph_max_edges,      default: 10_000
+    setting :graph_max_hops,       default: 3
+    setting :graph_max_degree,     default: 100
+    setting :graph_max_iterations, default: 100
+    setting :graph_wall_time_ms,   default: 250
+    setting :graph_damping,        default: 0.85
+    setting :graph_tolerance,      default: 1.0e-6
+    setting :graph_edge_multipliers, default: -> { {} }
+    setting :graph_trace_max_nodes, default: 200
+    setting :graph_trace_max_edges, default: 800
+    setting :graph_trace_max_bytes, default: 256 * 1024
   end
 
   # ─── Root ────────────────────────────────────────────────────────────────────

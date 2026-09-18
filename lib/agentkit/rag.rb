@@ -31,9 +31,21 @@ module Agentkit
       end
 
       def retrieve(query, corpus_name: "default_corpus", top_k: nil, filter: {}, store: nil,
-                   tenant_key: nil, account_id: nil)
+                   tenant_key: nil, account_id: nil, strategy: nil, graph: nil, explain: false,
+                   graph_required: false)
         retriever = Retriever.new(store: store, tenant_key: tenant_key, account_id: account_id)
-        retriever.retrieve(query, corpus_name: corpus_name, top_k: top_k, filter: filter)
+        retriever.retrieve(query, corpus_name: corpus_name, top_k: top_k, filter: filter,
+                           strategy: strategy, graph: graph, explain: explain,
+                           graph_required: graph_required)
+      end
+
+      def build_graph(name:, chunks:, team_id: nil, visibility: "team", owner_id: nil,
+                      bindings: [], tenant_key: nil, account_id: nil)
+        asset = TeamMemory.create_asset(asset_type: "rag", name: name, team_id: team_id,
+                                        visibility: visibility, owner_id: owner_id, bindings: bindings,
+                                        tenant_key: tenant_key,
+                                        account_id: account_id)
+        TeamMemory::Graph.build_rag(asset: asset, chunks: chunks)
       end
 
       def generate(query, corpus_name: "default_corpus", top_k: nil, filter: {}, system_prompt: nil,

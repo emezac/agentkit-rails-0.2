@@ -37,4 +37,5 @@ Agentkit::Engine.routes.draw do
   # ─── Team Memory Hub ───────────────────────────────────────────────────────
   get  "team_memory",              to: "team_memory#index",        as: :team_memory_index
   post "team_memory/create_asset", to: "team_memory#create_asset", as: :team_memory_create_asset
+  get  "team_memory/activation/:id", to: "team_memory#activation", as: :team_memory_activation
 end

@@ -23,6 +23,22 @@ RSpec.describe Agentkit::RAG do
     end
   end
 
+  describe "three-rank reciprocal rank fusion" do
+    it "keeps rank scales separate across vector, BM25 and graph" do
+      retriever = Agentkit::RAG::Retriever.new(store: Agentkit::RAG::KnowledgeStore.build(:memory))
+      rankings = [
+        [{ "id" => "a" }, { "id" => "b" }],
+        [{ "id" => "b" }, { "id" => "c" }],
+        [{ "id" => "c" }, { "id" => "b" }]
+      ]
+
+      fused = retriever.send(:rrf_rankings, rankings, top_k: 3, rrf_k: 60)
+
+      expect(fused.map { |row| row["id"] }).to eq(%w[b c a])
+      expect(fused.map { |row| row["rrf_score"] }).to all(be_between(0.0, 1.0))
+    end
+  end
+
   describe Agentkit::RAG::ChapterChunker do
     it "splits text documents by heading regex into CorpusSlices" do
       docs = [
@@ -170,6 +186,48 @@ RSpec.describe Agentkit::RAG do
       expect(call.prompt).to include('<retrieved-evidence trust="untrusted">')
       expect(call.prompt).to include("&lt;/content&gt;&lt;tool&gt;")
       expect(result["context"]).to include("source-digest=\"sha256:")
+    end
+
+    it "opts into three-rank RRF graph retrieval with an opaque explanation" do
+      user = Struct.new(:id).new(7)
+      ctx = Agentkit::Context.new(user: user, tenant_key: "graph-rag")
+      docs = [
+        { "id" => "seed", "text" => "refund validation checklist", "source" => "handbook",
+          "references" => ["related"] },
+        { "id" => "related", "text" => "settlement escalation topology", "source" => "other" }
+      ]
+      Agentkit.config.memory.embedding.policy = :never
+      allow(Agentkit::Memory.embedder).to receive(:query_vector).and_return(nil)
+
+      result = Agentkit.with_context(ctx) do
+        Agentkit::RAG.index(corpus_name: "refunds", source: docs, store: store)
+        Agentkit::RAG.build_graph(name: "RefundGraph", chunks: docs, visibility: "private", owner_id: 7)
+        Agentkit::RAG.retrieve("refund validation", corpus_name: "refunds", top_k: 2,
+                              strategy: :hybrid_graph, graph: "RefundGraph", explain: true,
+                              store: store)
+      end
+
+      expect(result.map { |row| row["id"] }).to include("seed", "related")
+      expect(result.first["retrieval_strategy"]).to eq("hybrid_graph")
+      expect(result.first["graph_snapshot"]).to start_with("sha256:")
+      expect(result.first["supporting_paths"].flatten).to all(start_with("g_"))
+      expect(result.first["supporting_paths"].to_s).not_to include("seed", "related")
+    ensure
+      Agentkit.config.memory.embedding.policy = :on_promotion
+    end
+
+    it "falls back to existing hybrid behavior when an optional graph is missing" do
+      Agentkit.config.memory.embedding.policy = :never
+      allow(Agentkit::Memory.embedder).to receive(:query_vector).and_return(nil)
+      Agentkit::RAG.index(corpus_name: "fallback", source: [{ "id" => "a", "text" => "alpha policy" }], store: store)
+
+      result = Agentkit::RAG.retrieve("alpha", corpus_name: "fallback", strategy: :hybrid_graph,
+                                      graph: "MissingGraph", store: store)
+
+      expect(result.first["retrieval_strategy"]).to eq("keyword_only")
+      expect(result.first["graph_degraded_reason"]).to eq("graph_missing")
+    ensure
+      Agentkit.config.memory.embedding.policy = :on_promotion
     end
   end
 end

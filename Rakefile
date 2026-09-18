@@ -9,6 +9,14 @@ require "tmpdir"
 
 RSpec::Core::RakeTask.new(:spec)
 
+# Make engine diagnostics/evaluation runnable from this repository as well as
+# from a host application's `rails` command.
+task :environment do
+  ENV["RAILS_ENV"] ||= "test"
+  require_relative "spec/dummy/config/environment"
+end
+load File.expand_path("lib/agentkit/tasks/agentkit.rake", __dir__)
+
 desc "Run the reproducible AgentKit verification suite"
 task verify: :spec do
   ruby_files = Dir["{app,lib,spec,db}/**/*.rb"]

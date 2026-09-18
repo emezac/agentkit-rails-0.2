@@ -4,7 +4,7 @@ module Agentkit
   module TeamMemory
     # Value object representing a governed team memory asset.
     class Asset
-      TYPES        = %w[chat_memory skill wiki code_graph].freeze
+      TYPES        = %w[chat_memory skill wiki code_graph rag].freeze
       VISIBILITIES = %w[private team restricted agent public].freeze
 
       attr_reader :id, :team_id, :asset_type, :name, :visibility, :owner_id,

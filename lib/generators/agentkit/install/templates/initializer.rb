@@ -53,6 +53,16 @@ Agentkit.configure do |config|
   config.actions.queue = :agentkit_actions
   config.watchtower.enabled = true
 
+  # ─── Graph retrieval: opt-in, bounded and authorized before traversal ─────
+  config.team_memory.graph_enabled = false
+  # config.team_memory.graph_allowed_roots = [Rails.root.join("app").to_s]
+  config.team_memory.graph_max_nodes = 2_000
+  config.team_memory.graph_max_edges = 10_000
+  config.team_memory.graph_max_hops = 3
+  config.team_memory.graph_max_degree = 100
+  config.team_memory.graph_max_iterations = 100
+  config.team_memory.graph_wall_time_ms = 250
+
   # ─── Console: disabled in every environment until both hooks are set ──────
   config.console.enabled = false
   # config.console.principal_resolver = -> { current_user }

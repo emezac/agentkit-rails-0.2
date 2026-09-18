@@ -3,6 +3,10 @@
 require_relative "team_memory/acl"
 require_relative "team_memory/team"
 require_relative "team_memory/asset"
+require_relative "team_memory/graph"
+require_relative "team_memory/spreading_activation"
+require_relative "team_memory/evaluation"
+require_relative "team_memory/visualization"
 require_relative "team_memory/wiki"
 require_relative "team_memory/code_graph"
 require_relative "team_memory/skill_extractor"
@@ -104,6 +108,7 @@ module Agentkit
       end
 
       def ar_available?(record_class)
+        return false unless Agentkit.config.team_memory.store.to_sym == :active_record
         return false unless defined?(ActiveRecord::Base) && ActiveRecord::Base.connected?
         return false unless record_class.is_a?(Class)
 
@@ -128,6 +133,8 @@ module Agentkit
         AssetStore.reset!
         Wiki.reset!
         CodeGraph.reset!
+        Graph.reset!
+        Visualization.reset!
       end
 
       private

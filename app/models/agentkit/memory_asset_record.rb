@@ -8,8 +8,9 @@ module Agentkit
     has_many :wiki_pages, class_name: "Agentkit::WikiPageRecord", foreign_key: "asset_id", dependent: :destroy
     has_many :code_symbols, class_name: "Agentkit::CodeSymbolRecord", foreign_key: "asset_id", dependent: :destroy
     has_many :asset_bindings, class_name: "Agentkit::AssetBindingRecord", foreign_key: "asset_id", dependent: :destroy
+    has_many :graph_snapshots, class_name: "Agentkit::GraphSnapshotRecord", foreign_key: "asset_id", dependent: :destroy
 
-    ASSET_TYPES  = %w[chat_memory skill wiki code_graph].freeze
+    ASSET_TYPES  = %w[chat_memory skill wiki code_graph rag].freeze
     VISIBILITIES = %w[private team restricted agent public].freeze
 
     validates :asset_type, presence: true, inclusion: { in: ASSET_TYPES }

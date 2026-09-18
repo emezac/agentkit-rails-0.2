@@ -68,6 +68,9 @@ module Agentkit
         raise RunCancelled if run.status == "cancelled"
         raise RunTimedOut, "run deadline exceeded" if run.timed_out?
 
+        Telemetry.emit("flow.transition",
+                       dims: { flow: run.flow_name, node: node.name, kind: node.kind, phase: "entered" },
+                       measures: { count: 1 })
         case node
         when Nodes::StepNode      then run_step(node, iteration)
         when Nodes::ParallelNode  then run_parallel(node, iteration)
@@ -418,6 +421,8 @@ module Agentkit
         value = decode_output(step)
         flow_ctx.set(node.name, value) unless flow_ctx.key?(node.name)
         Telemetry.emit("flow.step.replayed", dims: { flow: run.flow_name, step: node.name })
+        Telemetry.emit("flow.rework", dims: { flow: run.flow_name, step: node.name, cause: "replay" },
+                                      measures: { count: 1 })
         @completed << [node, step] if step.completed?
         value
       end
@@ -429,6 +434,8 @@ module Agentkit
         key     = node.respond_to?(:as) ? node.as : node.name
         flow_ctx.set(key, results)
         Telemetry.emit("flow.step.replayed", dims: { flow: run.flow_name, step: node.name })
+        Telemetry.emit("flow.rework", dims: { flow: run.flow_name, step: node.name, cause: "fanout_replay" },
+                                      measures: { count: 1 })
         @completed << [node, barrier] if barrier.completed?
         results
       end

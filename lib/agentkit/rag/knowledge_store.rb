@@ -27,6 +27,7 @@ module Agentkit
         def drop_corpus(corpus_name, tenant_key: nil, account_id: nil) = raise NotImplementedError
         def count(corpus_name = nil, tenant_key: nil, account_id: nil) = raise NotImplementedError
         def delete_all(tenant_key: nil, account_id: nil) = raise NotImplementedError
+        def find_by_ids(corpus_name, ids, tenant_key: nil, account_id: nil) = raise NotImplementedError
       end
 
       # ─── In-memory Store ───────────────────────────────────────────────────
@@ -102,6 +103,13 @@ module Agentkit
         def delete_all(tenant_key: nil, account_id: nil)
           @mutex.synchronize do
             tenant_key ? @chunks.delete_if { |(key, _corpus), _rows| key == tenant_key.to_s } : @chunks.clear
+          end
+        end
+
+        def find_by_ids(corpus_name, ids, tenant_key: nil, account_id: nil)
+          wanted = Array(ids).map(&:to_s)
+          (@chunks[storage_key(corpus_name, tenant_key)] || []).select do |chunk|
+            wanted.include?((chunk["id"] || chunk["chunk_id"]).to_s)
           end
         end
 
@@ -212,6 +220,11 @@ module Agentkit
 
         def delete_all(tenant_key: nil, account_id: nil)
           tenant_key || account_id ? tenant_relation(tenant_key, account_id).delete_all : model.delete_all
+        end
+
+        def find_by_ids(corpus_name, ids, tenant_key: nil, account_id: nil)
+          tenant_relation(tenant_key, account_id).where(corpus_name: corpus_name.to_s, chunk_id: Array(ids).map(&:to_s))
+                                                  .map(&:to_hash)
         end
 
         private

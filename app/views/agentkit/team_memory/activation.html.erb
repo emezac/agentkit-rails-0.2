@@ -1,0 +1,29 @@
+<div class="card">
+  <h2>Graph activation</h2>
+  <p class="dim mono"><%= @trace.snapshot_digest %> · <%= @trace.algorithm %></p>
+  <% if @wave %><span class="pill">experimental wave visualization</span><% end %>
+  <style>
+    .activation-stage { position: relative; min-height: 12rem; overflow: hidden; }
+    .activation-frame { position: absolute; inset: 0; opacity: 0;
+      animation: activation-frame <%= [@trace.frames.size, 1].max * 0.7 %>s linear infinite; }
+    <% @trace.frames.each_index do |index| %>
+      .activation-frame:nth-child(<%= index + 1 %>) {
+        animation-delay: <%= index * 0.7 %>s;
+      }
+    <% end %>
+    @keyframes activation-frame {
+      0%, <%= 90.0 / [@trace.frames.size, 1].max %>% { opacity: 1; }
+      <%= 100.0 / [@trace.frames.size, 1].max %>%, 100% { opacity: 0; }
+    }
+  </style>
+  <div class="activation-stage" aria-label="Bounded activation frames">
+    <% @trace.frames.each_with_index do |frame, index| %>
+      <div class="activation-frame">
+        <p class="dim">Iteration <%= index %></p>
+        <% frame.sort_by { |_alias, score| -score }.each do |node_alias, score| %>
+          <div class="card mono"><%= @trace.visible_node_aliases[node_alias] || node_alias %> · <%= format("%.6f", score) %></div>
+        <% end %>
+      </div>
+    <% end %>
+  </div>
+</div>

@@ -1,0 +1,21 @@
+{
+  "tenant_key": "agentkit-eval",
+  "corpus_name": "refund-handbook",
+  "graph_name": "RefundEval",
+  "hidden_ids": ["hidden-policy"],
+  "documents": [
+    {"id":"refund-entry","text":"validate a refund request","source":"refunds","references":["settlement-rule"]},
+    {"id":"settlement-rule","text":"settlement escalation topology","source":"settlement","references":["audit-proof"]},
+    {"id":"audit-proof","text":"cryptographic evidence retention","source":"audit"},
+    {"id":"hub","text":"general company handbook","source":"common","references":["refund-entry","settlement-rule","audit-proof"]},
+    {"id":"hidden-policy","text":"secret refund override","source":"private","hidden":true},
+    {"id":"disconnected","text":"cafeteria schedule","source":"facilities"}
+  ],
+  "cases": [
+    {"id":"exact","category":"lexical","query":"validate refund request","relevant_ids":["refund-entry"],"k":3},
+    {"id":"one-hop","category":"topological_1","query":"validate refund","relevant_ids":["settlement-rule"],"k":3},
+    {"id":"two-hop","category":"topological_2","query":"validate refund","relevant_ids":["audit-proof"],"k":4},
+    {"id":"hidden","category":"acl","query":"secret refund override","relevant_ids":[],"k":3}
+  ]
+}
+

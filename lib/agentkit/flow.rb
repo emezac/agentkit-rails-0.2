@@ -7,6 +7,7 @@ require_relative "flow/run"
 require_relative "flow/executor"
 require_relative "flow/dispatcher"
 require_relative "flow/worker"
+require_relative "flow/topology"
 
 module Agentkit
   # Declarative orchestration.
@@ -91,6 +92,8 @@ module Agentkit
       # Validates the graph. Called by `Flow.validate_all!` at boot so a broken
       # flow surfaces on deploy, not on the first production run.
       def validate! = definition.validate!
+      def explain_plan = definition.explain_plan
+      def topology_metrics(run) = Topology.metrics(run)
 
       # ─── Execution ─────────────────────────────────────────────────────────
 
@@ -243,6 +246,8 @@ module Agentkit
       Agentkit.config.flow.dispatcher = :inline
       Agentkit.config.flow.store      = :memory
       Agentkit.config.memory.store    = :memory
+      Agentkit.config.rag.store       = :memory
+      Agentkit.config.team_memory.store = :memory
       Agentkit.config.llm.adapter     = :fake
       Agentkit.config.telemetry.backends = [:memory]
       # Every port has to be pinned, not just most of them: the audit store

@@ -53,6 +53,8 @@ RSpec.configure do |config|
     Agentkit.config.flow.executor   = :async
     Agentkit.config.flow.dispatcher = :active_job
     Agentkit.config.memory.store    = :active_record
+    Agentkit.config.rag.store       = :active_record
+    Agentkit.config.team_memory.store = :active_record
     Agentkit.config.memory.level    = :hybrid
     Agentkit.config.memory.embedding.policy = :on_promotion
     Agentkit.config.audit.store     = :active_record
