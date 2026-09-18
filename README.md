@@ -1,9 +1,9 @@
-# AgentKit Rails v0.6.0
+# AgentKit Rails v0.7.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.6.0"
+gem "agentkit-rails", "~> 0.7.0"
 ```
 
 ```bash
@@ -13,6 +13,44 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Adaptive Exploration en 0.7
+
+0.7 hace explícita la política que decide dónde continuar un descubrimiento,
+qué intentos agrupar y cuándo parar. Cada rollout online produce un árbol
+tenant-scoped; después, políticas alternativas recorren sólo el prefijo
+revelado de ese árbol, sin invocar de nuevo al generador ni al evaluador.
+
+La función objetivo de replay combina mejor calidad observada, costo de probes
+y paralelismo útil. Los límites son techos del servidor: un caller puede
+reducirlos, nunca ampliarlos. La feature es opt-in.
+
+```ruby
+config.exploration.enabled = true
+config.exploration.max_rounds = 8
+config.exploration.max_parallelism = 4
+config.exploration.max_nodes = 64
+
+world = Agentkit::Exploration.run(
+  objective: "mejorar resolución de tickets",
+  generator: ->(parent:, view:) { SupportDiscovery.propose(parent:, view:) },
+  evaluator: ->(candidate) { SupportEval.score(candidate) },
+  evaluator_id: "support-eval-v3"
+)
+
+replay = Agentkit::Exploration.replay(world:, policy: :portfolio)
+sweep  = Agentkit::Exploration.sweep(worlds: [world], betas: [0.2, 0.4, 0.6, 0.8])
+```
+
+`beta` permanece fijo dentro de cada episodio. `sweep` compara puntos mediante
+replays frescos y `plan_beta` sólo recomienda el valor del siguiente ciclo. De
+igual modo, `recommend` siempre incluye la política incumbente y devuelve una
+recomendación N3 revisable; nunca registra/evalúa source code generado ni
+promueve una política automáticamente.
+
+Los árboles persisten únicamente digests del objetivo y artefactos, junto con
+scores y diagnósticos redactados/acotados. La migración
+`018_create_agentkit_exploration_worlds` agrega el replay pool durable.
 
 ## Recuperación sobre grafos en 0.6
 
@@ -112,7 +150,7 @@ MCP es un paquete opcional que usa el SDK oficial y no se carga con el gem
 principal:
 
 ```ruby
-gem "agentkit-mcp", "~> 0.6.0"
+gem "agentkit-mcp", "~> 0.7.0"
 ```
 
 Definir una capacidad no la publica. Cada transporte requiere un `expose`
@@ -576,11 +614,12 @@ lib/agentkit/          núcleo en Ruby plano, sin dependencia de Rails
   ├─ memory/ (policy, embedder, stores, layers, cold_start, custom_prompts)
   ├─ rag/ (bm25, chunker, chapter_chunker, indexer, retriever, pipeline, coordinator_flow)
   ├─ team_memory/ (acl, team, asset, wiki, code_graph, skill_extractor, layered_pipeline)
+  ├─ exploration (online rollout, prefix-only replay, policy evaluation)
   ├─ flow/ (definition, executor, run)
   ├─ hitl/ (ledger)   cognition/ (processors)   factory
   └─ capability, setup, proposals, agent, skill, skill_export, prompt
 app/                   engine Rails: modelos AR, controllers, views, concerns
-db/migrate/            10 migraciones (incluyendo 008 knowledge, 009 team_memory y 010 tenancy)
+db/migrate/            migraciones aditivas, incluida 018 para replay worlds
 ```
 
 ---

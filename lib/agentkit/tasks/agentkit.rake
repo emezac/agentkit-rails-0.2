@@ -89,6 +89,28 @@ namespace :agentkit do
       bad.call("Graph conformance unavailable (#{e.class})")
     end
 
+    begin
+      worlds = Agentkit::Exploration.store.all(scope: Agentkit::Scope.resolve)
+      if Agentkit.config.exploration.enabled
+        worlds.any? ? ok.call("Adaptive exploration replay pool valid (#{worlds.size} worlds)")
+                    : warn_.call("Adaptive exploration enabled but the replay pool is empty")
+      else
+        warn_.call("Adaptive exploration is opt-in and currently disabled")
+      end
+      if defined?(ActiveRecord::Base) && ActiveRecord::Base.connected? &&
+         ActiveRecord::Base.connection.table_exists?(:agentkit_exploration_worlds)
+        names = ActiveRecord::Base.connection.indexes(:agentkit_exploration_worlds).map(&:name)
+        required = %w[index_agentkit_exploration_worlds_on_world_id
+                      idx_agentkit_exploration_worlds_scope
+                      idx_agentkit_exploration_worlds_policy]
+        missing = required - names
+        missing.empty? ? ok.call("Adaptive exploration schema and indexes present")
+                       : bad.call("Missing exploration indexes: #{missing.join(', ')}")
+      end
+    rescue StandardError => e
+      bad.call("Adaptive exploration conformance unavailable (#{e.class})")
+    end
+
     ok.call("Memory level: #{Agentkit.config.memory.level}, embedding policy: #{Agentkit.config.memory.embedding.policy}")
     ok.call("Factory mode: #{Agentkit.config.factory.mode}")
   end

@@ -13,9 +13,10 @@ Gem::Specification.new do |spec|
     AgentKit Rails provides the agent-first backbone for domain applications:
     a flow engine with real fan-out/fan-in, semantic memory whose embedding
     policy is configurable per call, human-in-the-loop with a decision ledger,
-    on-demand cognition (dreaming, summarizing, imagination), proposal-first
-    chat, and a software factory that turns telemetry into safe, reversible
-    improvements. The core is plain Ruby; the Rails engine adds persistence.
+    on-demand cognition (dreaming, summarizing, imagination), replay-first
+    adaptive exploration, proposal-first chat, and a software factory that
+    turns telemetry into safe, reversible improvements. The core is plain Ruby;
+    the Rails engine adds persistence.
   DESC
   spec.homepage      = "https://github.com/agentkit/agentkit-rails"
   spec.license       = "MIT"

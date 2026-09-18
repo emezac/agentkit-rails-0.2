@@ -304,6 +304,56 @@ module Agentkit
     }
   end
 
+  # ─── Adaptive exploration ──────────────────────────────────────────────────
+
+  class ExplorationSettings < Settings
+    # Exploration is opt-in because an online rollout invokes domain-supplied
+    # generation/evaluation code. Replay never does.
+    setting :enabled, default: false
+    setting :store, default: :active_record, in: %i[active_record memory]
+    setting :default_beta, default: 0.6
+    setting :max_rounds, default: 8
+    setting :replay_max_rounds, default: 32
+    setting :max_parallelism, default: 4
+    setting :max_nodes, default: 64
+    setting :max_policies, default: 16
+    setting :min_replay_worlds, default: 2
+    setting :cost_penalty, default: 0.01
+    setting :parallelism_bonus, default: 0.01
+    setting :max_diagnostics_bytes, default: 8 * 1024
+
+    def validate
+      problems = super
+      problems << "Agentkit::ExplorationSettings#default_beta must be between 0 and 1" unless
+        finite_between?(default_beta, 0.0, 1.0)
+      %i[max_rounds replay_max_rounds max_parallelism max_nodes max_policies min_replay_worlds
+         max_diagnostics_bytes].each do |name|
+        problems << "Agentkit::ExplorationSettings##{name} must be positive" unless public_send(name).to_i.positive?
+      end
+      %i[cost_penalty parallelism_bonus].each do |name|
+        problems << "Agentkit::ExplorationSettings##{name} must be finite and non-negative" unless
+          finite_non_negative?(public_send(name))
+      end
+      problems
+    end
+
+    private
+
+    def finite_between?(value, minimum, maximum)
+      number = Float(value)
+      number.finite? && number.between?(minimum, maximum)
+    rescue ArgumentError, TypeError
+      false
+    end
+
+    def finite_non_negative?(value)
+      number = Float(value)
+      number.finite? && number >= 0
+    rescue ArgumentError, TypeError
+      false
+    end
+  end
+
   # ─── Chat / proposals ────────────────────────────────────────────────────────
 
   class ChatSettings < Settings
@@ -388,6 +438,7 @@ module Agentkit
     group :watchtower, WatchtowerSettings
     group :a2a,       A2ASettings
     group :factory,   FactorySettings
+    group :exploration, ExplorationSettings
     group :chat,      ChatSettings
     group :rag,       RAGSettings
     group :team_memory, TeamMemorySettings

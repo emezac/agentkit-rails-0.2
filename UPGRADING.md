@@ -1,3 +1,51 @@
+# Upgrading 0.6.0 → 0.7.0
+
+Install and run migration `018_create_agentkit_exploration_worlds`. It adds a
+tenant-scoped replay pool; existing agent, Factory and retrieval behavior is
+unchanged because adaptive exploration remains disabled by default.
+
+Enable it only after registering a fixed domain evaluator and choosing server
+ceilings:
+
+```ruby
+config.exploration.enabled = true
+config.exploration.max_rounds = 8
+config.exploration.replay_max_rounds = 32
+config.exploration.max_parallelism = 4
+config.exploration.max_nodes = 64
+config.exploration.max_policies = 16
+config.exploration.default_beta = 0.6
+```
+
+`evaluator_id` is provenance, so version it whenever scoring semantics change.
+Generators should return candidates; evaluators must return a finite `score`
+and may add bounded `diagnostics`, `status`, `failure_class` and `metadata`.
+AgentKit stores only objective/artifact digests, not their raw content.
+
+Replay policies see only `View#nodes` for the revealed prefix and
+`View#legal_actions`. Register custom policies explicitly:
+
+```ruby
+Agentkit::Exploration.policies.register(
+  :support_portfolio,
+  version: "1",
+  policy: SupportPortfolioPolicy.new
+)
+```
+
+`Exploration.recommend` and `plan_beta` are advisory. Applying a new policy is
+a separately reviewed Factory N3 intervention; 0.7.0 has no generated-code
+evaluation or automatic policy promotion.
+
+After migrating, run:
+
+```bash
+rails agentkit:doctor
+bundle exec rake verify
+```
+
+---
+
 # Upgrading 0.5.0 → 0.6.0
 
 Install and run migration `017_create_agentkit_graph_snapshots`. It adds graph

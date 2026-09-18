@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.7.0 — 2026-09-17
+
+### Added
+
+- Opt-in adaptive exploration with bounded online discovery trees, deterministic
+  `CONTINUE(parent)` actions, real batch concurrency and durable tenant-scoped
+  replay worlds.
+- Prefix-only offline replay that reveals recorded children without calling the
+  generator or evaluator, plus the quality − probe cost + parallelism objective.
+- Deterministic portfolio policy balancing new roots, promising refinements and
+  at most one repairable failure per batch. Beta is fixed within an episode.
+- Fixed-history policy evaluation, incumbent-preserving N3 recommendations,
+  beta sweeps and conservative cross-cycle beta planning.
+- Migration `018_create_agentkit_exploration_worlds`, bounded/redacted
+  diagnostics and low-cardinality online/replay telemetry.
+
+### Security
+
+- Server settings cap rounds, workers, nodes, policies, replay rounds and stored
+  diagnostics; request arguments can only lower those limits.
+- Policies receive a frozen revealed-prefix view, never hidden outcomes. Illegal,
+  duplicate and over-wide actions fail closed.
+- AgentKit does not evaluate generated policy source or auto-promote replay
+  winners. Policy changes remain reviewed Factory N3 interventions.
+
+### Compatibility
+
+- Adaptive exploration is disabled by default. Existing agents, flows, Factory,
+  graph retrieval and stores retain their 0.6 behavior.
+
 ## 0.6.0 — 2026-09-17
 
 ### Added

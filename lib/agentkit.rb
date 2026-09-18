@@ -37,6 +37,7 @@ require_relative "agentkit/proposals"
 require_relative "agentkit/a2a"
 require_relative "agentkit/a2a/v1"
 require_relative "agentkit/factory"
+require_relative "agentkit/exploration"
 require_relative "agentkit/memory/layers"
 require_relative "agentkit/memory/cold_start"
 require_relative "agentkit/memory/custom_prompts"
@@ -85,6 +86,7 @@ module Agentkit
       A2A::V1.reset! if defined?(A2A::V1)
       Flow::Registry.reset!
       TeamMemory.reset! if defined?(TeamMemory)
+      Exploration.reset! if defined?(Exploration)
       self
     end
 

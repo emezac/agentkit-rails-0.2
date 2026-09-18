@@ -63,6 +63,14 @@ Agentkit.configure do |config|
   config.team_memory.graph_max_iterations = 100
   config.team_memory.graph_wall_time_ms = 250
 
+  # ─── Adaptive exploration: opt-in, replay-first, never auto-promotes ───────
+  config.exploration.enabled = false
+  config.exploration.max_rounds = 8
+  config.exploration.replay_max_rounds = 32
+  config.exploration.max_parallelism = 4
+  config.exploration.max_nodes = 64
+  config.exploration.default_beta = 0.6
+
   # ─── Console: disabled in every environment until both hooks are set ──────
   config.console.enabled = false
   # config.console.principal_resolver = -> { current_user }

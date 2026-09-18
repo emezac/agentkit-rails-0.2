@@ -55,6 +55,8 @@ RSpec.configure do |config|
     Agentkit.config.memory.store    = :active_record
     Agentkit.config.rag.store       = :active_record
     Agentkit.config.team_memory.store = :active_record
+    Agentkit.config.exploration.enabled = false
+    Agentkit.config.exploration.store = :active_record
     Agentkit.config.memory.level    = :hybrid
     Agentkit.config.memory.embedding.policy = :on_promotion
     Agentkit.config.audit.store     = :active_record
@@ -85,6 +87,7 @@ RSpec.configure do |config|
     Agentkit::Flow.shared_store = nil
     Agentkit::Flow.dispatcher   = nil
     Agentkit::Memory.reset!
+    Agentkit::Exploration.reset!
     Agentkit::Factory.persistence = :active_record
     Agentkit::Factory.reset!
     Agentkit::HITL.ledger = Agentkit::HITL::Stores::ActiveRecordLedger.new
