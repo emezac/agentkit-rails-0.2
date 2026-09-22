@@ -12,6 +12,22 @@ module Agentkit
   #   Agentkit::Memory.recall("late payers", mode: :keyword)   # 0 API calls
   #   Agentkit::Memory.estimate_embedding_cost(policy: :on_promotion)
   module Memory
+    MaintenanceReport = Struct.new(
+      :dry_run, :generated_at, :evaluated_at, :scope, :scanned,
+      :expired, :pinned, :would_archive, :archived,
+      keyword_init: true
+    ) do
+      def dry_run? = dry_run
+
+      def to_h
+        {
+          dry_run: dry_run, generated_at: generated_at, evaluated_at: evaluated_at,
+          scope: scope, scanned: scanned, expired: expired, pinned: pinned,
+          would_archive: would_archive, archived: archived
+        }
+      end
+    end
+
     class << self
       def store_backend
         @store_backend ||= Stores.build(Agentkit.config.memory.store)
@@ -35,10 +51,19 @@ module Agentkit
       #   policy — the most specific of the four configuration levels.
       def store(content, source_agent: nil, tags: [], type: "observation", confidence: 0.7,
                 importance: nil, role: nil, derived_from: nil, canonical: nil,
-                ontological_type: "real", ttl: nil, embed: nil, metadata: {}, context: nil)
+                ontological_type: "real", ttl: nil, retention: nil, pinned: false,
+                pin_reason: nil, embed: nil, metadata: {}, context: nil)
         ctx    = context || Context.resolve
         config = ctx.config.memory
         return nil unless config.writes?
+        if pinned && pin_reason.to_s.strip.empty?
+          raise ArgumentError, "pin_reason is required when storing a pinned memory"
+        end
+
+        now = Time.now
+        retention_policy, expires_at = retention_deadline(
+          config, type: type, ttl: ttl, retention: retention, now: now
+        )
 
         record = Record.new(
           content: content.to_s, memory_type: type.to_s, tags: Array(tags).map(&:to_s),
@@ -46,7 +71,8 @@ module Agentkit
           role: role&.to_s, source_agent: source_agent, ontological_type: ontological_type.to_s,
           derived_from_memory_id: derived_from, canonical_memory_id: canonical,
           user_id: id_of(ctx.user), account_id: id_of(ctx.account), tenant_key: ctx.tenant_key,
-          run_id: ctx.run_id, expires_at: ttl ? Time.now + ttl : nil, metadata: metadata
+          run_id: ctx.run_id, expires_at: expires_at, retention_policy: retention_policy,
+          pinned_at: pinned ? now : nil, metadata: metadata
         )
         store_backend.insert(record)
 
@@ -57,6 +83,7 @@ module Agentkit
                        dims: { agent: source_agent, type: type.to_s, policy: config.embedding.policy,
                                decision: decision, ontological: ontological_type.to_s },
                        measures: { bytes: content.to_s.bytesize, embedded: decision == :now })
+        emit_pin_transition(record, pinned: true, reason: pin_reason, context: ctx) if pinned
         record
       end
 
@@ -164,6 +191,54 @@ module Agentkit
 
       # ─── Maintenance ─────────────────────────────────────────────────────────
 
+      # A pin is a deliberate retention override. The reason is mandatory and
+      # audit-only; memory content is never copied into the audit event.
+      def pin!(record_or_id, reason:, scope: nil)
+        transition_pin!(record_or_id, pinned: true, reason: reason, scope: scope)
+      end
+
+      def unpin!(record_or_id, reason:, scope: nil)
+        transition_pin!(record_or_id, pinned: false, reason: reason, scope: scope)
+      end
+
+      # Expiration is enforced during recall immediately. Maintenance performs
+      # the durable, non-destructive transition to `archived`; it never deletes
+      # content or audit history and previews by default.
+      def maintain!(scope: nil, dry_run: true, at: Time.now.utc)
+        raise ArgumentError, "at must be a Time" unless at.respond_to?(:utc)
+
+        resolved = memory_scope(scope)
+        lifecycle_scope = resolved.merge(ontological: Record::ONTOLOGIES)
+        active_scope = lifecycle_scope.merge(status: %w[raw embedded consolidated])
+        expired_scope = active_scope.merge(expired_at: at)
+        scanned = store_backend.count(lifecycle_scope)
+        expired = store_backend.count(expired_scope)
+        protected_count = store_backend.count(expired_scope.merge(pinned: true))
+        candidates = expired - protected_count
+        archived = dry_run ? 0 : store_backend.archive_expired(at: at, scope: lifecycle_scope)
+
+        report = MaintenanceReport.new(
+          dry_run: !!dry_run,
+          generated_at: Time.now.utc,
+          evaluated_at: at.utc,
+          scope: resolved.slice(:tenant_key, :account_id).freeze,
+          scanned: scanned,
+          expired: expired,
+          pinned: protected_count,
+          would_archive: candidates,
+          archived: archived
+        ).freeze
+
+        Telemetry.emit(
+          "memory.maintenance",
+          dims: { dry_run: !!dry_run },
+          measures: { scanned: scanned, expired: expired,
+                      pinned: protected_count, would_archive: candidates, archived: archived }
+        )
+        audit_maintenance(report) unless dry_run
+        report
+      end
+
       def flush_embeddings!(limit: nil, scope: nil) = embedder.flush!(nil, limit: limit, scope: scope)
       def gc!(scope: {})                = embedder.gc!(nil, scope: scope)
 
@@ -233,8 +308,93 @@ module Agentkit
           tenant_key: ctx.tenant_key, account_id: id_of(ctx.account),
           types: types, tags: tags,
           status: %w[raw embedded consolidated],
-          ontological: ontological.uniq
+          ontological: ontological.uniq,
+          available_at: Time.now
         }.compact
+      end
+
+      def retention_deadline(config, type:, ttl:, retention:, now:)
+        if !ttl.nil? && !retention.nil?
+          raise ConfigurationError, "memory ttl and retention policy are mutually exclusive"
+        end
+
+        if !ttl.nil?
+          seconds = retention_seconds!(ttl, name: :custom)
+          return ["custom", now + seconds]
+        end
+
+        settings = config.retention
+        by_type = settings.by_type.to_h
+        type_name = type.to_s
+        type_key = type_name.empty? ? nil : type_name.to_sym
+        selected = retention || (type_key && by_type[type_key]) || by_type[type_name] || settings.default_policy
+        policies = settings.policies.to_h.transform_keys(&:to_s)
+        name = selected.to_s
+        unless policies.key?(name)
+          raise ConfigurationError, "Unknown memory retention policy: #{name.inspect}"
+        end
+
+        seconds = policies[name]
+        [name, seconds.nil? ? nil : now + retention_seconds!(seconds, name: name)]
+      end
+
+      def retention_seconds!(value, name:)
+        seconds = value.respond_to?(:in_seconds) ? value.in_seconds : value
+        return seconds if seconds.is_a?(Numeric) && seconds >= 0
+
+        raise ConfigurationError,
+              "Memory retention #{name.inspect} must be non-negative seconds, got #{value.inspect}"
+      end
+
+      def transition_pin!(record_or_id, pinned:, reason:, scope:)
+        raise ArgumentError, "reason is required" if reason.to_s.strip.empty?
+
+        resolved = memory_scope(scope)
+        record_id = record_or_id.respond_to?(:id) ? record_or_id.id : record_or_id
+        record = store_backend.find(record_id, scope: resolved)
+        raise KeyError, "memory #{record_id.inspect} not found in scope" if record.nil?
+
+        changed_at = Time.now
+        pinned_at = pinned ? changed_at : nil
+        store_backend.update(record.id, pinned_at: pinned_at)
+        record.pinned_at = pinned_at
+        emit_pin_transition(record, pinned: pinned, reason: reason,
+                            context: audit_context(resolved))
+        record
+      end
+
+      def emit_pin_transition(record, pinned:, reason:, context:)
+        event = "memory.#{pinned ? 'pinned' : 'unpinned'}"
+        Telemetry.emit(event, measures: { count: 1 })
+        Audit.record(
+          event_type: event,
+          status: "accepted",
+          payload: { memory_id: record.id, reason: reason.to_s },
+          subject: record,
+          context: context
+        )
+      end
+
+      def audit_maintenance(report)
+        Audit.record(
+          event_type: "memory.maintenance.applied",
+          status: "accepted",
+          payload: report.to_h,
+          context: audit_context(report.scope)
+        )
+      end
+
+      def audit_context(scope)
+        current = Context.resolve
+        same_tenant = scope[:tenant_key].nil? || current.tenant_key.to_s == scope[:tenant_key].to_s
+        same_account = scope[:account_id].nil? || id_of(current.account).to_s == scope[:account_id].to_s
+        return current if same_tenant && same_account
+
+        Context.new(
+          tenant_key: scope[:tenant_key], account: scope[:account_id],
+          user: current.user, principal: current.principal,
+          run_id: current.run_id, trace_id: current.trace_id, config: current.config
+        )
       end
 
       # Recall counts feed the `:on_promotion` policy: a memory that people keep

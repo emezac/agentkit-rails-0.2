@@ -93,6 +93,51 @@ module Agentkit
     setting :alert_at,    default: 0.8
   end
 
+  # Named retention policies turn lifecycle decisions into configuration
+  # instead of scattered ttl literals. `:keep` preserves the pre-1.1 default;
+  # applications opt records or memory types into finite retention explicitly.
+  class MemoryRetentionSettings < Settings
+    setting :default_policy, default: :keep
+    setting :policies, type: Hash, default: lambda {
+      {
+        keep: nil,
+        ephemeral: 7 * 86_400,
+        standard: 90 * 86_400,
+        durable: nil
+      }
+    }
+    setting :by_type, type: Hash, default: -> { {} }
+
+    def validate
+      problems = super
+      return problems unless policies.respond_to?(:to_h) && by_type.respond_to?(:to_h)
+
+      normalized = policies.to_h.transform_keys(&:to_s)
+      default_name = default_policy.to_s
+      problems << "#{self.class.name}#default_policy: unknown policy #{default_name.inspect}" unless normalized.key?(default_name)
+
+      normalized.each do |name, seconds|
+        next if seconds.nil? || valid_duration?(seconds)
+
+        problems << "#{self.class.name}#policies[#{name.inspect}]: must be nil or non-negative seconds"
+      end
+
+      by_type.to_h.each do |type, policy|
+        next if normalized.key?(policy.to_s)
+
+        problems << "#{self.class.name}#by_type[#{type.inspect}]: unknown policy #{policy.inspect}"
+      end
+      problems
+    end
+
+    private
+
+    def valid_duration?(value)
+      seconds = value.respond_to?(:in_seconds) ? value.in_seconds : value
+      seconds.is_a?(Numeric) && seconds >= 0
+    end
+  end
+
   class DreamingSettings < Settings
     setting :clustering, default: :batch_embed, in: %i[batch_embed lexical llm]
     setting :threshold,  default: 0.25
@@ -128,6 +173,7 @@ module Agentkit
     group :promotion, PromotionSettings
     group :query,     QuerySettings
     group :budget,    MemoryBudgetSettings
+    group :retention, MemoryRetentionSettings
     group :dreaming,  DreamingSettings
     group :imagination, ImaginationSettings
 

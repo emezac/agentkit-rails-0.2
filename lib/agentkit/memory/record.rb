@@ -13,7 +13,8 @@ module Agentkit
         content_hash duplicate_of_id
         recall_count last_recalled_at promoted_at
         derived_from_memory_id canonical_memory_id superseded_by_id
-        ontological_type run_id expires_at created_at updated_at metadata
+        ontological_type run_id expires_at retention_policy pinned_at archived_at
+        created_at updated_at metadata
       ].freeze
 
       attr_accessor(*ATTRIBUTES)
@@ -50,7 +51,10 @@ module Agentkit
       def real?        = ontological_type.to_s == "real"
       def active?      = %w[raw embedded consolidated].include?(status.to_s)
       def superseded?  = !superseded_by_id.nil?
-      def expired?(now = Time.now) = !expires_at.nil? && expires_at < now
+      def pinned?      = !pinned_at.nil?
+      def archived?    = status.to_s == "archived"
+      def expired?(now = Time.now) = !expires_at.nil? && expires_at <= now
+      def available?(now = Time.now) = active? && (pinned? || !expired?(now))
 
       def derived_from?(other_id) = derived_from_memory_id == other_id
 

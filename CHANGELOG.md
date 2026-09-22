@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.1.0 — 2026-09-22
+
+### Added
+
+- Named memory-retention policies with backwards-compatible `keep`, optional
+  per-memory and per-type selection, and explicit TTL override validation.
+- Audited `Memory.pin!` and `Memory.unpin!` retention overrides requiring a
+  human-readable reason.
+- Dry-run-first `Memory.maintain!` and `agentkit:memory_maintenance`, with
+  tenant/account scope and atomic archival of expired, unpinned rows.
+- Migration `023_add_memory_lifecycle` for retention policy, pin and archival
+  state, including operational partial indexes.
+
+### Changed
+
+- Keyword, hybrid and semantic recall now exclude expired memories at the
+  storage query boundary. Pinned memories remain retrievable until unpinned.
+- Memory lifecycle maintenance archives non-destructively and emits telemetry
+  plus an audit event without copying memory content into the event.
+
+### Compatibility
+
+- Existing rows and new writes default to the infinite `keep` policy, so 1.0
+  retention behavior remains unchanged until finite policies or TTLs are used.
+- Applications using ActiveRecord must run migration 023 before writing or
+  retrieving memories with 1.1.
+
 ## 1.0.0 — 2026-09-19
 
 ### Added

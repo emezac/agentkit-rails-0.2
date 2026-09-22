@@ -1,3 +1,40 @@
+# Upgrading 1.0.0 → 1.1.0
+
+Install and run migration `023_add_memory_lifecycle`. It adds first-class
+retention policy, pin and archival timestamps to existing memories. Existing
+rows receive `retention_policy: "keep"`; no prior memory is expired or
+archived by the migration.
+
+Recall now excludes rows whose `expires_at` is in the past. Configure named
+policies before opting writes or memory types into finite retention:
+
+```ruby
+config.memory.retention.default_policy = :keep
+config.memory.retention.policies = {
+  keep: nil,
+  ephemeral: 7.days.to_i,
+  standard: 90.days.to_i,
+  durable: nil
+}
+config.memory.retention.by_type = { observation: :standard }
+```
+
+Preview lifecycle maintenance before applying it. In multi-tenant mode,
+`TENANT` is mandatory; `ACCOUNT_ID` can further narrow the scope.
+
+```bash
+rails db:migrate
+TENANT=your-tenant rails agentkit:memory_maintenance
+TENANT=your-tenant DRY_RUN=0 rails agentkit:memory_maintenance
+bundle exec rake verify
+```
+
+Archival is non-destructive. Pins remain visible to recall after their deadline
+and require an audited reason for both pin and unpin operations. Embedding GC
+remains a separate operation governed by `config.memory.embedding.gc`.
+
+---
+
 # Upgrading 0.9.0 → 1.0.0
 
 Install and run migration `022_add_exploration_promotion_governance`. It adds

@@ -1,9 +1,9 @@
-# AgentKit Rails v1.0.0
+# AgentKit Rails v1.1.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.0.0"
+gem "agentkit-rails", "~> 1.1.0"
 ```
 
 ```bash
@@ -12,6 +12,41 @@ rails g agentkit:rag
 rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
+```
+
+## Memory Lifecycle en 1.1
+
+1.1 hace efectiva la expiración en todos los caminos de recuperación. Una
+memoria vencida deja de alimentar al agente inmediatamente, aunque permanece
+disponible para inspección y auditoría hasta que mantenimiento la archive.
+Los pins son una excepción explícita y auditable.
+
+```ruby
+config.memory.retention.default_policy = :keep # compatible con 1.0
+config.memory.retention.policies = {
+  keep: nil,
+  ephemeral: 7.days.to_i,
+  standard: 90.days.to_i,
+  durable: nil
+}
+config.memory.retention.by_type = {
+  observation: :standard,
+  scenario: :ephemeral,
+  insight: :durable
+}
+
+memory = Agentkit::Memory.store("resultado temporal", retention: :ephemeral)
+Agentkit::Memory.pin!(memory, reason: "investigación activa")
+Agentkit::Memory.unpin!(memory, reason: "investigación cerrada")
+```
+
+El mantenimiento es no destructivo y `dry-run` por defecto: cambia memorias
+vencidas no fijadas a `archived`, conserva contenido/procedencia y deja el GC
+de vectores bajo la política ya existente.
+
+```bash
+TENANT=acct:42 rails agentkit:memory_maintenance
+TENANT=acct:42 DRY_RUN=0 rails agentkit:memory_maintenance
 ```
 
 ## Gobernanza de promociones en 1.0

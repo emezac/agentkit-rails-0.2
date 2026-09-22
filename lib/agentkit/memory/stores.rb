@@ -20,6 +20,7 @@ module Agentkit
         def all(scope = {})       = raise NotImplementedError
         def count(scope = {})     = raise NotImplementedError
         def delete_all            = raise NotImplementedError
+        def archive_expired(at:, scope: {}) = raise NotImplementedError
         def by_content_hash(hash, scope = {}) = raise NotImplementedError
         def pending_embedding(limit:, scope: {}) = raise NotImplementedError
         def keyword_search(query, scope: {}, limit: 50) = raise NotImplementedError
@@ -44,12 +45,14 @@ module Agentkit
         end
 
         def update(id, attrs)
-          rec = @rows[id]
-          return nil unless rec
+          @mutex.synchronize do
+            rec = @rows[id]
+            next nil unless rec
 
-          attrs.each { |k, v| rec.public_send(:"#{k}=", v) if rec.respond_to?(:"#{k}=") }
-          rec.updated_at = Time.now unless attrs.key?(:updated_at)
-          rec
+            attrs.each { |k, v| rec.public_send(:"#{k}=", v) if rec.respond_to?(:"#{k}=") }
+            rec.updated_at = Time.now unless attrs.key?(:updated_at)
+            rec
+          end
         end
 
         def find(id, scope: {})
@@ -65,6 +68,22 @@ module Agentkit
 
         def delete_all
           @mutex.synchronize { @rows = {}; @seq = 0 }
+        end
+
+        # The selection and transition share one lock so a concurrent pin wins
+        # cleanly instead of being overwritten by a maintenance pass.
+        def archive_expired(at:, scope: {})
+          @mutex.synchronize do
+            targets = @rows.values.select do |record|
+              matches?(record, scope) && record.active? && record.expired?(at) && !record.pinned?
+            end
+            targets.each do |record|
+              record.status = "archived"
+              record.archived_at = at
+              record.updated_at = at
+            end
+            targets.size
+          end
         end
 
         def by_content_hash(hash, scope = {})
@@ -112,6 +131,9 @@ module Agentkit
             when :source_agent then record.source_agent == value
             when :derived_from then record.derived_from_memory_id == value
             when :since       then record.created_at >= value
+            when :available_at then record.pinned? || !record.expired?(value)
+            when :expired_at  then record.expired?(value)
+            when :pinned      then record.pinned? == value
             else true
             end
           end
@@ -180,6 +202,15 @@ module Agentkit
         def count(scope = {}) = scoped(scope).count
         def delete_all        = model.delete_all
 
+        # One conditional UPDATE keeps maintenance safe if a worker pins a row
+        # between the preview and the apply phase.
+        def archive_expired(at:, scope: {})
+          scoped(scope)
+            .where(status: %w[raw embedded consolidated], pinned_at: nil)
+            .where("expires_at IS NOT NULL AND expires_at <= ?", at)
+            .update_all(status: "archived", archived_at: at, updated_at: at)
+        end
+
         def by_content_hash(hash, scope = {})
           wrap(scoped(scope).where(content_hash: hash, embedding_status: "embedded").first)
         end
@@ -228,6 +259,14 @@ module Agentkit
           rel = rel.where(source_agent: scope[:source_agent]) if scope[:source_agent]
           rel = rel.where(derived_from_memory_id: scope[:derived_from]) if scope[:derived_from]
           rel = rel.where("created_at >= ?", scope[:since]) if scope[:since]
+          if scope[:available_at]
+            rel = rel.where("pinned_at IS NOT NULL OR expires_at IS NULL OR expires_at > ?",
+                            scope[:available_at])
+          end
+          if scope[:expired_at]
+            rel = rel.where("expires_at IS NOT NULL AND expires_at <= ?", scope[:expired_at])
+          end
+          rel = scope[:pinned] ? rel.where.not(pinned_at: nil) : rel.where(pinned_at: nil) unless scope[:pinned].nil?
           rel = rel.where("tags @> ?", Array(scope[:tags]).to_json) if scope[:tags]
           # Ontological firewall: imagined scenarios are excluded unless asked for.
           rel = rel.where(ontological_type: Array(scope[:ontological] || "real"))

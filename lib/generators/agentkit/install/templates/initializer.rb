@@ -32,6 +32,16 @@ Agentkit.configure do |config|
   config.memory.embedding.policy = :on_promotion
   config.memory.embedding.dedupe = true
   config.memory.query.cache      = true
+  # Named lifecycle policies. `:keep` is the backwards-compatible default;
+  # opt memory types or individual writes into finite retention explicitly.
+  config.memory.retention.default_policy = :keep
+  config.memory.retention.policies = {
+    keep: nil,
+    ephemeral: 7.days.to_i,
+    standard: 90.days.to_i,
+    durable: nil
+  }
+  # config.memory.retention.by_type = { observation: :standard, scenario: :ephemeral }
   # config.memory.budget.embeddings_per_day = { tenant: 5_000 }
   # config.memory.budget.on_exceeded = :degrade   # keep serving in keyword mode
 

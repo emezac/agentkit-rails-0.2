@@ -87,6 +87,29 @@ RSpec.describe "ActiveRecord adapters", :integration do
       expect(restored).to eq(2)
       expect(Agentkit::MemoryRecord.where(superseded_by_id: insight.id).count).to eq(0)
     end
+
+    it "filters expired rows and archives them without touching pinned rows" do
+      account = account!
+      expired, pinned = with_account(account) do
+        [
+          Agentkit::Memory.store("expired SQL memory", ttl: 0),
+          Agentkit::Memory.store("pinned SQL memory", ttl: 0, pinned: true,
+                                 pin_reason: "active investigation")
+        ]
+      end
+
+      hits = with_account(account) { Agentkit::Memory.recall("SQL memory", mode: :keyword) }
+      expect(hits.map(&:id)).to contain_exactly(pinned.id)
+
+      report = with_account(account) do
+        Agentkit::Memory.maintain!(dry_run: false, at: Time.now + 1)
+      end
+      expect(report.archived).to eq(1)
+      expect(Agentkit::MemoryRecord.find(expired.id)).to have_attributes(
+        status: "archived", archived_at: be_present
+      )
+      expect(Agentkit::MemoryRecord.find(pinned.id).status).not_to eq("archived")
+    end
   end
 
   describe "flow store" do

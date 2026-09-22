@@ -27,6 +27,10 @@ module Agentkit
     scope :imagined,     -> { where(ontological_type: "imagined") }
     scope :embedded,     -> { where(embedding_status: "embedded") }
     scope :pending_embedding, -> { where(embedding_status: "pending") }
+    scope :pinned,       -> { where.not(pinned_at: nil) }
+    scope :available_at, lambda { |time = Time.current|
+      where("pinned_at IS NOT NULL OR expires_at IS NULL OR expires_at > ?", time)
+    }
     scope :perspectives_of, ->(m) { where(derived_from_memory_id: m.id) }
     scope :for_tenant,   ->(key) { key ? where(tenant_key: key) : all }
   end

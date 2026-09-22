@@ -208,6 +208,18 @@ namespace :agentkit do
     puts JSON.pretty_generate(Agentkit::Exploration.maintain!(scope: scope, dry_run: dry_run).to_h)
   end
 
+  desc "Archive expired, unpinned memories (DRY_RUN=1 by default)"
+  task memory_maintenance: :environment do
+    if Agentkit.config.multi_tenant && ENV["TENANT"].to_s.empty?
+      abort "TENANT is required for memory maintenance in multi-tenant mode"
+    end
+    scope = Agentkit::Scope.resolve(
+      { tenant_key: ENV["TENANT"], account_id: ENV["ACCOUNT_ID"] }.compact
+    )
+    dry_run = ENV.fetch("DRY_RUN", "1") != "0"
+    puts JSON.pretty_generate(Agentkit::Memory.maintain!(scope: scope, dry_run: dry_run).to_h)
+  end
+
   desc "Estimate the embedding bill of a policy before enabling it (POLICY=on_promotion)"
   task estimate_embeddings: :environment do
     policy = ENV["POLICY"]&.to_sym
