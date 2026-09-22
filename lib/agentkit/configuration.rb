@@ -318,21 +318,68 @@ module Agentkit
     setting :max_nodes, default: 64
     setting :max_policies, default: 16
     setting :min_replay_worlds, default: 2
+    setting :min_replay_coverage, default: 0.8
+    setting :holdout_fraction, default: 0.2
+    setting :holdout_seed, default: -> { ENV.fetch("AGENTKIT_EXPLORATION_HOLDOUT_SEED", "agentkit-0.8") }
+    setting :min_training_worlds, default: 5
+    setting :min_holdout_worlds, default: 5
+    setting :bootstrap_samples, default: 2_000
+    setting :confidence_level, default: 0.95
+    setting :min_score_improvement, default: 0.0
+    setting :pareto_epsilon, default: 1e-9
     setting :cost_penalty, default: 0.01
     setting :parallelism_bonus, default: 0.01
     setting :max_diagnostics_bytes, default: 8 * 1024
+    setting :attempt_stale_after, default: 300
+    setting :resume_lease, default: 300
+    # :local executes in the caller; :distributed requires #enqueue and a
+    # durable Active Job backend. Quotas are UTC calendar-day admission limits.
+    setting :execution, default: :local, in: %i[local distributed]
+    setting :queue, default: :agentkit_exploration
+    setting :daily_world_limit, default: nil
+    setting :daily_attempt_limit, default: nil
+    setting :quota_retention_days, default: 90
+    # Optional ->(scope) { { daily_world_limit:, daily_attempt_limit: } }.
+    setting :quota_resolver
 
     def validate
       problems = super
       problems << "Agentkit::ExplorationSettings#default_beta must be between 0 and 1" unless
         finite_between?(default_beta, 0.0, 1.0)
+      problems << "Agentkit::ExplorationSettings#min_replay_coverage must be between 0 and 1" unless
+        finite_between?(min_replay_coverage, 0.0, 1.0)
+      problems << "Agentkit::ExplorationSettings#holdout_fraction must be strictly between 0 and 1" unless
+        finite_strict_between?(holdout_fraction, 0.0, 1.0)
+      problems << "Agentkit::ExplorationSettings#confidence_level must be strictly between 0 and 1" unless
+        finite_strict_between?(confidence_level, 0.0, 1.0)
+      problems << "Agentkit::ExplorationSettings#holdout_seed is required" if holdout_seed.to_s.strip.empty?
       %i[max_rounds replay_max_rounds max_parallelism max_nodes max_policies min_replay_worlds
-         max_diagnostics_bytes].each do |name|
+         min_training_worlds min_holdout_worlds max_diagnostics_bytes quota_retention_days].each do |name|
         problems << "Agentkit::ExplorationSettings##{name} must be positive" unless public_send(name).to_i.positive?
       end
-      %i[cost_penalty parallelism_bonus].each do |name|
+      problems << "Agentkit::ExplorationSettings#bootstrap_samples must be an integer of at least 100" unless
+        integer_at_least?(bootstrap_samples, 100)
+      %i[cost_penalty parallelism_bonus min_score_improvement pareto_epsilon].each do |name|
         problems << "Agentkit::ExplorationSettings##{name} must be finite and non-negative" unless
           finite_non_negative?(public_send(name))
+      end
+      %i[attempt_stale_after resume_lease].each do |name|
+        problems << "Agentkit::ExplorationSettings##{name} must be finite and non-negative" unless
+          finite_non_negative?(public_send(name))
+      end
+      problems << "Agentkit::ExplorationSettings#queue is required" if queue.to_s.strip.empty?
+      %i[daily_world_limit daily_attempt_limit].each do |name|
+        value = public_send(name)
+        next if value.nil?
+
+        problems << "Agentkit::ExplorationSettings##{name} must be a non-negative integer or nil" unless
+          integer_at_least?(value, 0)
+      end
+      if quota_resolver && !quota_resolver.respond_to?(:call)
+        problems << "Agentkit::ExplorationSettings#quota_resolver must respond to #call"
+      end
+      if execution.to_s == "distributed" && store.to_s != "active_record"
+        problems << "Agentkit::ExplorationSettings#store must be :active_record for distributed execution"
       end
       problems
     end
@@ -346,9 +393,22 @@ module Agentkit
       false
     end
 
+    def finite_strict_between?(value, minimum, maximum)
+      number = Float(value)
+      number.finite? && number > minimum && number < maximum
+    rescue ArgumentError, TypeError
+      false
+    end
+
     def finite_non_negative?(value)
       number = Float(value)
       number.finite? && number >= 0
+    rescue ArgumentError, TypeError
+      false
+    end
+
+    def integer_at_least?(value, minimum)
+      Integer(value) >= minimum
     rescue ArgumentError, TypeError
       false
     end

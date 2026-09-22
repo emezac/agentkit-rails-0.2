@@ -70,6 +70,26 @@ Agentkit.configure do |config|
   config.exploration.max_parallelism = 4
   config.exploration.max_nodes = 64
   config.exploration.default_beta = 0.6
+  config.exploration.min_replay_coverage = 0.8
+  config.exploration.holdout_fraction = 0.2
+  # Keep this stable; changing it reassigns historical worlds.
+  config.exploration.holdout_seed = ENV.fetch("AGENTKIT_EXPLORATION_HOLDOUT_SEED", "agentkit-0.8")
+  config.exploration.min_training_worlds = 5
+  config.exploration.min_holdout_worlds = 5
+  config.exploration.bootstrap_samples = 2_000
+  config.exploration.confidence_level = 0.95
+  config.exploration.min_score_improvement = 0.0
+  config.exploration.pareto_epsilon = 1e-9
+  config.exploration.attempt_stale_after = 300
+  config.exploration.resume_lease = 300
+  config.exploration.execution = :local # :distributed uses Active Job
+  config.exploration.queue = :agentkit_exploration
+  config.exploration.daily_world_limit = nil
+  config.exploration.daily_attempt_limit = nil
+  config.exploration.quota_retention_days = 90
+  # config.exploration.quota_resolver = ->(scope) {
+  #   scope.tenant_key == "account:enterprise" ? { daily_world_limit: 100 } : {}
+  # }
 
   # ─── Console: disabled in every environment until both hooks are set ──────
   config.console.enabled = false

@@ -1,3 +1,218 @@
+# Upgrading 0.9.0 → 1.0.0
+
+Install and run migration `022_add_exploration_promotion_governance`. It adds
+immutable evidence dossiers and one active declarative policy binding per
+tenant/account/target. No existing exploration data is rewritten.
+
+Turn a successful 0.9 recommendation into an explicit review:
+
+```ruby
+review = Agentkit::Exploration.submit_recommendation!(
+  target: "support.search",
+  recommendation: recommendation
+)
+
+Agentkit::Exploration.approve_recommendation!(
+  review,
+  actor: "human:operator-42",
+  reason: "reviewed evidence and operational risk"
+)
+```
+
+Approval changes only `Exploration.policy_binding(target:)`. Resolve that
+name/version/digest in application-owned code; do not eval dossier content.
+The policy registry is deliberately unchanged. Reject and rollback calls need
+a non-empty reason. A rollback is allowed only while that review owns the
+active binding, so an older decision cannot overwrite a newer one.
+
+Audit must be enabled and writable for submission or any decision. In
+ActiveRecord deployments, keep the existing stable audit v2 signing key.
+The console review controls use the same fail-closed `console.guard` and
+`console.principal_resolver` already required by 0.9.
+
+Optional quota ledger retention is 90 days and maintenance is a dry-run unless
+explicitly applied:
+
+```ruby
+config.exploration.quota_retention_days = 90
+report = Agentkit::Exploration.readiness(scope: scope)
+```
+
+```bash
+rails db:migrate
+TENANT=your-tenant rails agentkit:doctor
+TENANT=your-tenant rails agentkit:exploration_maintenance
+TENANT=your-tenant DRY_RUN=0 rails agentkit:exploration_maintenance
+bundle exec rake verify
+```
+
+Maintenance prunes only expired quota usage/reservation rows. Worlds,
+attempts, evidence dossiers, bindings and the audit chain are retained.
+
+---
+
+# Upgrading 0.8.0 → 0.9.0
+
+Install and run migration `021_add_distributed_exploration_and_quotas`. It adds
+generator provenance, an operations index, and tenant-scoped quota usage and
+reservation ledgers. Existing worlds remain replayable; their generator
+manifest is intentionally absent because it cannot be reconstructed safely.
+
+Local execution remains the default. To opt into distributed execution:
+
+```ruby
+config.exploration.store = :active_record
+config.exploration.execution = :distributed
+config.exploration.queue = :agentkit_exploration
+config.exploration.daily_world_limit = 20
+config.exploration.daily_attempt_limit = 200
+```
+
+Use a durable Active Job adapter in production. Register every generator,
+evaluator and custom policy during worker boot with a stable name and explicit
+version. Then use `Exploration.enqueue`; callable-only `Exploration.run` remains
+available for local execution but is deliberately not serializable.
+
+Quota limits are UTC daily admission limits. A nil limit is unlimited, zero
+disables the resource, and an optional resolver can override either limit:
+
+```ruby
+config.exploration.quota_resolver = ->(scope) do
+  scope.tenant_key == "account:enterprise" ?
+    { daily_world_limit: 100, daily_attempt_limit: 2_000 } : {}
+end
+```
+
+The 0.9 dashboard is mounted at `/agentkit/exploration` and remains unavailable
+unless the existing fail-closed console guard and principal resolver authorize
+the request. In 0.9 it is read-only and never renders objective or candidate payloads.
+
+After upgrading, run:
+
+```bash
+rails db:migrate
+TENANT=your-tenant rails agentkit:doctor
+bundle exec rake verify
+```
+
+---
+
+# Upgrading 0.7.1 → 0.8.0
+
+No database migration is required. Version 0.8 changes the evidence required
+by `Exploration.recommend`: a point estimate over all worlds is no longer
+enough for an N3 review recommendation.
+
+Configure a stable holdout assignment and statistical floors:
+
+```ruby
+config.exploration.holdout_fraction = 0.2
+config.exploration.holdout_seed = ENV.fetch("AGENTKIT_EXPLORATION_HOLDOUT_SEED")
+config.exploration.min_training_worlds = 5
+config.exploration.min_holdout_worlds = 5
+config.exploration.bootstrap_samples = 2_000
+config.exploration.confidence_level = 0.95
+config.exploration.min_score_improvement = 0.0
+config.exploration.pareto_epsilon = 1e-9
+```
+
+Do not change `holdout_seed` after accumulating history: doing so reassigns old
+worlds and invalidates comparisons with previous recommendation reports. The
+returned `assignment_digest`, training digest and holdout digest make the split
+reproducible without exposing the seed.
+
+`recommend` now performs these phases:
+
+1. Select non-dominated candidates on training quality, attempts and rounds.
+2. Choose one candidate by the configured replay score.
+3. Replay only that candidate and the incumbent on holdout.
+4. Require holdout coverage, a non-dominated result and a paired bootstrap
+   confidence interval above `min_score_improvement`.
+
+Use an explicit frozen benchmark when available:
+
+```ruby
+Agentkit::Exploration.recommend(
+  incumbent: CurrentPolicy.new,
+  candidates: candidate_policies,
+  worlds: training_worlds,
+  holdout_worlds: frozen_holdout_worlds
+)
+```
+
+Training and holdout must be disjoint and share one evaluator digest. Existing
+callers can continue using `evaluate` for descriptive point estimates and
+`compare` for a paired statistical report. Neither method promotes policies.
+
+After upgrading, run:
+
+```bash
+TENANT=your-tenant rails agentkit:doctor
+bundle exec rake verify
+```
+
+---
+
+# Upgrading 0.7.0 → 0.7.1
+
+Install and run migrations `019_harden_agentkit_exploration` and
+`020_add_agentkit_exploration_world_leases`. They add resumable checkpoints,
+durable attempt/idempotency records, evaluator manifests and exclusive resume
+leases. Existing completed worlds remain replayable, and exploration remains
+disabled by default.
+
+Recommended production settings:
+
+```ruby
+config.exploration.min_replay_coverage = 0.8
+config.exploration.attempt_stale_after = 300
+config.exploration.resume_lease = 300
+```
+
+Prefer the versioned evaluator registry for new rollouts. The callable plus
+`evaluator_id` API remains compatible.
+
+```ruby
+Agentkit::Exploration.evaluators.register(
+  :support_quality,
+  version: "4",
+  evaluator: SupportEval.method(:score),
+  output_schema: {
+    type: "object",
+    properties: { score: { type: "number" } },
+    required: ["score"],
+    additionalProperties: false
+  },
+  normalization: :identity
+)
+
+world = Agentkit::Exploration.run(
+  objective: "improve support",
+  generator: SupportDiscovery.method(:propose),
+  evaluator: :support_quality,
+  evaluator_version: "4"
+)
+```
+
+After a process interruption, call `Exploration.resume` with the same policy,
+generator and evaluator manifest. A stale claimed attempt becomes
+`execution_unknown`; inspect the external system and then call
+`reconcile_attempt!` with `pending`, `completed` or `failed`. AgentKit does not
+retry an ambiguous effect automatically.
+
+Replay evaluations now expose historical decision coverage. `recommend`
+retains the incumbent with reason `insufficient_replay_coverage` when the
+configured floor is not met. Promotion remains a separate reviewed N3 action.
+
+After migrating, run:
+
+```bash
+rails agentkit:doctor
+bundle exec rake verify
+```
+
+---
+
 # Upgrading 0.6.0 → 0.7.0
 
 Install and run migration `018_create_agentkit_exploration_worlds`. It adds a

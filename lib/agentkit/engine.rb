@@ -81,6 +81,14 @@ module Agentkit
       end
     end
 
+    initializer "agentkit.exploration_dispatcher" do
+      config.to_prepare do
+        Agentkit::Exploration.dispatcher = lambda do |world_id, scope|
+          Agentkit::ExplorationWorldJob.perform_later(world_id, scope)
+        end
+      end
+    end
+
     # The console exposes prompts, traces and executable approvals. It is off
     # by default in every environment and cannot be enabled without an
     # application-owned authentication/authorization policy.

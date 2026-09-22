@@ -17,6 +17,15 @@ Agentkit::Engine.routes.draw do
     member { post :retry }
   end
 
+  # ─── Adaptive exploration operations and governed promotion ───────────────
+  get "exploration", to: "exploration#index", as: :exploration
+  post "exploration/reviews/:id/approve", to: "exploration#approve",
+       as: :exploration_review_approve
+  post "exploration/reviews/:id/reject", to: "exploration#reject",
+       as: :exploration_review_reject
+  post "exploration/reviews/:id/rollback", to: "exploration#rollback",
+       as: :exploration_review_rollback
+
   # ─── Factory ───────────────────────────────────────────────────────────────
   get  "factory",           to: "factory#index",    as: :factory
   post "factory/diagnose",  to: "factory#diagnose", as: :factory_diagnose

@@ -1,5 +1,146 @@
 # Changelog
 
+## 1.0.0 — 2026-09-19
+
+### Added
+
+- Durable promotion dossiers for significant Adaptive Exploration holdout
+  recommendations, with bounded evidence snapshots and deterministic digests.
+- Explicit approve, reject and rollback transitions, tenant/account scope,
+  optimistic locking, idempotent submission and mandatory audit persistence.
+- Declarative policy bindings carrying stable name/version/digest, originating
+  review id and monotonic generation. Rollback restores the previous binding.
+- Governed review controls in `/agentkit/exploration`, plus a stable readiness
+  report and dry-run-first `agentkit:exploration_maintenance` task.
+- Migration `022_add_exploration_promotion_governance` and configurable daily
+  quota-ledger retention (`quota_retention_days`, default 90).
+
+### Changed
+
+- The exploration dashboard is now an operator control surface for promotion
+  reviews in addition to its 0.9 execution and quota visibility.
+- `agentkit:doctor` validates promotion tables/indexes and reports pending
+  reviews and active declarative bindings.
+- Public package version and Adaptive Exploration API contract are now 1.0.
+
+### Security
+
+- Submission fails closed unless the recommendation carries a significant,
+  matching two-policy holdout comparison produced for human review.
+- Approval never registers code or mutates the policy registry. Rejection and
+  rollback require a human reason; every accepted transition requires a
+  durable audit write in the same store transaction.
+- Dashboard mutations inherit console authorization, CSRF protection, tenant
+  context, CSP and no-store caching. Superseded approvals cannot be rolled back
+  over a newer active binding.
+
+### Compatibility
+
+- Migration 022 is additive. Existing worlds, replays, quotas and 0.9 local or
+  distributed execution remain compatible.
+- Applications must explicitly submit a recommendation and explicitly consume
+  a declarative binding; there is no automatic promotion in 1.0.
+
+## 0.9.0 — 2026-09-19
+
+### Added
+
+- Active Job delivery for registry-backed exploration worlds, with durable
+  `queued` state, explicit scope propagation and duplicate-safe world leases.
+- Immutable generator manifests, matching the evaluator provenance contract,
+  so workers fail closed when code changes without a version bump.
+- Atomic UTC daily world and attempt quotas with idempotent reservation keys,
+  global defaults and tenant-specific resolver overrides.
+- A read-only `/agentkit/exploration` operations dashboard for world/attempt
+  states, safe provenance and quota consumption.
+- Migration `021_add_distributed_exploration_and_quotas` and expanded doctor
+  checks for distributed indexes, quota ledgers and operational backlog.
+
+### Changed
+
+- Online worlds now persist their generator manifest. A distributed worker
+  resolves policy, generator and evaluator by stable registry identity.
+- Exhausting attempt capacity closes a valid partial world with
+  `quota_exhausted`; exhausting world capacity rejects admission before work.
+
+### Security
+
+- Distributed jobs carry only a world id and explicit tenant scope. Raw
+  objectives, generated candidates and executable closures never enter the
+  queue payload or dashboard.
+- Quota accounting is transactionally serialized and idempotent under job
+  redelivery. The dashboard inherits the console's fail-closed authorization,
+  tenant boundary, CSP and `Cache-Control: no-store` headers.
+
+### Compatibility
+
+- Local execution remains the default. Existing 0.8 replay worlds stay valid;
+  only new distributed worlds require registered generator provenance.
+
+## 0.8.0 — 2026-09-19
+
+### Added
+
+- Deterministic paired percentile-bootstrap comparisons over identical replay
+  worlds, including confidence intervals, standard error, minimum effect and a
+  reproducible seed digest.
+- Multiobjective Pareto frontiers over attained quality, probe count and replay
+  rounds instead of treating a single scalar reward as sufficient evidence.
+- Stable hash-based holdout assignment plus explicit curated holdouts, with
+  disjointness checks and assignment/history digests.
+- Training/holdout readiness checks in `agentkit:doctor` and configurable
+  sample, confidence, effect, coverage and Pareto thresholds.
+
+### Changed
+
+- `Exploration.recommend` selects one candidate on training evidence, then
+  compares only that candidate with the incumbent on untouched holdout worlds.
+  A review recommendation now requires holdout coverage, Pareto validity and a
+  confidence interval above `min_score_improvement`.
+
+### Security
+
+- Holdout outcomes never participate in candidate selection, and insufficient
+  datasets do not expose holdout evaluations as diagnostics.
+- Statistical evidence remains an advisory N3 recommendation. 0.8.0 cannot
+  register, deploy or auto-promote a policy.
+
+### Compatibility
+
+- No migration is required. Existing replay worlds remain valid; callers that
+  need the former point-estimate behavior can still use `evaluate`, while
+  `recommend` now fails closed until training and holdout minima are met.
+
+## 0.7.1 — 2026-09-19
+
+### Added
+
+- Durable per-round checkpoints and tenant-scoped attempt records with stable
+  idempotency keys, explicit state transitions and resumable running worlds.
+- Versioned evaluator registry with immutable source/schema/normalization
+  manifests persisted alongside every world.
+- Replay support metrics (`decision_coverage`, unsupported actions/decisions)
+  and a configurable coverage gate for N3 policy recommendations.
+- Expiring per-world resume leases, stale-attempt detection and an explicit
+  `reconcile_attempt!` path for executions whose outcome is unknown.
+- Migrations `019_harden_agentkit_exploration` and
+  `020_add_agentkit_exploration_world_leases`.
+
+### Security
+
+- A claimed attempt is never retried implicitly after an interruption. Fresh
+  attempts are treated as active; stale attempts become `execution_unknown`
+  and require an audited operator reconciliation.
+- Concurrent resume workers fail closed under a durable lease. Evaluator output
+  is schema-validated before it can enter a checkpoint, and raw reconciliation
+  artifacts are reduced to SHA-256 digests.
+- Replay recommendations remain advisory and never auto-promote a policy.
+
+### Compatibility
+
+- Existing callable evaluators plus `evaluator_id` continue to work. Registered
+  evaluators and resumable execution are additive; exploration remains opt-in.
+
 ## 0.7.0 — 2026-09-17
 
 ### Added

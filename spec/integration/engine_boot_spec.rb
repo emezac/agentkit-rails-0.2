@@ -2,6 +2,7 @@
 
 require "rails_helper"
 require "rake"
+require "stringio"
 require_relative "../../db/migrate/015_harden_agentkit_hitl_and_audit"
 
 # Gap #1 and #5 from the totallook pilot: the engine has to boot, its rake tasks
@@ -21,11 +22,33 @@ RSpec.describe "Engine boot", :integration do
     expect(Rake::Task.task_defined?("agentkit:doctor")).to be(true)
     expect(Rake::Task.task_defined?("agentkit:estimate_embeddings")).to be(true)
     expect(Rake::Task.task_defined?("agentkit:factory_report")).to be(true)
+    expect(Rake::Task.task_defined?("agentkit:exploration_maintenance")).to be(true)
     expect(Rake::Task.task_defined?("agentkit:install:migrations")).to be(true)
   end
 
+  it "runs doctor schema checks without crossing tenants" do
+    Rails.application.load_tasks unless Rake::Task.task_defined?("agentkit:doctor")
+    task = Rake::Task["agentkit:doctor"]
+    previous_tenant = ENV.delete("TENANT")
+    previous_multi_tenant = Agentkit.config.multi_tenant
+    Agentkit.config.multi_tenant = true
+    previous_stdout = $stdout
+    output = StringIO.new
+    $stdout = output
+    task.reenable
+
+    expect { task.invoke }.not_to raise_error
+    expect(output.string).to include("running schema-only checks")
+    expect(output.string).to include("Adaptive exploration schema, leases, quotas and promotion governance present")
+  ensure
+    $stdout = previous_stdout
+    ENV["TENANT"] = previous_tenant if previous_tenant
+    Agentkit.config.multi_tenant = previous_multi_tenant
+    task&.reenable
+  end
+
   it "mounts the console and A2A routes" do
-    %w[/agentkit /agentkit/runs /agentkit/factory].each do |path|
+    %w[/agentkit /agentkit/runs /agentkit/factory /agentkit/exploration].each do |path|
       expect { Rails.application.routes.recognize_path(path) }.not_to raise_error
     end
 
@@ -110,7 +133,9 @@ RSpec.describe "Engine boot", :integration do
         "agentkit_action_proposals", "agentkit_action_decisions",
         "agentkit_execution_attempts", "agentkit_action_outboxes",
         "agentkit_action_outcomes", "agentkit_audit_chain_heads",
-        "agentkit_watchtower_issues"
+        "agentkit_watchtower_issues", "agentkit_exploration_quota_usages",
+        "agentkit_exploration_quota_reservations", "agentkit_exploration_reviews",
+        "agentkit_exploration_policy_bindings"
       )
     end
 

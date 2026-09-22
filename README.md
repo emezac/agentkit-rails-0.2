@@ -1,9 +1,9 @@
-# AgentKit Rails v0.7.0
+# AgentKit Rails v1.0.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 0.7.0"
+gem "agentkit-rails", "~> 1.0.0"
 ```
 
 ```bash
@@ -14,7 +14,155 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
-## Adaptive Exploration en 0.7
+## Gobernanza de promociones en 1.0
+
+1.0 cierra el ciclo de Adaptive Exploration sin convertir una recomendación
+estadística en auto-despliegue. Sólo una recomendación que ya superó selección
+Pareto, holdout intacto y significancia puede producir un expediente durable.
+La evidencia se resume sin replays crudos y queda sellada con un digest.
+
+```ruby
+recommendation = Agentkit::Exploration.recommend(
+  incumbent: CurrentPolicy.new,
+  candidates: candidate_policies,
+  worlds: replay_worlds
+)
+
+review = Agentkit::Exploration.submit_recommendation!(
+  target: "support.search",
+  recommendation: recommendation
+)
+
+# Acción humana explícita; requiere Audit disponible.
+Agentkit::Exploration.approve_recommendation!(
+  review,
+  actor: "human:operator-42",
+  reason: "benchmark and risk review complete"
+)
+
+binding = Agentkit::Exploration.policy_binding(target: "support.search")
+# => candidate name/version/digest, review id and monotonic generation
+```
+
+El binding es declarativo: AgentKit no registra, evalúa ni ejecuta código al
+aprobar. El host decide cómo resolver ese digest contra código que ya fue
+desplegado y registrado. Rechazar y hacer rollback requieren motivo; el
+rollback restaura el binding anterior y aumenta su generación. Todos los
+cambios usan scope tenant/account, optimistic locking y auditoría obligatoria.
+
+El dashboard `/agentkit/exploration`, protegido por el guard de consola,
+muestra la cola de revisión y permite aprobar, rechazar y revertir. Para probes
+de despliegue y retención de los ledgers de cuotas:
+
+```ruby
+Agentkit::Exploration.readiness(scope: scope)
+Agentkit::Exploration.maintain!(scope: scope, dry_run: true)
+```
+
+```bash
+# dry-run por defecto; sólo DRY_RUN=0 elimina cuotas anteriores a la retención
+TENANT=acct:42 rails agentkit:exploration_maintenance
+TENANT=acct:42 DRY_RUN=0 rails agentkit:exploration_maintenance
+```
+
+`config.exploration.quota_retention_days` vale 90 por defecto. El mantenimiento
+nunca elimina worlds, intentos, expedientes, bindings ni entradas de auditoría.
+
+## Ejecución distribuida, cuotas y dashboard en 0.9
+
+0.9 permite entregar cada world de exploración a Active Job. El registro se
+persiste en estado `queued` antes de enviar el job; entregas duplicadas compiten
+por el lease durable del world y un world terminal se convierte en un no-op.
+Los workers reconstruyen únicamente componentes registrados por nombre y
+versión, nunca serializan closures ni código generado.
+
+```ruby
+config.exploration.enabled = true
+config.exploration.store = :active_record
+config.exploration.execution = :distributed
+config.exploration.queue = :agentkit_exploration
+config.exploration.daily_world_limit = 20
+config.exploration.daily_attempt_limit = 200
+
+Rails.application.config.to_prepare do
+  Agentkit::Exploration.generators.register(
+    :support_discovery, version: "2",
+    generator: SupportDiscovery.method(:propose)
+  )
+  Agentkit::Exploration.evaluators.register(
+    :support_quality, version: "4",
+    evaluator: SupportEval.method(:score)
+  )
+end
+
+world = Agentkit::Exploration.enqueue(
+  objective: "mejorar resolución de tickets",
+  generator: :support_discovery, generator_version: "2",
+  evaluator: :support_quality, evaluator_version: "4"
+)
+```
+
+Los límites son reservas UTC por tenant y día. Cada world y cada ronda usan
+una reservation key durable: una redelivery no vuelve a consumir cuota. Si se
+agota la cuota de intentos entre rondas, el world termina de forma válida con
+`quota_exhausted`; el límite de worlds rechaza la admisión antes de persistir.
+`quota_resolver` permite límites por tenant sin compartir contadores.
+
+El dashboard de operaciones está en `/agentkit/exploration`. Expone estados,
+intentos, cuotas y procedencia por digest, pero no objetivos, candidatos ni
+diagnósticos. Desde 1.0 también contiene la revisión humana de promociones.
+Usa exactamente `console.enabled`, `console.guard` y
+`console.principal_resolver`, y conserva las cabeceras `no-store` de la consola.
+Para reentregar manualmente un world no terminal puede usarse
+`Agentkit::Exploration.redispatch(world: id, scope: ...)`.
+
+## Evaluación estadística, Pareto y holdout en 0.8
+
+0.8 separa selección y validación. Las políticas candidatas se evalúan sobre
+training, se filtran por cobertura histórica y frontera de Pareto, y sólo el
+único candidato seleccionado se compara con el incumbente sobre el holdout.
+El resultado continúa siendo una recomendación N3 revisable; nunca una
+promoción automática.
+
+```ruby
+config.exploration.holdout_fraction = 0.2
+config.exploration.holdout_seed = ENV.fetch("AGENTKIT_EXPLORATION_HOLDOUT_SEED")
+config.exploration.min_training_worlds = 5
+config.exploration.min_holdout_worlds = 5
+config.exploration.bootstrap_samples = 2_000
+config.exploration.confidence_level = 0.95
+config.exploration.min_score_improvement = 0.0
+
+split = Agentkit::Exploration.split_holdout(worlds: replay_worlds)
+
+recommendation = Agentkit::Exploration.recommend(
+  incumbent: CurrentPolicy.new,
+  candidates: [DepthPolicy.new, RecoveryPolicy.new],
+  worlds: replay_worlds
+)
+
+recommendation.pareto_frontier
+recommendation.comparison&.to_h
+recommendation.holdout
+```
+
+La asignación automática usa un bucket hash estable: agregar nuevos worlds no
+reasigna los anteriores. Para un benchmark congelado puede pasarse
+`holdout_worlds:` explícitamente; AgentKit rechaza cualquier world que aparezca
+en ambos conjuntos.
+
+`Exploration.compare` calcula diferencias pareadas del replay score sobre los
+mismos worlds y un intervalo bootstrap percentil reproducible. Esto cuantifica
+incertidumbre, pero no convierte histories correlacionados en muestras
+independientes ni corrige evaluator drift. Los pools comparados deben conservar
+el mismo evaluator digest.
+
+La frontera de Pareto maximiza calidad y minimiza probes/rondas. Cobertura se
+mantiene como gate de evidencia, no como objetivo que pueda compensar una mala
+política. Si el holdout domina al candidato, su intervalo cruza el efecto
+mínimo, o faltan muestras, `recommend` retiene el incumbente.
+
+## Adaptive Exploration en 0.7.1
 
 0.7 hace explícita la política que decide dónde continuar un descubrimiento,
 qué intentos agrupar y cuándo parar. Cada rollout online produce un árbol
@@ -30,6 +178,7 @@ config.exploration.enabled = true
 config.exploration.max_rounds = 8
 config.exploration.max_parallelism = 4
 config.exploration.max_nodes = 64
+config.exploration.min_replay_coverage = 0.8
 
 world = Agentkit::Exploration.run(
   objective: "mejorar resolución de tickets",
@@ -42,6 +191,47 @@ replay = Agentkit::Exploration.replay(world:, policy: :portfolio)
 sweep  = Agentkit::Exploration.sweep(worlds: [world], betas: [0.2, 0.4, 0.6, 0.8])
 ```
 
+Para operación durable, 0.7.1 crea un checkpoint después de cada ronda y un
+registro idempotente por intento. Un proceso interrumpido puede reanudar el
+world sin repetir intentos ya terminales:
+
+```ruby
+world = Agentkit::Exploration.resume(
+  world: world_id,
+  policy: :portfolio,
+  generator: SupportDiscovery.method(:propose),
+  evaluator: SupportEval.method(:score),
+  evaluator_id: "support-eval-v3"
+)
+```
+
+Si un worker había reclamado un intento cuando se perdió el proceso, el intento
+pasa a `execution_unknown` sólo después de `attempt_stale_after`; nunca se
+repite a ciegas. Un operador debe confirmar su resultado o autorizar el retry:
+
+```ruby
+Agentkit::Exploration.reconcile_attempt!(attempt_id, status: :pending)
+# o status: :completed, outcome: { score: 0.82, artifact_digest: "sha256:..." }
+```
+
+Los evaluadores registrados fijan versión, código, schemas y normalización en
+un manifest inmutable. Cambiar el contrato sin cambiar la versión falla cerrado:
+
+```ruby
+Agentkit::Exploration.evaluators.register(
+  :support_quality,
+  version: "3",
+  evaluator: SupportEval.method(:score),
+  output_schema: {
+    type: "object",
+    properties: { score: { type: "number" } },
+    required: ["score"],
+    additionalProperties: false
+  },
+  normalization: :identity
+)
+```
+
 `beta` permanece fijo dentro de cada episodio. `sweep` compara puntos mediante
 replays frescos y `plan_beta` sólo recomienda el valor del siguiente ciclo. De
 igual modo, `recommend` siempre incluye la política incumbente y devuelve una
@@ -50,7 +240,10 @@ promueve una política automáticamente.
 
 Los árboles persisten únicamente digests del objetivo y artefactos, junto con
 scores y diagnósticos redactados/acotados. La migración
-`018_create_agentkit_exploration_worlds` agrega el replay pool durable.
+`018_create_agentkit_exploration_worlds` agrega el replay pool; las migraciones
+019 y 020 agregan checkpoints, intentos idempotentes y leases de reanudación.
+Cada replay reporta cobertura de decisiones y `recommend` retiene el incumbente
+cuando la cobertura media queda bajo `min_replay_coverage`.
 
 ## Recuperación sobre grafos en 0.6
 
@@ -150,7 +343,7 @@ MCP es un paquete opcional que usa el SDK oficial y no se carga con el gem
 principal:
 
 ```ruby
-gem "agentkit-mcp", "~> 0.7.0"
+gem "agentkit-mcp", "~> 1.0.0"
 ```
 
 Definir una capacidad no la publica. Cada transporte requiere un `expose`

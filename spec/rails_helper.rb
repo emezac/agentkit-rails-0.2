@@ -57,6 +57,10 @@ RSpec.configure do |config|
     Agentkit.config.team_memory.store = :active_record
     Agentkit.config.exploration.enabled = false
     Agentkit.config.exploration.store = :active_record
+    Agentkit.config.exploration.execution = :local
+    Agentkit.config.exploration.daily_world_limit = nil
+    Agentkit.config.exploration.daily_attempt_limit = nil
+    Agentkit.config.exploration.quota_resolver = nil
     Agentkit.config.memory.level    = :hybrid
     Agentkit.config.memory.embedding.policy = :on_promotion
     Agentkit.config.audit.store     = :active_record

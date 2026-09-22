@@ -48,6 +48,7 @@ module Agentkit
       super(message || "Budget exceeded for #{resource} (#{used}/#{limit})")
     end
   end
+  class ExplorationQuotaExceeded < BudgetExceeded; end
 
   # ─── Flow ──────────────────────────────────────────────────────────────────
   class FlowError < Error; end
@@ -110,5 +111,6 @@ module Agentkit
   class PolicyDenied < ActionError; end
   class SeparationOfDutiesViolation < PolicyDenied; end
   class ReconciliationRequired < ActionError; end
+  class ExplorationInProgress < ActionError; end
   class AuditIntegrityError < Error; end
 end

@@ -1,0 +1,116 @@
+<div class="row">
+  <% @snapshot.world_counts.each do |status, count| %>
+    <div class="card">
+      <div class="label">Worlds <%= status %></div>
+      <div class="metric"><%= count %></div>
+    </div>
+  <% end %>
+</div>
+
+<div class="row">
+  <% @snapshot.quotas.each do |resource, quota| %>
+    <div class="card">
+      <div class="label">Cuota diaria · <%= resource %></div>
+      <div class="metric">
+        <%= quota[:used] %> / <%= quota[:limit].nil? ? "∞" : quota[:limit] %>
+      </div>
+      <div class="dim">UTC · <%= quota[:period_start] %></div>
+      <% if quota[:limit] %>
+        <% percentage = quota[:limit].zero? ? 100 : [(quota[:used] * 100.0 / quota[:limit]).round, 100].min %>
+        <div class="bar" style="margin-top:8px"><div style="width:<%= percentage %>%"></div></div>
+      <% end %>
+    </div>
+  <% end %>
+</div>
+
+<div class="card">
+  <div class="label">Intentos</div>
+  <div class="row" style="margin-top:10px">
+    <% @snapshot.attempt_counts.each do |status, count| %>
+      <div style="min-width:120px">
+        <span class="pill <%= status %>"><%= status %></span>
+        <span class="mono"><%= count %></span>
+      </div>
+    <% end %>
+  </div>
+</div>
+
+<div class="card">
+  <div class="label">Worlds recientes</div>
+  <% if @snapshot.recent_worlds.empty? %>
+    <div class="empty">Todavía no hay ejecución de exploración para este tenant.</div>
+  <% else %>
+    <table style="margin-top:10px">
+      <thead>
+        <tr><th>world</th><th>política</th><th>estado</th><th>rondas / nodos</th><th>score</th><th>fin</th></tr>
+      </thead>
+      <tbody>
+        <% @snapshot.recent_worlds.each do |world| %>
+          <tr>
+            <td class="mono"><%= world[:id] %></td>
+            <td><%= world[:policy_name] %>@<%= world[:policy_version] %></td>
+            <td><span class="pill <%= world[:status] %>"><%= world[:status] %></span></td>
+            <td class="mono"><%= world[:rounds] %> / <%= world[:node_count] %></td>
+            <td class="mono"><%= world[:best_score]&.round(4) || "—" %></td>
+            <td class="dim"><%= world[:stop_reason] || "—" %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  <% end %>
+</div>
+
+<div class="card">
+  <div class="label">Revisión de promociones</div>
+  <% if @reviews.empty? %>
+    <div class="empty">No hay recomendaciones estadísticas sometidas a revisión.</div>
+  <% else %>
+    <table style="margin-top:10px">
+      <thead>
+        <tr><th>target</th><th>cambio</th><th>estado</th><th>evidencia</th><th>decisión</th></tr>
+      </thead>
+      <tbody>
+        <% @reviews.each do |review| %>
+          <% active = @bindings[review.target]&.review_id == review.id %>
+          <tr>
+            <td class="mono"><%= review.target %></td>
+            <td>
+              <%= review.incumbent_name %>@<%= review.incumbent_version %>
+              → <%= review.candidate_name %>@<%= review.candidate_version %>
+              <% if active %><span class="pill completed">active</span><% end %>
+            </td>
+            <td><span class="pill <%= review.status %>"><%= review.status %></span></td>
+            <td class="mono" title="<%= review.evidence_digest %>"><%= review.evidence_digest.to_s.first(20) %>…</td>
+            <td>
+              <% if review.pending? %>
+                <%= form_with url: exploration_review_approve_path(review.id), method: :post, local: true,
+                              style: "display:inline" do |form| %>
+                  <%= form.text_field :reason, placeholder: "motivo (opcional)", size: 18 %>
+                  <%= form.submit "Aprobar" %>
+                <% end %>
+                <%= form_with url: exploration_review_reject_path(review.id), method: :post, local: true,
+                              style: "display:inline" do |form| %>
+                  <%= form.text_field :reason, placeholder: "motivo requerido", required: true, size: 18 %>
+                  <%= form.submit "Rechazar" %>
+                <% end %>
+              <% elsif active %>
+                <%= form_with url: exploration_review_rollback_path(review.id), method: :post, local: true,
+                              style: "display:inline" do |form| %>
+                  <%= form.text_field :reason, placeholder: "motivo requerido", required: true, size: 18 %>
+                  <%= form.submit "Rollback" %>
+                <% end %>
+              <% else %>
+                <span class="dim"><%= review.reviewed_by || "—" %></span>
+              <% end %>
+            </td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  <% end %>
+</div>
+
+<p class="dim">
+  Actualizado <%= @snapshot.generated_at.utc.iso8601 %>.
+  Aprobar sólo cambia un binding declarativo auditable; nunca registra ni ejecuta código.
+</p>
