@@ -340,12 +340,14 @@ module Agentkit
     end
 
     class ExperimentResult
+      attr_reader :scope
       attr_reader :id, :base_manifest, :task, :revisions, :validations,
                   :probes, :contrasts, :composition, :selected_manifest,
                   :started_at, :completed_at
 
       def initialize(id:, base_manifest:, task:, revisions:, validations:, probes:,
-                     contrasts:, composition:, selected_manifest:, started_at:, completed_at:)
+                     contrasts:, composition:, selected_manifest:, started_at:, completed_at:, scope: nil)
+        @scope = scope && Harness.deep_freeze(DeclarativeData.normalize(scope, label: "experiment scope"))
         @id = id.to_s.freeze
         @base_manifest = base_manifest
         @task = task
@@ -366,7 +368,7 @@ module Agentkit
 
       def to_h
         {
-          "id" => id, "base_manifest_digest" => base_manifest.digest,
+          "id" => id, "scope" => scope, "base_manifest_digest" => base_manifest.digest,
           "task_digest" => task.digest, "revision_digests" => revisions.map(&:digest),
           "validations" => validations.map(&:to_h), "probes" => probes.map(&:to_h),
           "contrasts" => contrasts.map(&:to_h), "composition" => composition.to_h,
@@ -416,7 +418,8 @@ module Agentkit
           id: id, base_manifest: base_manifest, task: task, revisions: revisions,
           validations: reports, probes: probes, contrasts: contrasts,
           composition: composition, selected_manifest: selected_manifest,
-          started_at: started_at, completed_at: Time.now.utc
+          started_at: started_at, completed_at: Time.now.utc,
+          scope: { tenant_key: context.tenant_key, account_id: context.to_h[:account_id] }
         )
         record_completion(result)
         result

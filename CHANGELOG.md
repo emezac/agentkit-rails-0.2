@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.1 — 2026-10-23
+
+### Added
+
+- Opt-in Experience Library backed by Memory, isolated by tenant/account/domain.
+- Evidence-gated capture of positive and negative lessons from isolated repeated
+  probes; explicit NO_ENTRY for insufficient or confounded evidence.
+- Candidate review, activation, rejection, expiry and explicit supersession with
+  immutable hash-linked snapshots; conflicting histories fail closed.
+- Bounded ContextMap retrieval of active, unexpired hypotheses and dry-run-first
+  lifecycle maintenance, with audit and telemetry events.
+- Experiment result scope provenance and PostgreSQL integration coverage.
+
+### Compatibility
+
+- No migration required. Review authorization and serialized writes remain host
+  responsibilities; no automatic policy activation or distributed CAS.
+
 ## 1.4.0 — 2026-10-23
 
 ### Added

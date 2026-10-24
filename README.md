@@ -1,9 +1,9 @@
-# AgentKit Rails v1.4.0
+# AgentKit Rails v1.4.1
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.4.0"
+gem "agentkit-rails", "~> 1.4.1"
 ```
 
 ```bash
@@ -13,6 +13,47 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Experience Library en 1.4.1
+
+Convierte resultados de experimentos en lecciones candidatas con procedencia
+verificable, separadas por tenant, cuenta y dominio. No modifica el harness
+ni activa lecciones automáticamente.
+
+```ruby
+library = Agentkit::Harness::ExperienceLibrary.new(
+  domain: "support", context: Agentkit.context
+)
+entry = library.capture!(
+  result: result, revision_id: result.revisions.first.id,
+  cue: "support citations", lesson: "Verificar citas antes de responder.",
+  applicability: "Respuestas de soporte con fuentes",
+  topics: %w[support citations], ttl: 30.days
+)
+# nil significa NO_ENTRY: la evidencia no supera la compuerta.
+if entry
+  library.transition!(entry.id, to: :active, actor: "reviewer:42",
+                      reason: "Evidencia revisada")
+end
+context_slice = library.retrieve(query: "support citations")
+library.maintain!                      # dry-run por defecto
+library.maintain!(dry_run: false)       # vencidas -> stale; conserva historia
+```
+
+Se exige un único cambio validado, al menos dos probes exitosos por variante,
+condiciones emparejadas y atribución `helped` o `hurt` con evidencia de ambas.
+Los resultados confundidos, sin efecto o fallidos no generan entrada.
+Las lecciones negativas también sirven aunque el experimento conserve la base.
+La aplicación anfitriona autentica y autoriza al revisor; `actor` es trazabilidad,
+no un mecanismo de permisos.
+
+Sólo se recuperan entradas activas y vigentes, mediante los límites de ContextMap,
+etiquetadas como hipótesis no confiables que deben revalidarse. Memory conserva
+snapshots durables `imagined`, sin embeddings ni outputs brutos de probes.
+Las revisiones declarativas y los textos proporcionados sí se almacenan:
+no incluyas secretos. No requiere migración. El host debe serializar escrituras
+por experiencia; los conflictos concurrentes se detectan y bloquean la lectura,
+pero no existe compare-and-swap distribuido.
 
 ## Harness Experiments en 1.4
 

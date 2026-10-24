@@ -1,3 +1,23 @@
+# Upgrading 1.4.0 → 1.4.1
+
+No database migration is required. Experience Library is opt-in and uses the
+existing Memory port (in-memory or ActiveRecord), with durable, imagined records.
+Validity TTL belongs to the experience, not to Memory retention: expired entries
+stop being retrieved immediately, while maintenance records a stale transition
+without deleting audit history.
+
+Experiment results now include tenant/account scope. Capture requires an exact
+scope match; older manually constructed results without scope must be rerun.
+Use at least two matched successful probes per variant and a single validated
+change with a helped/hurt attribution referencing baseline and candidate evidence.
+Ineligible evidence returns nil (NO_ENTRY), not a reusable lesson.
+
+Activation is explicit. Hosts must authenticate/authorize reviewers and serialize
+writes per experience. Hash-linked snapshots detect missing history, tampering
+and conflicting transitions; they are not digital signatures or distributed CAS.
+Storage size uses harness.max_checkpoint_bytes; retrieval uses existing ContextMap
+limits. No live harness, prompt or policy is automatically changed.
+
 # Upgrading 1.3.0 → 1.4.0
 
 No database migration is required. Harness experiments are opt-in and do not
