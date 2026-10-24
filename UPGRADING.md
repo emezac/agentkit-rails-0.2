@@ -1,3 +1,39 @@
+# Upgrading 1.4.1 → 1.5.0
+
+GovernedStudy is opt-in. No new migration is required when the distributed
+exploration and promotion-governance migrations from 0.9/1.0 are installed.
+Active Job workers must register identical study definitions and versioned
+executor/judge implementations before processing study worlds.
+
+Use fixed validated revisions and explicit disjoint ExperimentTask cohorts.
+Default minimums are five training and five holdout tasks. Repetitions must be
+between two and harness.max_probe_repetitions; every task's schedule must fit
+exploration.max_rounds and max_nodes. The new harness.max_study_tasks (200)
+bounds total tasks. Dossiers use harness.max_checkpoint_bytes.
+
+The executor returns output_digest and finite nonnegative quality/cost/latency
+metrics. Raw outputs and error text are not persisted. Declarative manifests
+are included in review evidence: do not embed credentials or sensitive input.
+The runner/metrics judge version must be reflected in executor_digest.
+
+Selection uses only training; holdout executes only baseline plus the frozen
+winner. Shared paired bootstrap now supports per-task harness means without
+changing replay evaluation semantics. A nonsignificant holdout returns retain;
+submit! rejects it. No promotion is automatic.
+
+Human reviews reuse Exploration::Governance and the protected exploration
+dashboard. A harness approval checks the current binding digest atomically
+against its evaluated incumbent. Legacy exploration reviews retain their
+existing behavior. active_manifest resolves only known validated manifests,
+and rollback restores the previous binding (or host baseline if none existed).
+
+Distributed execution is per task, not per individual probe. Keep world IDs
+and use existing work/resume/reconciliation for interrupted deliveries.
+Re-running a phase starts new worlds; it is not a phase-idempotency API.
+Hosts own authentication, durable job delivery, genuinely independent tasks,
+fresh holdout cohorts and sandbox enforcement. No claim of cross-study holdout
+secrecy, automatic dataset refresh, or executable-code self-modification.
+
 # Upgrading 1.4.0 → 1.4.1
 
 No database migration is required. Experience Library is opt-in and uses the

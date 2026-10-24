@@ -2006,10 +2006,22 @@ module Agentkit
           raise ConfigurationError, "statistical comparison requires the same replay worlds"
         end
 
+        compare_paired_scores(incumbent_scores: incumbent_scores, candidate_scores: candidate_scores,
+                             history_digest: incumbent.history_digest, incumbent_digest: incumbent.policy_digest,
+                             candidate_digest: candidate.policy_digest)
+      end
+
+      # Shared paired bootstrap for replay and independent harness task means.
+      def compare_paired_scores(incumbent_scores:, candidate_scores:, history_digest:,
+                                incumbent_digest:, candidate_digest:, metric: "replay_score",
+                                settings: Agentkit.config.exploration)
+        if incumbent_scores.empty? || incumbent_scores.keys.sort != candidate_scores.keys.sort ||
+           (incumbent_scores.values + candidate_scores.values).any? { |v| !v.is_a?(Numeric) || !v.finite? }
+          raise ConfigurationError, "statistical comparison requires finite paired samples"
+        end
         differences = incumbent_scores.keys.sort.map do |world_id|
           candidate_scores.fetch(world_id) - incumbent_scores.fetch(world_id)
         end
-        settings = Agentkit.config.exploration
         samples = Integer(settings.bootstrap_samples)
         confidence = Float(settings.confidence_level)
         raise ConfigurationError, "bootstrap samples must be at least 100" if samples < 100
@@ -2019,8 +2031,8 @@ module Agentkit
         minimum_effect = finite_non_negative(settings.min_score_improvement,
                                              label: "minimum score improvement")
         seed_digest = digest_for(
-          history: incumbent.history_digest, incumbent: incumbent.policy_digest,
-          candidate: candidate.policy_digest, samples: samples, confidence: confidence,
+          history: history_digest, incumbent: incumbent_digest,
+          candidate: candidate_digest, samples: samples, confidence: confidence,
           minimum_effect: minimum_effect
         )
         random = Random.new(seed_digest.delete_prefix("sha256:")[0, 16].to_i(16))
@@ -2039,7 +2051,7 @@ module Agentkit
                            0.0
                          end
         StatisticalComparison.new(
-          metric: "replay_score", sample_size: differences.size,
+          metric: metric, sample_size: differences.size,
           mean_difference: mean_difference, median_difference: percentile(differences.sort, 0.5),
           standard_error: standard_error, ci_lower: lower, ci_upper: upper,
           confidence_level: confidence,
@@ -2051,6 +2063,8 @@ module Agentkit
       rescue ArgumentError, TypeError
         raise ConfigurationError, "statistical evaluation settings are invalid"
       end
+
+      public :compare_paired_scores
 
       def percentile(sorted_values, probability)
         return sorted_values.first.to_f if sorted_values.size == 1

@@ -80,7 +80,37 @@
               <% if active %><span class="pill completed">active</span><% end %>
             </td>
             <td><span class="pill <%= review.status %>"><%= review.status %></span></td>
-            <td class="mono" title="<%= review.evidence_digest %>"><%= review.evidence_digest.to_s.first(20) %>…</td>
+            <td title="<%= review.evidence_digest %>">
+              <span class="mono"><%= review.evidence_digest.to_s.first(20) %>…</span>
+              <% if review.evidence["level"] == "harness" %>
+                <% study = review.evidence.fetch("holdout") %>
+                <% comparison = review.evidence.fetch("comparison").stringify_keys %>
+                <details>
+                  <summary>Governed Self-Improvement · <%= study["study_id"] %></summary>
+                  <p>
+                    Holdout: <%= comparison["sample_size"] %> tareas independientes;
+                    <%= study["repetitions"] %> repeticiones por variante.
+                    Δ calidad: <%= comparison["mean_difference"] %>;
+                    IC <%= comparison["confidence_level"] %>:
+                    [<%= comparison["ci_lower"] %>, <%= comparison["ci_upper"] %>].
+                  </p>
+                  <p>Pareto entrenamiento: <%= Array(review.evidence["pareto_frontier"]).join(", ") %></p>
+                  <table>
+                    <thead><tr><th>Holdout</th><th>Calidad ↑</th><th>Costo ↓</th><th>Latencia ↓</th></tr></thead>
+                    <tbody>
+                      <% review.evidence.fetch("holdout_evaluations").each do |evaluation| %>
+                        <tr>
+                          <td><%= evaluation["policy_name"] %></td>
+                          <td><%= evaluation["mean_quality"] %></td>
+                          <td><%= evaluation["mean_cost"] %></td>
+                          <td><%= evaluation["mean_latency"] %></td>
+                        </tr>
+                      <% end %>
+                    </tbody>
+                  </table>
+                </details>
+              <% end %>
+            </td>
             <td>
               <% if review.pending? %>
                 <%= form_with url: exploration_review_approve_path(review.id), method: :post, local: true,

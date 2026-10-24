@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.0 — 2026-10-23
+
+### Added
+
+- GovernedStudy: immutable manifest/task assignments, validated candidates,
+  repeated matched probes, and local or task-distributed execution over existing
+  world jobs, leases, quotas and reconciliation.
+- Training-only Pareto selection over quality/cost/latency followed by a fixed
+  candidate holdout gate. Bootstrap samples independent task means, not repeats.
+- Bounded scoped review dossiers with manifests, executor identity, world
+  digests, holdout assignment and confidence intervals.
+- Explicit approved-manifest resolution; human promotion/rejection and rollback
+  reuse existing governance. Stale-incumbent promotions fail atomically.
+- Harness evidence in the guarded exploration dashboard and a 200-task
+  configurable study ceiling.
+
+### Changed
+
+- Extracted paired sample comparison for reuse by replay and harness studies.
+- No new database migration; distributed mode needs existing 0.9/1.0 tables.
+
 ## 1.4.1 — 2026-10-23
 
 ### Added

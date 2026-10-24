@@ -1,9 +1,9 @@
-# AgentKit Rails v1.4.1
+# AgentKit Rails v1.5.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.4.1"
+gem "agentkit-rails", "~> 1.5.0"
 ```
 
 ```bash
@@ -13,6 +13,83 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Governed Self-Improvement en 1.5.0
+
+`Harness::GovernedStudy` evalúa manifests con probes reales, repetidos y
+emparejados. Selecciona por calidad entre candidatos Pareto de entrenamiento
+(calidad ↑, costo ↓, latencia ↓) y contrasta sólo al seleccionado contra la base
+en tareas holdout disjuntas. El bootstrap usa medias por tarea independiente,
+no trata las repeticiones como muestras nuevas.
+
+```ruby
+Agentkit.configure do |config|
+  config.exploration.enabled = true
+  # Debe cubrir repetitions * (1 + número de candidatos).
+  config.exploration.max_rounds = 12
+end
+
+study = Agentkit::Harness::GovernedStudy.new(
+  id: "support-cycle-2026-10",
+  base: manifest,
+  revisions: candidate_revisions,
+  training_tasks: training_tasks, # ExperimentTask; mínimo 5 por defecto
+  holdout_tasks: holdout_tasks,   # mínimo 5; ids e input_digest disjuntos
+  repetitions: 3,
+  executor: run_measured_probe,
+  executor_digest: Agentkit::Harness.digest("runner-and-judge-v3"),
+  context: Agentkit.context
+)
+# El executor recibe el request habitual de un probe y devuelve:
+# { output_digest: "sha256:...", metrics: { quality: 0.9, cost: 0.02, latency: 120 } }
+# Define unidades consistentes de costo/latencia en todas las tareas.
+
+training = study.run_training
+selection = study.select(training_worlds: training)
+unless selection.selected == "baseline"
+  holdout = study.run_holdout(selection: selection)
+  recommendation = study.recommend(selection: selection, holdout_worlds: holdout)
+  if recommendation.status == "recommend_review"
+    review = study.submit!(target: "harness.support",
+                          selection: selection, holdout_worlds: holdout)
+    # Tras autenticar y autorizar al revisor, o desde el dashboard:
+    Agentkit::Exploration::Governance.approve!(
+      review, actor: "human:42", reason: "holdout revisado",
+      scope: Agentkit::Scope.resolve(context: Agentkit.context)
+    )
+    approved_manifest = study.active_manifest(target: "harness.support")
+    # Rollback explícito:
+    Agentkit::Exploration::Governance.rollback!(
+      review, actor: "human:42", reason: "regresión operativa",
+      scope: Agentkit::Scope.resolve(context: Agentkit.context)
+    )
+  end
+end
+```
+
+La promoción sólo cambia un binding declarativo; el host decide cuándo resolverlo
+y ejecutarlo. Si otro review cambió el binding desde la base evaluada, la
+aprobación falla. El dashboard existente `/agentkit/exploration` muestra
+intervalo de confianza, tamaño de holdout, Pareto y costo/latencia, junto con
+aprobación, rechazo y rollback bajo el guard de consola.
+
+Para distribuir, configura `exploration.store = :active_record` y
+`exploration.execution = :distributed`, usa una cola Active Job durable y
+registra **la misma definición del estudio y executor** con `study.register!`
+en cada worker. Invoca `run_training(distributed: true)`, conserva los world IDs
+y espera su finalización antes de `select`; luego usa
+`run_holdout(selection: selection, distributed: true)` y espera de nuevo.
+Cada job ejecuta una tarea con sus variantes/repeticiones: el paralelismo es
+entre tareas. Reutiliza leases, conciliación de intentos ambiguos y cuotas
+diarias de worlds/attempts. Una entrega duplicada del mismo world no lo repite;
+invocar otra vez `run_training` o `run_holdout` crea un lote nuevo.
+
+Los candidatos y la asignación de datasets quedan fijados en el digest del
+estudio. Puedes pasar `goal:` para aplicar sus recursos protegidos y límites de
+alcance durante la validación. El host garantiza independencia real de tareas, aislamiento del runner,
+versionado del juez y que el holdout no se reutilice para ajustar candidatos
+entre ciclos. Los checks de disjunción no detectan entradas semánticamente
+equivalentes. No hay activación ni ajuste de código automáticos.
 
 ## Experience Library en 1.4.1
 

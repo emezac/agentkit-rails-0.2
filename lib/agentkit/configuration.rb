@@ -241,13 +241,14 @@ module Agentkit
     setting :max_experiment_candidates, default: 8
     setting :max_probe_repetitions,   default: 5
     setting :max_context_delta_bytes, default: 32 * 1024
+    setting :max_study_tasks,         default: 200
 
     def validate
       problems = super
       %i[max_steps max_checkpoint_bytes max_context_bytes max_context_source_bytes
          max_context_sources max_log_entries max_manifest_components
          max_manifest_bytes max_component_bytes max_revision_changes
-         max_experiment_candidates max_probe_repetitions max_context_delta_bytes].each do |name|
+         max_experiment_candidates max_probe_repetitions max_context_delta_bytes max_study_tasks].each do |name|
         value = public_send(name)
         problems << "#{self.class.name}##{name} must be a positive integer" unless
           value.is_a?(Integer) && value.positive?

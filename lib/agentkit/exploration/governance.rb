@@ -87,6 +87,7 @@ module Agentkit
               current = owned_review!(id, scope)
               transitionable!(current, "pending")
               key = binding_key(current.target, scope)
+              Governance.validate_incumbent!(current, @bindings[key])
               previous = descriptor(@bindings[key])
               now = Time.now.utc
               review = replace(current, status: "approved", reviewed_by: actor,
@@ -229,6 +230,7 @@ module Agentkit
             transition(id, from: "pending", to: "approved", actor: actor,
                        reason: reason, scope: scope) do |review_row|
               binding = scoped_bindings(scope).lock.find_or_initialize_by(target: review_row.target)
+              Governance.validate_incumbent!(wrap_review(review_row), binding.persisted? ? wrap_binding(binding) : nil)
               previous = binding.persisted? ? binding_descriptor(binding) : {}
               now = Time.now.utc
               review_row.update!(reviewed_by: actor, review_reason: reason,
@@ -372,6 +374,13 @@ module Agentkit
         def submit!(target:, recommendation:, scope: nil)
           resolved_scope = Scope.resolve(scope)
           validate_recommendation!(recommendation)
+          if recommendation.level == "harness"
+            expected = { "tenant_key" => resolved_scope.tenant_key || "__global__",
+                         "account_id" => resolved_scope.account_id }
+            unless recommendation.holdout.fetch("scope") == expected
+              raise ConfigurationError, "harness recommendation scope mismatch"
+            end
+          end
           incumbent, candidate = recommendation.holdout_evaluations
           evidence = evidence_for(recommendation)
           review = Review.new(
@@ -419,6 +428,14 @@ module Agentkit
 
         def bindings(scope: nil)
           store.bindings(scope: Scope.resolve(scope))
+        end
+
+        # Checked inside each store's atomic approval transaction.
+        def validate_incumbent!(review, binding)
+          return unless review.evidence["level"] == "harness" && binding
+          unless binding.policy_digest == review.incumbent_digest
+            raise DecisionConflict, "harness incumbent changed; run a new study before promotion"
+          end
         end
 
         private
