@@ -1,3 +1,63 @@
+# Upgrading 1.5.1 → 1.6.0
+
+No database migration. Progressive Agent Loop is opt-in via Agent#run_loop.
+Existing chat/complete/Flow entry points retain their APIs. The core still has
+no runtime gem dependencies; ruby_llm >= 1.15 and < 2 is needed for native turns,
+while Fake supports deterministic offline turn scripts. RubyLLM and WebMock
+were added only to development/test dependencies for real-SDK contract checks.
+
+Add description/trigger/version/owner metadata to Skill definitions. Existing
+skills remain valid with empty descriptors. run_loop lists metadata initially;
+procedure fragments and context providers load on demand once per run. Inputs
+and context providers remain host owned. Skill-level model/schema preferences
+do not silently replace the loop's fixed model/final output schema.
+
+Declare direct ToolContract objects through tools:, optional eager_tools:, or
+uses_skills. Tools are deferred by default and schemas become callable on the
+next turn after search/loading. max_tools bounds active domain tools, excluding
+the two control schemas. A skill's entire permitted tool set must fit that bound
+to activate. Catalogs reject ambiguous names and contract drift.
+
+authorize and authorize_skill callbacks take (object, context) and must return
+true. Root/child class policies and inherited authorizers intersect. Skill denial
+also hides its tools unless the host independently supplies them as explicit
+contracts. Tools with non-read-only effects still require governed Actions/HITL;
+discovery and skill text never authorize direct effects.
+
+AgentTool calls a child class's run_loop, not its legacy #call override. It carries
+the same tenant/account/principal, narrower policy and a shared budget subtree.
+Use system/skills to describe the delegated procedure. Nested loops cannot
+replace inherited budgets. Delegation is synchronous and depth bounded.
+
+schema: accepts the kernel JSON Schema subset or LLM::Schema. verifier: is a
+(request, context) callback returning boolean or {accepted:, reasons:}. Both
+checks withhold rejected answers after a bounded repair allowance. Check
+outcome.answered? before presenting content or treating the task as complete.
+
+ExecutionBudget bounds admitted model calls and observed tokens/cost across
+children and nested legacy completions. Usage is charged before schema parsing,
+so invalid/repaired responses are counted exactly once. BudgetExceeded propagates
+without being converted to a provider error. Legacy LLM.complete with tools is
+rejected under ExecutionBudget to prevent opaque SDK tool recursion.
+
+Costs use configured token rates; cached input is included at the standard rate.
+Preflight cannot predict actual token usage or invoice amounts. In-flight work
+can exceed a remaining token/cost allowance; no further steps run after measured
+exhaustion. Failed attempts without usage remain explicitly unmeasured. Cost
+limits require input/output prices; disabling the cost cap exposes unpriced
+models in the budget snapshot.
+
+A native turn uses one fixed profile/provider and makes one request without SDK
+retry or automatic fallback. Stop/refusal/max-token responses never execute their
+proposed tools. Signed provider blocks stay in transient conversation state and
+are not returned to users or recorded in loop Audit. Unsupported adapter/version
+or response shapes fail visibly.
+
+The transcript, catalogs, callbacks and budget are per-process, single-use runtime
+state. Context.loop_state is inherited in-process and excluded from Context.to_h.
+There is no durable loop resume or distributed shared-budget ledger in 1.6.0.
+Existing Flow/job governance remains separate; do not serialize loop callbacks.
+
 # Upgrading 1.5.0 → 1.5.1
 
 Architecture Evaluation is opt-in. No migration is required. Existing studies

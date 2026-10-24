@@ -1,9 +1,9 @@
-# AgentKit Rails v1.5.1
+# AgentKit Rails v1.6.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.5.1"
+gem "agentkit-rails", "~> 1.6.0"
 ```
 
 ```bash
@@ -13,6 +13,175 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Progressive Agent Loop en 1.6.0
+
+`Agent#run_loop` mantiene una conversación durante la tarea y controla cada
+turno del modelo. Inicialmente ofrece un catálogo breve de skills y las
+herramientas `load_skill` / `search_tools`; los procedimientos, proveedores de
+contexto y esquemas completos se cargan cuando se solicitan.
+
+```ruby
+Agentkit::Skill.define(:support_lookup) do |skill|
+  skill.description("Consultar tickets del tenant y verificar su estado")
+  skill.trigger("preguntas sobre tickets")
+  skill.version("1")
+  skill.owner("support")
+  skill.prompt("Consulta el ticket antes de afirmar su estado. Cita su referencia.")
+  skill.tool(:ticket_status, description: "Consultar el estado de un ticket",
+             params: { id: :integer }) do |id:|
+    ctx = Agentkit::Context.current
+    ticket = Ticket.where(account_id: ctx.to_h.fetch(:account_id)).find(id)
+    { status: ticket.status, reference: "ticket:#{ticket.id}" }
+  end
+end
+
+class SupportAgent < Agentkit::Agent
+  uses_skills :support_lookup
+  allow_tools :ticket_status
+end
+
+ctx = Agentkit::Context.new(account: current_account, principal: current_user.id.to_s)
+outcome = SupportAgent.new(context: ctx).run_loop(
+  "¿Cuál es el estado del ticket 42?",
+  authorize: ->(tool, context) { permitted_tool?(context.principal, tool.name) }
+)
+if outcome.answered?
+  outcome.content
+else
+  outcome.stop_reason # budget_exhausted, context_limit, verification_failed, etc.
+end
+outcome.usage.to_h
+outcome.budget
+```
+
+Las skills declaradas se fotografían por ejecución y sus proveedores se evalúan
+una vez al cargar. `authorize_skill: ->(skill, context) { ... }` controla tanto
+el catálogo visible como la carga y las herramientas pertenecientes a esa skill.
+La búsqueda sólo revela herramientas autorizadas. El permiso se revisa de nuevo
+al ejecutar, junto con el allow/deny del agente y las restricciones heredadas.
+Un esquema descubierto en un lote sólo se puede llamar a partir del siguiente
+turno. `tools:` declara contratos adicionales y `eager_tools:` permite ofrecer
+algunos desde el inicio. Se rechazan nombres ambiguos o reservados.
+
+Las herramientas mantienen ToolContract: input/output, precondiciones, evidencia
+y timeouts. Las de efecto internal/external no se ejecutan directamente:
+expón las propuestas/operaciones gobernadas de Actions/HITL que ya use tu host.
+Las lecturas con `metadata: { parallel_safe: true }` pueden ejecutarse en paralelo,
+hasta el límite configurado; el host declara su independencia. Los resultados
+conservan el orden solicitado. Carga de skills, descubrimiento y delegación son
+secuenciales. Los errores enviados al modelo incluyen códigos, sin texto bruto
+de excepciones.
+
+### Delegación y validación final
+
+```ruby
+class ResearchAgent < Agentkit::Agent
+  uses_skills :support_lookup
+  allow_tools :ticket_status
+end
+class SupportCoordinator < Agentkit::Agent
+  uses_skills :support_lookup
+  allow_tools :research, :ticket_status
+end
+delegate = Agentkit::AgentTool.new(
+  name: :research, agent: ResearchAgent,
+  description: "Investigar un tema con contexto separado",
+  system: "Investiga con fuentes y deja explícito lo pendiente."
+)
+# El padre debe permitir también los nombres de herramientas que autorice al
+# hijo; las políticas y authorizers de ambos se intersectan.
+result = SupportCoordinator.new(context: ctx).run_loop(
+  "Investiga este caso", tools: [delegate], eager_tools: [:research]
+)
+
+schema = { type: "object", properties: { answer: { type: "string" } },
+           required: ["answer"], additionalProperties: false }
+result = SupportAgent.new(context: ctx).run_loop(
+  "Responde con evidencia", schema: schema,
+  verifier: ->(request, context) {
+    { accepted: independently_verified?(request, context), reasons: [] }
+  }
+)
+result.parsed if result.answered?
+```
+
+AgentTool invoca `agent.new(context: child_context).run_loop`; un override antiguo
+de `#call` no se ejecuta por esta vía. Usa `system:`, skills y herramientas para
+definir la tarea delegada. Devuelve un contrato común con answer/status,
+evidence_refs, unresolved y usage. Conserva tenant, cuenta y principal y crea
+una vista hija del presupuesto. El padre mantiene la conversación con el usuario.
+
+El schema final usa el subconjunto JSON Schema del kernel y admite también
+`LLM::Schema`. Sus errores y los rechazos del verificador consumen turnos;
+tras dos rechazos por defecto, la respuesta queda retenida. El callback de
+verificación recibe un snapshot inmutable con answer, evidence_refs y digest
+del transcript, además del contexto. No recibe ni persiste razonamiento privado.
+El loop respeta `default_model`/`default_schema` del agente; una skill cargada no
+cambia por sí sola el modelo o schema final.
+
+### Presupuesto y adaptadores
+
+```ruby
+Agentkit.configure do |config|
+  config.agent_loop.max_turns = 20
+  config.agent_loop.max_tokens = 100_000
+  config.agent_loop.max_cost_usd = 1.0
+  config.agent_loop.max_output_tokens = 2_048
+  config.agent_loop.max_batch = 8
+  config.agent_loop.max_parallel_tools = 4
+  config.agent_loop.max_tools = 16
+  config.agent_loop.max_delegation_depth = 3
+end
+budget = Agentkit::ExecutionBudget.new(max_turns: 30, max_tokens: 80_000, max_cost_usd: 0.5)
+outcome = SupportAgent.new(context: ctx).run_loop("Consulta el caso", budget: budget)
+```
+
+El presupuesto compartido cuenta admisiones de llamadas al modelo, tokens de
+input+output (incluida caché) y costo calculado con las tarifas configuradas.
+Las vistas hijas atribuyen consumo a cada subárbol sin sumarlo dos veces al padre.
+Outcome.usage corresponde al loop actual y sus hijos; budget[:usage] muestra el
+total del presupuesto compartido, incluso si se reutiliza en varios loops.
+El límite local de turnos sigue aplicando aunque se pase un presupuesto mayor.
+También se contabilizan llamadas LLM tradicionales y reparaciones de schema
+hechas dentro de herramientas. Con presupuesto compartido se rechaza el uso de
+`LLM.complete(tools: ...)`: ese ciclo recursivo del SDK ocultaría llamadas.
+
+Se comprueba capacidad antes de llamar y consumo medido después de responder.
+Una respuesta o un lote ya en vuelo puede superar el remanente; entonces se
+detienen los siguientes pasos. El costo es una estimación por tarifas, sin
+descuentos de caché ni conciliación de factura. Con límite monetario se exigen
+precios de input/output. Al desactivarlo (`max_cost_usd: nil`), los modelos sin
+precio quedan declarados en `budget[:unpriced_models]`. Los intentos sin uso
+reportado figuran en `budget[:unmeasured_calls]`.
+
+`LLM.turn` ejecuta una sola petición nativa y devuelve propuestas de herramientas;
+el SDK no ejecuta código. Requiere ruby_llm >= 1.15 y < 2 en producción, además
+de la configuración de credenciales del proveedor. Usa copias de configuración
+por llamada y respeta credenciales de ModelProfile. El adaptador
+openai_compatible usa también api_base/openai_api_key de AgentKit. Puede
+configurarse `ModelProfile.thinking` con las opciones nativas del SDK. Se han
+probado OpenAI-compatible y Anthropic con el SDK real y HTTP simulado, incluidas
+firmas de razonamiento, caché, rechazos y truncamiento. Otros adaptadores deben
+implementar el puerto `turn`; el adaptador base falla explícitamente.
+
+```ruby
+# Pruebas sin red:
+Agentkit.config.llm.adapter = :fake
+Agentkit::LLM::Adapters::Fake.respond_with_turns(
+  { tool_calls: [{ id: "search-1", name: "search_tools", arguments: { query: "ticket" } }] },
+  { content: "No se encontró información suficiente." }
+)
+```
+
+Este API es opt-in: `chat`, `complete` y Flow siguen disponibles. Cada AgentLoop
+es de un solo uso; el transcript y el presupuesto compartido viven en el proceso
+durante la tarea. No se guardan automáticamente ni se trasladan a Active Job.
+Los eventos llm.turn, agent_loop.skill_loaded, tools_discovered y completed
+permiten medir selección, uso y finalización; el Audit propio del loop almacena
+digests y métricas, no prompts, argumentos, outputs o bloques privados.
+GovernedStudy y ArchitectureEvaluation pueden evaluar este runtime mediante su
+executor, manteniendo holdout, revisión humana y rollback de bindings.
 
 ## Architecture Evaluation en 1.5.1
 

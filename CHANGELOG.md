@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.6.0 — 2026-10-24
+
+### Added
+
+- Opt-in Agent#run_loop with bounded single-use conversations, explicit tool
+  batches, ordered results, final schema validation and independent verification.
+- SkillCatalog and ToolCatalog for deferred procedures/providers and schemas,
+  progressive discovery, per-principal authorization and contract integrity.
+- AgentTool with structured child results, inherited tenant/principal/policies
+  and depth-limited delegation.
+- Thread-safe ExecutionBudget with subtree usage attribution, shared call/token/
+  cost bounds, pricing checks and explicit unmeasured/unpriced accounting.
+- Native single-request LLM.turn ports for RubyLLM/OpenAI-compatible and Fake;
+  SDK contract coverage for tool ids, cache tokens, credential isolation,
+  refusals, truncation and signed Anthropic reasoning blocks.
+- Redacted loop audit/telemetry and integration with governed architecture evals.
+
+### Changed
+
+- Legacy completions now charge each received response before schema parsing,
+  preventing schema-repair double charging and uncounted invalid responses.
+- BudgetExceeded stays typed; opaque legacy SDK tool loops are refused under an
+  ExecutionBudget. Other legacy callers keep their existing API.
+- Development/test dependencies include RubyLLM and WebMock; no runtime dependency
+  or schema migration added.
+
 ## 1.5.1 — 2026-10-24
 
 ### Added

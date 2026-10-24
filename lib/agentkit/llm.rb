@@ -42,6 +42,9 @@ module Agentkit
                    timeout: nil, tools: nil, schema: nil, cache: nil, stream: nil,
                    agent: nil, prompt_id: nil, prompt_version: nil,
                    experiment_id: nil, experiment_arm: nil)
+        if Context.current&.budget.respond_to?(:admit_model!) && tools && !Array(tools).empty?
+          raise ConfigurationError, "use AgentLoop for budgeted tool execution; legacy SDK loops are opaque"
+        end
         # `Array(nil)` is empty, so an explicit `model: nil` (what Agent#complete
         # passes when no profile is chosen) must fall back to :default rather
         # than skipping the loop and raising "no profile could serve".
@@ -125,6 +128,8 @@ module Agentkit
           attempts += 1
           raise CircuitOpen.new("circuit open for #{profile.provider}", provider: profile.provider) if circuit_open?(profile.provider) && attempts == 1
 
+          budget = Context.current&.budget
+          budget.admit_model!(profile) if budget.respond_to?(:admit_model!)
           raw = adapter.chat(
             prompt:      prompt,
             model:       profile.model,
@@ -138,6 +143,8 @@ module Agentkit
             api_key:     profile.api_key
           )
           record_success(profile.provider)
+        rescue BudgetExceeded
+          raise
         rescue StandardError => e
           error = normalize_error(e, profile)
           record_failure(profile.provider) if error.is_a?(TransientError)
@@ -155,6 +162,7 @@ module Agentkit
         end
 
         usage = build_usage(raw, profile, started)
+        charge_budget(usage)
         parsed, violations = parse_with_schema(raw.content, schema)
 
         # One re-ask with the violations spelled out before giving up. This is
@@ -188,8 +196,6 @@ module Agentkit
                   prompt_version: prompt_version, experiment_id: experiment_id,
                   experiment_arm: experiment_arm, started: started,
                   fallback_used: fallback_used)
-
-        charge_budget(usage)
 
         Response.new(content: raw.content, parsed: parsed, usage: usage, model: profile.model,
                      profile: profile_name, cached: false, attempts: attempts,
@@ -275,7 +281,11 @@ module Agentkit
 
       def charge_budget(usage)
         budget = Context.current&.budget
-        budget&.charge(:llm_usd, usage.cost_usd)
+        if budget.respond_to?(:charge_usage!)
+          budget.charge_usage!(usage)
+        else
+          budget&.charge(:llm_usd, usage.cost_usd)
+        end
       end
 
       def normalize_error(error, profile)

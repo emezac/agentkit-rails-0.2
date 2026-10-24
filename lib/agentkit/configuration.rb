@@ -16,6 +16,7 @@ module Agentkit
     setting :fallback
     setting :price_in     # USD per 1M input tokens  (nil => look up in Pricing)
     setting :price_out    # USD per 1M output tokens
+    setting :thinking     # Optional native single-turn reasoning configuration
 
     # Per-profile credentials, so two OpenAI-compatible gateways can coexist.
     #
@@ -554,6 +555,37 @@ module Agentkit
     setting :graph_trace_max_bytes, default: 256 * 1024
   end
 
+  # Opt-in conversational loop limits, independent from declarative Flow bounds.
+  class AgentLoopSettings < Settings
+    setting :max_turns, default: 20
+    setting :max_tokens, default: 100_000
+    setting :max_cost_usd, default: 1.0
+    setting :max_output_tokens, default: 2_048
+    setting :max_batch, default: 8
+    setting :max_parallel_tools, default: 4
+    setting :max_tools, default: 16
+    setting :max_catalog_tools, default: 256
+    setting :max_skills, default: 64
+    setting :max_skill_bytes, default: 16 * 1024
+    setting :max_tool_result_bytes, default: 16 * 1024
+    setting :max_context_bytes, default: 256 * 1024
+    setting :max_response_bytes, default: 64 * 1024
+    setting :max_delegation_depth, default: 3
+    setting :max_verifier_rejections, default: 2
+
+    def validate
+      problems = super
+      (self.class.settings_schema.keys - [:max_cost_usd]).each do |name|
+        value = public_send(name)
+        problems << "#{self.class.name}##{name} must be a positive integer" unless value.is_a?(Integer) && value.positive?
+      end
+      if max_cost_usd && (!max_cost_usd.is_a?(Numeric) || !max_cost_usd.finite? || max_cost_usd <= 0)
+        problems << "#{self.class.name}#max_cost_usd must be positive and finite or nil"
+      end
+      problems
+    end
+  end
+
   # ─── Root ────────────────────────────────────────────────────────────────────
 
   class Configuration < Settings
@@ -572,6 +604,7 @@ module Agentkit
     setting :features,       default: -> { [] }
 
     group :llm,       LLMSettings
+    group :agent_loop, AgentLoopSettings
     group :memory,    MemorySettings
     group :hitl,      HITLSettings
     group :flow,      FlowSettings

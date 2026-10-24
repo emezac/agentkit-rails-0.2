@@ -49,6 +49,9 @@ module Agentkit
     end
   end
   class ExplorationQuotaExceeded < BudgetExceeded; end
+  class AgentLoopError < Error; end
+  class AgentLoopProtocolError < AgentLoopError; end
+  class AgentLoopLimitExceeded < AgentLoopError; end
 
   # ─── Long-running harness ─────────────────────────────────────────────────
   class HarnessError < Error; end

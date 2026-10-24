@@ -17,9 +17,10 @@ module Agentkit
   class Context
     attr_reader :user, :account, :tenant_key, :run_id, :trace_id, :metadata, :parent, :principal
     attr_accessor :budget
+    attr_reader :loop_state
 
     def initialize(user: nil, account: nil, tenant_key: nil, run_id: nil, trace_id: nil,
-                   budget: nil, config: nil, metadata: {}, parent: nil, principal: nil)
+                   budget: nil, config: nil, metadata: {}, parent: nil, principal: nil, loop_state: nil)
       @user       = user
       @account    = account
       @tenant_key = tenant_key || derive_tenant_key(account)
@@ -30,6 +31,7 @@ module Agentkit
       @metadata   = metadata || {}
       @parent     = parent
       @principal  = principal
+      @loop_state = loop_state
     end
 
     # Effective configuration for this context, with per-tenant overrides applied
@@ -50,7 +52,8 @@ module Agentkit
         config:     overrides.fetch(:config, @config),
         metadata:   metadata.merge(overrides.fetch(:metadata, {})),
         parent:     self,
-        principal:  overrides.fetch(:principal, principal)
+        principal:  overrides.fetch(:principal, principal),
+        loop_state: overrides.fetch(:loop_state, loop_state)
       )
     end
 

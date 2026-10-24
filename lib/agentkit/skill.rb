@@ -51,6 +51,18 @@ module Agentkit
       self
     end
 
+    # Catalog metadata is read without rendering procedures or context providers.
+    %i[description trigger version owner].each do |field|
+      define_method(field) do |value = nil|
+        if value.nil?
+          instance_variable_get(:"@#{field}") || (field == :version ? "1" : "")
+        else
+          instance_variable_set(:"@#{field}", value.to_s)
+          self
+        end
+      end
+    end
+
     def tool(tool_name, description: nil, params: {}, input_schema: nil, output_schema: nil,
              preconditions: nil, success_evidence: nil, risk: :read, effect: :read_only,
              timeout: 30, retry: {}, metadata: {}, &block)

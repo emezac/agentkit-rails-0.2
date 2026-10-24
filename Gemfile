@@ -18,4 +18,7 @@ group :development, :test do
   gem "rubyzip"
   # Conformance tests exercise the optional adapter against the official SDK.
   gem "mcp", "~> 1.5"
+  # Exercise the single-turn adapter against the real SDK with HTTP stubs.
+  gem "ruby_llm", "~> 1.15"
+  gem "webmock", "~> 3.26"
 end
