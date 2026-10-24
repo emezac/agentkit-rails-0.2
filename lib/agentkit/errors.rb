@@ -55,6 +55,15 @@ module Agentkit
   class HarnessIncomplete < HarnessError; end
   class HarnessPersistenceError < HarnessError; end
   class HarnessIntegrityError < HarnessError; end
+  class VerificationError < HarnessError; end
+  class ContextMapError < HarnessError; end
+  class StaleContextError < ContextMapError; end
+
+  # ─── Tool contracts ───────────────────────────────────────────────────────
+  class ToolError < Error; end
+  class ToolPreconditionFailed < ToolError; end
+  class ToolEvidenceMissing < ToolError; end
+  class ToolExecutionDenied < ToolError; end
 
   # ─── Flow ──────────────────────────────────────────────────────────────────
   class FlowError < Error; end

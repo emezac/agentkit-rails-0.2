@@ -1,9 +1,9 @@
-# AgentKit Rails v1.2.0
+# AgentKit Rails v1.3.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.2.0"
+gem "agentkit-rails", "~> 1.3.0"
 ```
 
 ```bash
@@ -14,7 +14,13 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
-## Goal contracts y privilegio mínimo en 1.2
+## Harness engineering verificable en 1.3
+
+1.3 convierte las instrucciones operativas en contratos ejecutables: alcance,
+restricciones, recursos protegidos y aprobaciones son compuertas de
+finalización. Un `ContextMap` recupera sólo fuentes relevantes y comprueba su
+frescura/digest; un `Verifier` independiente sólo admite herramientas de
+lectura; el recibo final separa lo verificado, pendiente y riesgoso.
 
 Los trabajos largos terminan por evidencia, no porque el modelo escriba
 "terminado". Un goal declara criterios, outputs y un presupuesto de pasos; el
@@ -29,12 +35,18 @@ goal = Agentkit::Harness.define(
     { id: "tests", description: "suite completa en verde" },
     { id: "review", description: "revisión independiente sin bloqueos" }
   ],
+  constraints: [
+    { id: "no-prod-write", description: "producción permanece intacta", kind: :must_not }
+  ],
+  scope: { include: ["lib/**", "spec/**"], exclude: ["config/credentials.yml.enc"] },
+  protected_resources: ["production/database"],
+  required_approvals: ["release:publish"],
   required_outputs: %w[changelog package],
   max_steps: 12
 )
 
 progress = Agentkit::Harness.start(goal)
-progress.record_output("package", reference: "artifact:agentkit-1.2.0.gem", value: gem_bytes)
+progress.record_output("package", reference: "artifact:agentkit-1.3.0.gem", value: gem_bytes)
 progress.record_evidence(
   criterion: "tests", verdict: :verified,
   source: "ci:build-918", summary: "1,203 examples, 0 failures",
@@ -46,8 +58,60 @@ Agentkit::Harness.checkpoint!(progress, context: Agentkit.context)
 # Otro worker o una sesión posterior:
 progress = Agentkit::Harness.resume("release-42", context: Agentkit.context)
 progress.context_fragment # bloque acotado para build_context(extra: ...)
-progress.complete!        # falla cerrado mientras falte evidencia/output
+progress.record_approval(
+  "release:publish", actor: "principal:42", evidence_ref: "approval:991"
+)
+progress.complete!        # falla cerrado mientras falte evidencia/output/aprobación
 ```
+
+Las herramientas de Skills y Capabilities comparten `ToolContract`: schema de
+entrada/salida, precondiciones, efecto, riesgo, timeout, retry acotado y
+evidencia de éxito. Un efecto `internal` o `external` nunca se ejecuta
+directamente desde ese contrato; sigue la vía `Capability -> Actions ->
+Policy/HITL`.
+
+```ruby
+Agentkit::Skill.define(:release_evidence) do |skill|
+  skill.tool(
+    :ci_result,
+    input_schema: {
+      type: "object", properties: { build_id: { type: "integer" } },
+      required: ["build_id"], additionalProperties: false
+    },
+    effect: :read_only,
+    success_evidence: ->(result) { { source: result.fetch(:url) } }
+  ) { |build_id:| CI.result(build_id) }
+end
+```
+
+```ruby
+context_map = Agentkit::Harness::ContextMap.new do
+  source :release_policy, reference: "docs/release.md", topics: %w[release deploy],
+                          observed_at: policy_mtime, fresh_for: 1.day,
+                          digest: expected_policy_digest, required: true
+end
+
+compiled = context_map.compile(query: goal.objective) do |source|
+  { content: File.read(source.reference), observed_at: File.mtime(source.reference) }
+end
+
+verifier = Agentkit::Harness::Verifier.new(
+  name: "release-auditor", reviewer: EvidenceReviewer,
+  rejection_criteria: ["rechazar afirmaciones sin evidencia"]
+)
+review = verifier.verify(progress)
+review.apply_to(progress) # aplicación explícita; verify no muta progress
+
+receipt = Agentkit::Harness::Receipt.build(progress, risks: ["rollout latency"])
+Agentkit::Harness::Metrics.summary(goal_id: goal.id, context: Agentkit.context)
+```
+
+`RecoveryPolicy` aporta una taxonomía compartida (`timeout`, `rate_limited`,
+`missing_context`, `permission_denied`, `ambiguous_effect`, etc.) y detiene
+errores repetidos sin cambio. Los checkpoints 1.2 se leen y se actualizan al
+schema 2 al volver a persistir; no hay migración de base de datos.
+
+## Goal contracts y privilegio mínimo en 1.2
 
 Los agentes también pueden limitar las herramientas que llegan al proveedor.
 La política se aplica tanto a tools provenientes de skills como a `tools:`

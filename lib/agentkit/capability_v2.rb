@@ -88,6 +88,27 @@ module Agentkit
     def external? = @effect == :external
     def legacy_contract? = @input_schema.nil?
 
+    # One introspection contract for Skills and Capabilities. Only unpermissioned
+    # read-only capabilities are callable through this view; every other effect
+    # remains on the governed Actions rail.
+    def tool_contract
+      directly_callable = effect == :read_only && required_permission.to_s.empty?
+      adapter = if directly_callable
+                  ->(**arguments) { execute(arguments, context: Context.resolve) }
+                end
+      ToolContract.new(
+        name: name, description: description || title,
+        input_schema: effective_input_schema, output_schema: @output_schema,
+        risk: @risk, effect: @effect, timeout: @timeout, callable: adapter,
+        metadata: {
+          capability: true, governed: !directly_callable,
+          contract_version: @contract_version,
+          required_permission: @required_permission,
+          idempotency: @idempotency, reconciliation: @reconciliation
+        }
+      )
+    end
+
     def inputs(value = nil)
       return @inputs if value.nil?
 

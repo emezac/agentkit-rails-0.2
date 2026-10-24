@@ -230,12 +230,15 @@ module Agentkit
     setting :max_steps,              default: 20
     setting :max_checkpoint_bytes,   default: 64 * 1024
     setting :max_context_bytes,      default: 8 * 1024
+    setting :max_context_source_bytes, default: 4 * 1024
+    setting :max_context_sources,    default: 24
     setting :max_log_entries,        default: 100
     setting :checkpoint_retention,   default: :durable
 
     def validate
       problems = super
-      %i[max_steps max_checkpoint_bytes max_context_bytes max_log_entries].each do |name|
+      %i[max_steps max_checkpoint_bytes max_context_bytes max_context_source_bytes
+         max_context_sources max_log_entries].each do |name|
         value = public_send(name)
         problems << "#{self.class.name}##{name} must be a positive integer" unless
           value.is_a?(Integer) && value.positive?

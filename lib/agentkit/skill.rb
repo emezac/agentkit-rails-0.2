@@ -20,21 +20,7 @@ module Agentkit
   #     s.context_provider(:overdue, tokens: 200) { |ctx| "Overdue: #{Invoice.overdue.count}" }
   #   end
   class Skill
-    Tool = Struct.new(:name, :description, :params, :callable, keyword_init: true) do
-      def call(**kwargs) = callable.call(**kwargs)
-
-      def to_json_schema
-        {
-          name: name.to_s,
-          description: description.to_s,
-          parameters: {
-            type: "object",
-            properties: (params || {}).transform_values { |t| { type: t.to_s } },
-            required: (params || {}).keys.map(&:to_s)
-          }
-        }
-      end
-    end
+    Tool = Agentkit::ToolContract
 
     Provider = Struct.new(:name, :tokens, :priority, :callable, keyword_init: true) do
       def call(ctx) = callable.arity.zero? ? callable.call : callable.call(ctx)
@@ -65,9 +51,17 @@ module Agentkit
       self
     end
 
-    def tool(tool_name, description: nil, params: {}, &block)
-      @tools[tool_name.to_sym] = Tool.new(name: tool_name.to_sym, description: description,
-                                          params: params, callable: block)
+    def tool(tool_name, description: nil, params: {}, input_schema: nil, output_schema: nil,
+             preconditions: nil, success_evidence: nil, risk: :read, effect: :read_only,
+             timeout: 30, retry: {}, metadata: {}, &block)
+      @tools[tool_name.to_sym] = Tool.new(
+        name: tool_name.to_sym, description: description, params: params,
+        input_schema: input_schema, output_schema: output_schema,
+        preconditions: preconditions, success_evidence: success_evidence,
+        risk: risk, effect: effect, timeout: timeout,
+        retry: binding.local_variable_get(:retry),
+        metadata: metadata, callable: block
+      )
       self
     end
 

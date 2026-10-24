@@ -1,3 +1,53 @@
+# Upgrading 1.2.0 → 1.3.0
+
+No database migration is required. Existing 1.2 harness checkpoints are
+verified using their original digest and upgraded to schema v2 on the next
+write.
+
+Existing goals continue to work. For new long-running tasks, move operational
+boundaries out of prompt prose and into the contract:
+
+```ruby
+goal = Agentkit::Harness.define(
+  objective: "publish a release",
+  criteria: [{ id: "tests", description: "CI passes" }],
+  constraints: [{ id: "no-prod-write", description: "production unchanged", kind: :must_not }],
+  scope: { include: ["lib/**"], exclude: ["config/credentials.yml.enc"] },
+  protected_resources: ["production/database"],
+  required_approvals: ["release:publish"]
+)
+```
+
+Every required approval must be recorded before completion:
+
+```ruby
+progress.record_approval(
+  "release:publish", actor: "principal:42", evidence_ref: "approval:991"
+)
+```
+
+Skill tools remain compatible and default to `effect: :read_only`. Annotate
+mutating tools as `:internal` or `:external`; direct calls will then fail and
+the operation must move behind Capability/Actions/Policy/HITL. Reviewer agents
+used by `Harness::Verifier` must declare an explicit allowlist, including an
+empty list when they need no tools.
+
+The new context limits are optional and have bounded defaults:
+
+```ruby
+config.harness.max_context_bytes = 8.kilobytes
+config.harness.max_context_source_bytes = 4.kilobytes
+config.harness.max_context_sources = 24
+```
+
+After upgrading, run:
+
+```bash
+bundle exec rake verify
+```
+
+---
+
 # Upgrading 1.1.0 → 1.2.0
 
 No database migration is required. Harness checkpoints reuse the memory store,

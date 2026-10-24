@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.0 — 2026-10-23
+
+### Added
+
+- Executable task contracts now include scope, independently evidenced
+  constraints, protected resources and approval gates in addition to criteria,
+  outputs and step budgets.
+- A common `ToolContract` for Skills and Capabilities with closed input/output
+  schemas, preconditions, risk/effect classification, timeout, bounded retry
+  and success evidence.
+- Digest- and freshness-aware `Harness::ContextMap` with progressive disclosure,
+  per-source/total byte limits and explicit untrusted-data labeling.
+- Independent `Harness::Verifier` reviews over immutable evidence snapshots.
+  Verifier agents require an explicit allowlist containing only read-only tools.
+- Redacted harness receipts, explicit facts/decisions/progress/lessons state,
+  a shared recovery taxonomy and operational acceptance/recovery/overhead
+  metrics.
+
+### Security
+
+- Required approvals now gate completion and persist only actor/evidence
+  references plus digests. Constraints are completion gates, not prompt prose.
+- Internal and external `ToolContract` effects refuse direct execution and
+  remain governed by Capability/Actions/Policy/HITL.
+- Required stale, missing or digest-mismatched context fails closed. Verifiers
+  cannot mutate progress; applying a review is a separate explicit operation.
+- Receipts and checkpoints exclude raw output/evidence bodies.
+
+### Compatibility
+
+- Existing Skill tools remain read-only by default and keep the former
+  `call(**kwargs)` interface. Capability v2 exposes the same introspection
+  contract without bypassing governed effects.
+- Schema-v1 harness checkpoints from 1.2 remain readable and are serialized as
+  schema v2 on their next checkpoint. No database migration is required.
+
 ## 1.2.0 — 2026-10-23
 
 ### Added
