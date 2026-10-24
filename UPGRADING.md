@@ -1,3 +1,46 @@
+# Upgrading 1.5.0 → 1.5.1
+
+Architecture Evaluation is opt-in. No migration is required. Existing studies
+without architecture_evaluation/delegation_diagnostics retain their digest,
+probe payload and selection evidence format; 1.5.0 checkpoints remain usable.
+
+Pass Harness::ArchitectureEvaluation to GovernedStudy. ExperimentTask metadata
+may declare architecture.chain (an ordered identifier list), critical (boolean)
+and required_checks (identifier list). Every required chain needs a declared
+case in each cohort. No ordering is inferred from an unordered agent set.
+
+Opted-in executors must return evaluation.success and evaluation.checks with
+boolean verdicts on every repetition. Missing required check verdicts or malformed
+results invalidate probes. Required check failures always block promotion.
+A critical task must meet minimum_success_rate (default 1.0). A regression is
+any decrease in paired task success rate; max_regressions defaults to zero and
+may be nil. Quality deltas remain diagnostic and do not define task completion.
+
+Training selection filters candidates failing these gates. Holdout failures
+return retain/architecture_gate_failed even with a significant quality gain.
+The governance boundary rechecks architecture gate verdicts before accepting
+a promotion recommendation. Human approval and rollback remain explicit.
+
+record_training_architecture_reports! and record_architecture_report! explicitly
+persist both passing and blocked reports to Memory; recommend/select alone do
+not write reports. The protected exploration console lists these reports by
+tenant/account. Snapshots are durable/imagined, non-embedded and digest checked;
+a disabled Memory store or oversized report fails visibly. max_checkpoint_bytes
+bounds each report/dossier. The history lookup scans scoped Memory records and
+is intended for curated evaluation libraries.
+
+DelegationDiagnostics imports scoped peer invocation spans and an explicit agent
+catalog. It does not install tracing middleware or alter routing. Define role,
+shared context_group and isolation flags accurately. Input bounds: 200 requests,
+64 catalog agents, 64 calls per request, 2,000 calls total; reports also obey the
+checkpoint byte limit. Global traces must explicitly declare "__global__".
+
+Only fully sequential peer traces yield ordered chain coverage. Nested coordinator
+spans must be excluded by the exporter. Unknown cost/token/context counts are
+marked incomplete rather than estimated. Reports can be supplied as
+delegation_diagnostics: when constructing the study, binding their digest to
+the study identity. A migration proposal still requires a fresh governed eval.
+
 # Upgrading 1.4.1 → 1.5.0
 
 GovernedStudy is opt-in. No new migration is required when the distributed

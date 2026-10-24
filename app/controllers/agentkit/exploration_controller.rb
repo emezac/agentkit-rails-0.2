@@ -7,6 +7,7 @@ module Agentkit
       @snapshot = Agentkit::Exploration.operations(scope: scope, limit: 100)
       @reviews = Agentkit::Exploration.reviews(scope: scope, limit: 100)
       @bindings = Agentkit::Exploration.policy_bindings(scope: scope).index_by(&:target)
+      @architecture_reports = Agentkit::Harness::ArchitectureEvaluation::Reports.all(context: agentkit_context)
     end
 
     def approve

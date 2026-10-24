@@ -140,6 +140,53 @@
   <% end %>
 </div>
 
+<div class="card">
+  <div class="label">Architecture Evaluation · reportes</div>
+  <% if @architecture_reports.empty? %>
+    <div class="empty">No hay evaluaciones de arquitectura registradas.</div>
+  <% end %>
+  <% @architecture_reports.each do |report| %>
+    <% evaluation = report.fetch("architecture_evaluation") %>
+    <% held = evaluation.fetch(report.fetch("phase")) %>
+    <details>
+      <summary><%= report["study_id"] %> · <%= report["selected"] %> · <%= report["phase"] %> · <%= report["status"] %> · regresiones: <%= held["regressions"] %></summary>
+      <p>Compuerta: <%= held["allowed"] ? "aprobada" : "bloqueada" %> · <%= held["reasons"].join(", ") %></p>
+      <p>Cadenas cubiertas: <%= held.dig("coverage", "covered_count") %> / <%= held.dig("coverage", "required_count") %></p>
+      <% held.dig("coverage", "missing_chains").each do |chain| %>
+        <p>Cadena sin cobertura: <%= chain.join(" → ") %></p>
+      <% end %>
+      <table>
+        <thead><tr><th>Tarea (digest)</th><th>Éxito base → candidato</th><th>Transición</th><th>Δ calidad</th><th>Δ costo</th><th>Δ latencia</th><th>Checks fallidos</th></tr></thead>
+        <tbody>
+          <% held.fetch("tasks").each do |task| %>
+            <tr>
+              <td class="mono" title="<%= task["task_digest"] %>"><%= task["task_digest"].first(20) %><%= task["critical"] ? " · critical" : "" %></td>
+              <td><%= task.dig("baseline", "success_rate") %> → <%= task.dig("candidate", "success_rate") %></td>
+              <td><%= task["transition"] %></td>
+              <td><%= task["quality_delta"] %></td><td><%= task["cost_delta"] %></td><td><%= task["latency_delta"] %></td>
+              <td><%= task["failed_checks"].join(", ") %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+      <% if (diagnostics = report["delegation_diagnostics"]) %>
+        <p>Diagnóstico de delegación · <%= diagnostics["request_count"] %> requests; las propuestas requieren evaluación.</p>
+        <table>
+          <thead><tr><th>Agente</th><th>Decisión propuesta</th><th>Motivo</th></tr></thead>
+          <tbody>
+            <% diagnostics.fetch("agents").each do |agent| %>
+              <tr><td><%= agent["name"] %></td><td><%= agent["decision"] %></td><td><%= agent["reason"] %></td></tr>
+            <% end %>
+            <% diagnostics.fetch("pairs").select { |pair| pair["decision"] == "merge_candidate" }.each do |pair| %>
+              <tr><td><%= pair["agents"].join(" + ") %></td><td>merge_candidate</td><td><%= pair["reason"] %></td></tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% end %>
+    </details>
+  <% end %>
+</div>
+
 <p class="dim">
   Actualizado <%= @snapshot.generated_at.utc.iso8601 %>.
   Aprobar sólo cambia un binding declarativo auditable; nunca registra ni ejecuta código.

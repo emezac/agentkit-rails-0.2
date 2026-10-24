@@ -1,9 +1,9 @@
-# AgentKit Rails v1.5.0
+# AgentKit Rails v1.5.1
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.5.0"
+gem "agentkit-rails", "~> 1.5.1"
 ```
 
 ```bash
@@ -13,6 +13,113 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Architecture Evaluation en 1.5.1
+
+Añade una compuerta opcional de éxito por tarea, checks obligatorios y cobertura
+de cadenas. Un candidato puede mejorar calidad/costo/latencia y aun así quedar
+bloqueado por una regresión de fiabilidad o un requisito incumplido.
+
+```ruby
+architecture = Agentkit::Harness::ArchitectureEvaluation.new(
+  minimum_success_rate: 1.0, max_regressions: 0,
+  required_chains: [["orders", "shipping"]]
+)
+# Al construir cada ExperimentTask, declara la cobertura y sus requisitos:
+task = Agentkit::Harness::ExperimentTask.new(
+  id: "shipping-case-1", input_reference: "case:1",
+  input_digest: Agentkit::Harness.digest(case_body), model: "fixed-model",
+  output_contract: manifest.output_contract,
+  metadata: { architecture: {
+    chain: ["orders", "shipping"], critical: true,
+    required_checks: ["delivery_date_verified"]
+  } }
+)
+# Crea cohortes independientes; cada cadena requerida debe tener al menos un
+# caso declarado tanto en entrenamiento como en holdout.
+study = Agentkit::Harness::GovernedStudy.new(
+  id: "fold-shipping", base: manifest, revisions: candidate_revisions,
+  training_tasks: training_tasks, holdout_tasks: holdout_tasks,
+  executor: run_measured_probe,
+  executor_digest: Agentkit::Harness.digest("runner-and-judge-v4"),
+  architecture_evaluation: architecture
+)
+# El executor devuelve métricas y una evaluación booleana por repetición:
+# { output_digest: "...", metrics: { quality: 0.9, cost: 0.01, latency: 80 },
+#   evaluation: { success: true, checks: { delivery_date_verified: true } } }
+
+training = study.run_training
+study.record_training_architecture_reports!(training_worlds: training)
+selection = study.select(training_worlds: training)
+unless selection.selected == "baseline"
+  holdout = study.run_holdout(selection: selection)
+  report = study.record_architecture_report!(selection: selection, holdout_worlds: holdout)
+  report.dig("architecture_evaluation", "holdout", "pass_to_fail")
+  # Sólo submit! si recommend devuelve recommend_review; el resto del flujo
+  # de aprobación/rollback de 1.5.0 sigue vigente.
+end
+```
+
+Una regresión es una caída de la tasa de éxito entre repeticiones de la misma
+tarea; se detecta incluso si ambas variantes superan el umbral de aprobación.
+`max_regressions: nil` permite esas caídas, pero siguen bloqueando los checks
+obligatorios fallidos, las tareas críticas bajo el umbral y las cadenas sin
+cobertura. Calidad es una medida separada: no se convierte automáticamente en
+éxito. Un resultado mal formado o un check obligatorio ausente invalida el probe.
+
+Los reportes muestran cambios éxito→fallo/fallo→éxito, tasas de éxito,
+repeticiones y deltas por tarea. Se guardan explícitamente en Memory como
+snapshots durables imagined, sin embeddings, aislados por tenant/cuenta y
+verificados por digest. La consola `/agentkit/exploration` muestra también
+reportes bloqueados de entrenamiento y holdout. Registrar un reporte no crea
+un review ni cambia el binding. Sin `architecture_evaluation:`, los estudios
+1.5.0 conservan su identidad y comportamiento.
+
+### Diagnóstico de delegación
+
+```ruby
+diagnostics = Agentkit::Harness::DelegationDiagnostics.analyze(
+  context: Agentkit.context, minimum_requests: 5, coupling_threshold: 0.8,
+  agents: [
+    { name: "orders", role: "domain", context_group: "support" },
+    { name: "shipping", role: "domain", context_group: "support" }
+  ],
+  traces: [{
+    id: "request-1", tenant_key: Agentkit.context.tenant_key || "__global__",
+    account_id: Agentkit.context.to_h[:account_id],
+    calls: [
+      { agent: "orders", start_ms: 0, duration_ms: 20, input_tokens: 300, cost_usd: 0.01 },
+      { agent: "shipping", start_ms: 20, duration_ms: 15, input_tokens: 200, cost_usd: 0.01 }
+    ]
+  }]
+)
+diagnostics.to_h["agents"] # insuficiente evidencia con sólo un request
+diagnostics.required_chains
+# Puedes pasar delegation_diagnostics: diagnostics al construir GovernedStudy
+# para vincular el informe a su identidad, dossier y dashboard.
+```
+
+Importa spans medidos de invocaciones de agentes pares; los tiempos se expresan
+en milisegundos desde el inicio de cada request. No incluyas el span envolvente
+del coordinador como si fuera un par, ni interpretes llamadas al modelo como
+invocaciones distintas del mismo agente. El host exporta estos datos desde sus
+trazas; esta versión no instrumenta automáticamente el ciclo del proveedor.
+
+El diagnóstico propone `fold_candidate`, `merge_candidate`, `keep_as_tool`,
+`inspect` o `insufficient_evidence`. Para sugerir merge exige frecuencia,
+adyacencia temporal, contexto compartido declarado y ausencia de solapamiento.
+Los roles verifier y las banderas `permission_boundary` o
+`independent_context` preservan la separación. Sin datos suficientes no emite
+una recomendación de migración. Las métricas ausentes se marcan incompletas:
+un subtotal reportado no equivale al costo total.
+
+Sólo requests completamente secuenciales generan cadenas observadas, en orden;
+las ejecuciones concurrentes se cuentan como no lineales. Puedes usar
+`diagnostics.required_chains` como entrada explícita de
+`ArchitectureEvaluation.new(required_chains: ...)`, completándola con las rutas
+que el host conozca. La cobertura comprueba casos de evaluación declarados;
+el grader comprueba que cada caso cumpla realmente su procedimiento.
+Los diagnósticos son hipótesis para ensayar, no decisiones automáticas.
 
 ## Governed Self-Improvement en 1.5.0
 

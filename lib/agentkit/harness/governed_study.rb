@@ -7,23 +7,35 @@ module Agentkit
     class GovernedStudy
       Evaluation = Struct.new(:policy_name, :policy_version, :policy_digest,
                               :history_digest, :world_count, :mean_quality,
-                              :mean_cost, :mean_latency, :task_scores, :world_digests,
+                              :mean_cost, :mean_latency, :task_scores, :world_digests, :task_outcomes,
                               keyword_init: true) do
-        def to_h = members.to_h { |key| [key, public_send(key)] }
+        def to_h = members.to_h { |key| [key, public_send(key)] }.reject { |key, value| key == :task_outcomes && value.nil? }
       end
       Selection = Struct.new(:study_digest, :selected, :training_world_ids,
                              :evidence_digest, keyword_init: true)
       Settings = Struct.new(:bootstrap_samples, :confidence_level, :min_score_improvement,
                             :min_holdout_worlds, :min_training_worlds, :pareto_epsilon,
                             keyword_init: true)
-      attr_reader :id, :digest, :base, :manifests, :context, :repetitions, :settings
+      attr_reader :id, :digest, :base, :manifests, :context, :repetitions, :settings,
+                  :architecture_evaluation, :delegation_diagnostics
 
       def initialize(id:, base:, revisions:, training_tasks:, holdout_tasks:,
-                     executor:, executor_digest:, repetitions: 2, context: Context.resolve, goal: nil)
+                     executor:, executor_digest:, repetitions: 2, context: Context.resolve, goal: nil,
+                     architecture_evaluation: nil, delegation_diagnostics: nil)
         @id = id.to_s.freeze
         raise HarnessExperimentError, "study id is required" if @id.empty?
         @base, @context, @executor = base, context, executor
         @scope = Scope.resolve(context: context)
+        @architecture_evaluation = architecture_evaluation
+        @delegation_diagnostics = delegation_diagnostics
+        if architecture_evaluation && !architecture_evaluation.is_a?(ArchitectureEvaluation)
+          raise HarnessExperimentError, "architecture_evaluation must be an ArchitectureEvaluation contract"
+        end
+        if delegation_diagnostics &&
+           (!delegation_diagnostics.is_a?(DelegationDiagnostics::Report) ||
+            delegation_diagnostics.to_h["scope"] != scope_data)
+          raise HarnessIntegrityError, "delegation report scope mismatch"
+        end
         @executor_digest = Harness.valid_digest!(executor_digest)
         @repetitions = Integer(repetitions)
         @tasks = { "training" => Array(training_tasks).dup.freeze,
@@ -42,12 +54,15 @@ module Agentkit
         @manifests.freeze
         @settings = Settings.new(**Settings.members.to_h { |key| [key, context.config.exploration.public_send(key)] }).freeze
         validate!
-        @digest = Harness.digest(
+        identity = {
           id: id, scope: scope_data, manifests: manifests.transform_values(&:digest),
           tasks: @tasks.transform_values { |list| list.map(&:digest) },
           repetitions: repetitions, executor: @executor_digest, settings: settings.to_h,
           goal_digest: goal&.digest
-        ).freeze
+        }
+        identity[:architecture_evaluation] = architecture_evaluation.to_h if architecture_evaluation
+        identity[:delegation_diagnostics_digest] = delegation_diagnostics.digest if delegation_diagnostics
+        @digest = Harness.digest(identity).freeze
       end
 
       # Register on every worker, including all possible frozen holdout pairs.
@@ -79,8 +94,13 @@ module Agentkit
 
       def select(training_worlds:)
         evaluations = evaluate_worlds(training_worlds, "training", manifests.keys)
-        frontier = pareto(evaluations)
         incumbent = evaluations.first
+        eligible = evaluations.select do |evaluation|
+          evaluation.equal?(incumbent) || !architecture_evaluation ||
+            architecture_evaluation.compare(incumbent: incumbent, candidate: evaluation,
+                                             tasks: @tasks.fetch("training")).fetch("allowed")
+        end
+        frontier = pareto(eligible)
         best = frontier.sort_by { |e| [-e.mean_quality, e.mean_cost, e.mean_latency, e.policy_name] }.first
         selected = best.mean_quality > incumbent.mean_quality + settings.min_score_improvement ? best.policy_name : "baseline"
         Selection.new(study_digest: digest, selected: selected,
@@ -92,6 +112,17 @@ module Agentkit
         verified_selection!(selection)
         raise HarnessExperimentError, "training retained the baseline" if selection.selected == "baseline"
         launch("holdout", ["baseline", selection.selected], distributed: distributed)
+      end
+
+      def training_architecture_report(training_worlds:)
+        raise HarnessExperimentError, "architecture evaluation is not enabled" unless architecture_evaluation
+        register!
+        evaluations = evaluate_worlds(training_worlds, "training", manifests.keys)
+        Harness.deep_freeze(evaluations.drop(1).to_h do |candidate|
+          [candidate.policy_name, architecture_evaluation.compare(
+            incumbent: evaluations.first, candidate: candidate, tasks: @tasks.fetch("training")
+          )]
+        end)
       end
 
       def recommend(selection:, holdout_worlds:)
@@ -107,6 +138,13 @@ module Agentkit
           settings: settings
         )
         eligible = pareto(holdout).include?(candidate) && comparison.significant
+        architecture = architecture_report(training, holdout, selection.selected)
+        architecture_allowed = !architecture ||
+                               (architecture["training"]["allowed"] && architecture["holdout"]["allowed"])
+        eligible &&= architecture_allowed
+        holdout_details = {}
+        holdout_details["architecture_evaluation"] = architecture if architecture
+        holdout_details["delegation_diagnostics"] = delegation_diagnostics.to_h if delegation_diagnostics
         recommendation = Exploration::Recommendation.new(
           status: eligible ? "recommend_review" : "retain", level: "harness",
           incumbent: "baseline", selected: selection.selected,
@@ -121,12 +159,23 @@ module Agentkit
             "base_manifest" => base.to_h,
             "candidate_manifest" => manifests.fetch(selection.selected).to_h,
             "objectives" => { "quality" => "maximize", "cost" => "minimize", "latency" => "minimize" }
-          },
+          }.merge(holdout_details),
           comparison: comparison, requires_review: true, auto_promoted: false,
-          reason: eligible ? "statistically_significant_holdout_improvement" : "holdout_gate_failed"
+          reason: eligible ? "statistically_significant_holdout_improvement" :
+                  (architecture_allowed ? "holdout_gate_failed" : "architecture_gate_failed")
         )
         recommendation.each_pair { |_, value| Harness.deep_freeze(value) }
         recommendation.freeze
+      end
+
+      def record_architecture_report!(selection:, holdout_worlds:)
+        ArchitectureEvaluation::Reports.record!(
+          recommendation: recommend(selection: selection, holdout_worlds: holdout_worlds), context: context
+        )
+      end
+
+      def record_training_architecture_reports!(training_worlds:)
+        ArchitectureEvaluation::Reports.record_training!(study: self, training_worlds: training_worlds)
       end
 
       def submit!(target:, selection:, holdout_worlds:)
@@ -155,6 +204,20 @@ module Agentkit
 
       private
 
+      def architecture_report(training, holdout, selected)
+        return unless architecture_evaluation
+        {
+          "policy" => architecture_evaluation.to_h,
+          "training" => architecture_evaluation.compare(
+            incumbent: training.first, candidate: training.find { |evaluation| evaluation.policy_name == selected },
+            tasks: @tasks.fetch("training")
+          ),
+          "holdout" => architecture_evaluation.compare(
+            incumbent: holdout.first, candidate: holdout.last, tasks: @tasks.fetch("holdout")
+          )
+        }
+      end
+
       def scope_data
         { "tenant_key" => @scope.tenant_key || "__global__", "account_id" => @scope.account_id }
       end
@@ -165,6 +228,7 @@ module Agentkit
           raise HarnessExperimentError, "study needs an executor and bounded repeated probes (at least two)"
         end
         all = @tasks.values.flatten
+        all.each { |task| architecture_evaluation.task_spec(task) } if architecture_evaluation
         if all.size > context.config.harness.max_study_tasks
           raise HarnessExperimentError, "study exceeds task limit"
         end
@@ -240,6 +304,9 @@ module Agentkit
           raise HarnessExperimentError, "probe metrics must be finite and nonnegative" unless number.finite? && number >= 0
           probe[metric] = number
         end
+        if architecture_evaluation
+          probe["evaluation"] = architecture_evaluation.normalize_outcome(data.fetch("evaluation"), task: task)
+        end
         # No raw output, observations, error text or user supplied references.
         Harness.deep_freeze(probe)
       end
@@ -299,13 +366,21 @@ module Agentkit
         variants.map do |key|
           samples = rows.select { |row| row["variant"] == key }
           scores = samples.group_by { |row| row["task_digest"] }.transform_values { |group| mean(group.map { |r| r["quality"] }) }
+          outcomes = if architecture_evaluation
+                       tasks.to_h do |task|
+                         [task.digest, architecture_evaluation.summarize(
+                           samples.select { |probe| probe["task_digest"] == task.digest }, task: task
+                         )]
+                       end
+                     end
           Evaluation.new(
             policy_name: key, policy_version: manifests.fetch(key).version,
             policy_digest: manifests.fetch(key).digest, history_digest: history,
             world_count: tasks.size, mean_quality: mean(scores.values),
             mean_cost: mean(samples.map { |r| r["cost"] }),
             mean_latency: mean(samples.map { |r| r["latency"] }),
-            task_scores: scores.freeze, world_digests: worlds.to_h { |w| [w.id, w.digest] }.freeze
+            task_scores: scores.freeze, world_digests: worlds.to_h { |w| [w.id, w.digest] }.freeze,
+            task_outcomes: outcomes && Harness.deep_freeze(outcomes)
           ).freeze
         end.freeze
       end

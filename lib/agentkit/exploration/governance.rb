@@ -463,6 +463,11 @@ module Agentkit
                   "only a significant holdout recommendation can enter exploration review"
           end
           incumbent, candidate = recommendation.holdout_evaluations
+          if recommendation.level == "harness" && (architecture = recommendation.holdout["architecture_evaluation"])
+            unless %w[training holdout].all? { |phase| architecture.dig(phase, "allowed") == true }
+              raise ConfigurationError, "harness architecture evaluation did not pass"
+            end
+          end
           if incumbent.policy_digest == candidate.policy_digest
             raise ConfigurationError, "exploration review candidate must differ from the incumbent"
           end

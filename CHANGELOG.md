@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.5.1 — 2026-10-24
+
+### Added
+
+- Opt-in ArchitectureEvaluation contracts for per-task completion, required
+  checks, critical cases and ordered production-chain coverage in both cohorts.
+- Training/holdout gates preventing aggregate quality gains from hiding success
+  regressions; per-task pass/fail flips, repeat rates and quality/cost/latency
+  deltas are retained in immutable study evidence.
+- Scoped, bounded DelegationDiagnostics over imported peer spans: traffic
+  coupling, parallelism, measured usage, merge/fold/keep suggestions and explicit
+  insufficient-evidence results.
+- Explicit digest-addressed Memory reports for passing and blocked training and
+  holdout evaluations, with audit/telemetry and protected dashboard rendering.
+- Governance validation of architecture gate results and distributed reload
+  coverage for opted-in studies.
+
+### Compatibility
+
+- No migration. Existing 1.5.0 studies without the new options retain their
+  digest and evaluation format. No routing or agent migration is automatic.
+
 ## 1.5.0 — 2026-10-23
 
 ### Added
