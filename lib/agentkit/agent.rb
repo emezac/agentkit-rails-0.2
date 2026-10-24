@@ -138,10 +138,47 @@ module Agentkit
 
       def skills = @skills || (superclass.respond_to?(:skills) ? superclass.skills : []) || []
 
+      # Least-privilege boundary for tools exposed to the model. A nil
+      # allowlist preserves the backwards-compatible "all tools from declared
+      # skills" behavior; an empty allowlist deliberately exposes none. Deny
+      # always wins. The policy is also applied to an explicit `tools:`
+      # argument, so a call site cannot accidentally bypass the class rule.
+      def allow_tools(*names)
+        requested = normalize_tool_names(names)
+        inherited = superclass.respond_to?(:allowed_tools) ? superclass.allowed_tools : nil
+        @allowed_tools = (inherited.nil? ? requested : inherited & requested).freeze
+      end
+
+      def deny_tools(*names)
+        inherited = superclass.respond_to?(:denied_tools) ? superclass.denied_tools : []
+        @denied_tools = (inherited + normalize_tool_names(names)).uniq.freeze
+      end
+
+      def allowed_tools
+        return @allowed_tools if instance_variable_defined?(:@allowed_tools)
+
+        superclass.respond_to?(:allowed_tools) ? superclass.allowed_tools : nil
+      end
+
+      def denied_tools
+        return @denied_tools if instance_variable_defined?(:@denied_tools)
+
+        superclass.respond_to?(:denied_tools) ? superclass.denied_tools : []
+      end
+
+      def tool_policy = { allow: allowed_tools&.dup, deny: denied_tools.dup }.freeze
+
       def prompt_id(value = nil)
         return @prompt_id || (superclass.respond_to?(:prompt_id) ? superclass.prompt_id : nil) if value.nil?
 
         @prompt_id = value
+      end
+
+      private
+
+      def normalize_tool_names(names)
+        names.flatten.compact.map { |name| name.to_s.strip }
+             .reject(&:empty?).map(&:to_sym).uniq.freeze
       end
     end
 
@@ -180,10 +217,11 @@ module Agentkit
     def complete(prompt, model: nil, system: nil, schema: nil, tools: nil, temperature: nil,
                  max_tokens: nil, stream: nil)
       prompt_text, version = resolve_prompt(system)
+      selected_tools = tools.nil? ? default_tools : tools
       response = LLM.complete(
         prompt,
         model: model || default_model, system: prompt_text || build_context,
-        schema: schema || default_schema, tools: tools || default_tools,
+        schema: schema || default_schema, tools: apply_tool_policy(selected_tools),
         temperature: temperature, max_tokens: max_tokens, stream: stream,
         agent: self.class.name, prompt_id: self.class.prompt_id, prompt_version: version,
         experiment_id: @prompt_experiment_id, experiment_arm: @prompt_experiment_arm
@@ -317,6 +355,50 @@ module Agentkit
 
       tools = SkillRegistry.tools_for(*names)
       tools.empty? ? nil : tools
+    end
+
+    def apply_tool_policy(tools)
+      return nil if tools.nil?
+
+      allowlist = self.class.allowed_tools
+      denylist = self.class.denied_tools
+      return tools if allowlist.nil? && denylist.empty?
+
+      removed = []
+      filtered = Array(tools).select do |tool|
+        name = tool_name(tool)
+        if name.nil?
+          raise ConfigurationError,
+                "#{self.class.name} cannot enforce its tool policy on an unnamed tool"
+        end
+
+        permitted = (allowlist.nil? || allowlist.include?(name)) && !denylist.include?(name)
+        removed << name unless permitted
+        permitted
+      end
+
+      if removed.any?
+        Telemetry.emit(
+          "agent.tools.filtered",
+          dims: { agent: self.class.name },
+          measures: { offered: Array(tools).size, exposed: filtered.size, removed: removed.size }
+        )
+      end
+      filtered
+    end
+
+    def tool_name(tool)
+      raw =
+        if tool.is_a?(String) || tool.is_a?(Symbol)
+          tool
+        elsif tool.respond_to?(:name)
+          tool.name
+        elsif tool.respond_to?(:to_json_schema)
+          schema = tool.to_json_schema
+          schema[:name] || schema["name"]
+        end
+      value = raw.to_s.strip
+      value.empty? ? nil : value.to_sym
     end
   end
 

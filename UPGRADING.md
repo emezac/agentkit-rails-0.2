@@ -1,3 +1,48 @@
+# Upgrading 1.1.0 → 1.2.0
+
+No database migration is required. Harness checkpoints reuse the memory store,
+its tenant boundary and the durable retention policy introduced in 1.1.
+
+Existing agents preserve their current tool exposure until a policy is
+declared. Add policies first to reviewer or read-only agents, then inspect the
+`agent.tools.filtered` telemetry event before rolling them out broadly:
+
+```ruby
+class ReleaseReviewer < Agentkit::Agent
+  uses_skills :repository, :release_evidence
+  allow_tools :read_file, :grep, :fetch_ci_result
+  deny_tools :write_file, :shell, :publish
+end
+```
+
+Policies are monotonic through inheritance: a subclass can narrow an inherited
+allowlist and add denied tools, but it cannot accidentally widen the parent.
+They govern tools passed through `Agent#chat` / `Agent#complete`; keep external
+effects behind Capability/Actions/Policy and sandbox operating-system tools at
+the host boundary.
+
+For work spanning calls or workers, declare a stable goal id and checkpoint at
+meaningful boundaries. Checkpoint metadata contains goal text, concise
+decisions, issues, references and digests, so do not place secrets or artifact
+bodies in those fields. `Memory.level = :off` deliberately disables checkpoint
+persistence and makes `Harness.checkpoint!` fail closed.
+
+```ruby
+config.harness.max_steps = 20
+config.harness.max_checkpoint_bytes = 64.kilobytes
+config.harness.max_context_bytes = 8.kilobytes
+config.harness.checkpoint_retention = :durable
+```
+
+Run the normal validation after upgrading:
+
+```bash
+rails agentkit:doctor
+bundle exec rake verify
+```
+
+---
+
 # Upgrading 1.0.0 → 1.1.0
 
 Install and run migration `023_add_memory_lifecycle`. It adds first-class

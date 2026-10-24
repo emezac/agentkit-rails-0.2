@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.2.0 — 2026-10-23
+
+### Added
+
+- Evidence-gated `Agentkit::Harness` goals with required criteria, output
+  references, deterministic digests and bounded step budgets.
+- Tenant-scoped, resumable harness checkpoints over the existing Memory store;
+  each checkpoint supersedes its predecessor non-destructively and emits audit
+  plus telemetry without copying raw artifacts.
+- Bounded progress handoff containing decisions, open issues and the next
+  action, with a compact context fragment for a later model call or worker.
+- Per-agent tool allowlists and denylists applied to both skill-derived and
+  explicitly supplied LLM tools.
+
+### Security
+
+- A goal cannot become complete from natural-language state: all required
+  criteria need `verified` evidence and all required outputs need a reference.
+- Evidence/output bodies are hashed and discarded; checkpoints reject
+  oversized or non-serializable control state and verify their digest on
+  resume.
+- Unnamed tools fail closed whenever an agent tool policy is active. Tool
+  policy is intentionally scoped to LLM tool exposure; governed domain effects
+  remain under Capability/Actions/Policy and OS commands under the host sandbox.
+
+### Compatibility
+
+- Agents without a tool policy retain all tools from their declared skills.
+- Harness storage reuses the 1.1 memory schema and requires no migration.
+
 ## 1.1.0 — 2026-09-22
 
 ### Added

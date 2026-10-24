@@ -1,9 +1,9 @@
-# AgentKit Rails v1.1.0
+# AgentKit Rails v1.2.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.1.0"
+gem "agentkit-rails", "~> 1.2.0"
 ```
 
 ```bash
@@ -13,6 +13,58 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Goal contracts y privilegio mínimo en 1.2
+
+Los trabajos largos terminan por evidencia, no porque el modelo escriba
+"terminado". Un goal declara criterios, outputs y un presupuesto de pasos; el
+checkpoint conserva únicamente referencias y digests, queda aislado por tenant
+y reemplaza al anterior de forma no destructiva.
+
+```ruby
+goal = Agentkit::Harness.define(
+  id: "release-42",
+  objective: "publicar una release verificable",
+  criteria: [
+    { id: "tests", description: "suite completa en verde" },
+    { id: "review", description: "revisión independiente sin bloqueos" }
+  ],
+  required_outputs: %w[changelog package],
+  max_steps: 12
+)
+
+progress = Agentkit::Harness.start(goal)
+progress.record_output("package", reference: "artifact:agentkit-1.2.0.gem", value: gem_bytes)
+progress.record_evidence(
+  criterion: "tests", verdict: :verified,
+  source: "ci:build-918", summary: "1,203 examples, 0 failures",
+  value: junit_xml
+)
+progress.next_action = "obtener revisión independiente"
+Agentkit::Harness.checkpoint!(progress, context: Agentkit.context)
+
+# Otro worker o una sesión posterior:
+progress = Agentkit::Harness.resume("release-42", context: Agentkit.context)
+progress.context_fragment # bloque acotado para build_context(extra: ...)
+progress.complete!        # falla cerrado mientras falte evidencia/output
+```
+
+Los agentes también pueden limitar las herramientas que llegan al proveedor.
+La política se aplica tanto a tools provenientes de skills como a `tools:`
+explícitas; deny siempre gana.
+
+```ruby
+class EvidenceReviewer < Agentkit::Agent
+  uses_skills :repository, :web_sources
+  allow_tools :read_file, :grep, :fetch_url
+  deny_tools  :write_file, :shell, :publish
+end
+```
+
+Este límite gobierna herramientas entregadas al LLM a través de `Agent#chat` y
+`Agent#complete`. Los efectos de dominio continúan protegidos en la frontera
+`Capability -> Actions -> Policy/HITL`; procesos arbitrarios del sistema
+operativo requieren además el sandbox del host.
 
 ## Memory Lifecycle en 1.1
 

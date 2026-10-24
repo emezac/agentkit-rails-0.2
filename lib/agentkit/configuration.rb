@@ -220,6 +220,31 @@ module Agentkit
     setting :persist_in_sync, default: true
   end
 
+  # ─── Long-running harness ─────────────────────────────────────────────────
+
+  # Evidence and checkpoint limits for work that spans several model calls or
+  # process restarts. The harness stores references and digests, never raw
+  # artifact bodies, so these limits bound control-plane state rather than
+  # becoming a second document store.
+  class HarnessSettings < Settings
+    setting :max_steps,              default: 20
+    setting :max_checkpoint_bytes,   default: 64 * 1024
+    setting :max_context_bytes,      default: 8 * 1024
+    setting :max_log_entries,        default: 100
+    setting :checkpoint_retention,   default: :durable
+
+    def validate
+      problems = super
+      %i[max_steps max_checkpoint_bytes max_context_bytes max_log_entries].each do |name|
+        value = public_send(name)
+        problems << "#{self.class.name}##{name} must be a positive integer" unless
+          value.is_a?(Integer) && value.positive?
+      end
+      problems << "#{self.class.name}#checkpoint_retention is required" if checkpoint_retention.to_s.strip.empty?
+      problems
+    end
+  end
+
   # ─── Telemetry ───────────────────────────────────────────────────────────────
 
   class TelemetrySettings < Settings
@@ -537,6 +562,7 @@ module Agentkit
     group :memory,    MemorySettings
     group :hitl,      HITLSettings
     group :flow,      FlowSettings
+    group :harness,   HarnessSettings
     group :telemetry, TelemetrySettings
     group :audit,     AuditSettings
     group :console,   ConsoleSettings

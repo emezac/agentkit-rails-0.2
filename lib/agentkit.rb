@@ -22,6 +22,7 @@ require_relative "agentkit/model_router"
 require_relative "agentkit/skill"
 
 require_relative "agentkit/memory"
+require_relative "agentkit/harness"
 require_relative "agentkit/hitl"
 require_relative "agentkit/flow"
 require_relative "agentkit/agent"

@@ -50,6 +50,12 @@ module Agentkit
   end
   class ExplorationQuotaExceeded < BudgetExceeded; end
 
+  # ─── Long-running harness ─────────────────────────────────────────────────
+  class HarnessError < Error; end
+  class HarnessIncomplete < HarnessError; end
+  class HarnessPersistenceError < HarnessError; end
+  class HarnessIntegrityError < HarnessError; end
+
   # ─── Flow ──────────────────────────────────────────────────────────────────
   class FlowError < Error; end
   # Raised at class-definition time by the static validator — a malformed flow
