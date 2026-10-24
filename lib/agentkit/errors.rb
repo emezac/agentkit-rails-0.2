@@ -55,6 +55,8 @@ module Agentkit
   class HarnessIncomplete < HarnessError; end
   class HarnessPersistenceError < HarnessError; end
   class HarnessIntegrityError < HarnessError; end
+  class HarnessExperimentError < HarnessError; end
+  class HarnessCandidateInvalid < HarnessExperimentError; end
   class VerificationError < HarnessError; end
   class ContextMapError < HarnessError; end
   class StaleContextError < ContextMapError; end

@@ -1,3 +1,56 @@
+# Upgrading 1.3.0 → 1.4.0
+
+No database migration is required. Harness experiments are opt-in and do not
+change existing goals, checkpoints, tool policies or exploration bindings.
+
+Represent the harness you want to test as an immutable manifest. Component
+configuration must be JSON data and every dependency uses the stable
+`type:name` component key:
+
+```ruby
+manifest = Agentkit::Harness::Manifest.new(
+  id: "support",
+  version: "1",
+  components: [
+    Agentkit::Harness::Component.new(
+      name: :planner,
+      type: :system_prompt,
+      configuration: { text: "Plan, execute, verify." }
+    )
+  ],
+  output_contract: response_schema
+)
+```
+
+Experiments require four host-owned adapters: proposer, isolated executor,
+contrastor and composer. Adapters receive deeply frozen snapshots. The
+executor must return `output_reference` plus either `output_digest` or `output`;
+when `output` is supplied it is hashed and discarded.
+
+The default experiment limits are:
+
+```ruby
+config.harness.max_manifest_components = 64
+config.harness.max_manifest_bytes = 128.kilobytes
+config.harness.max_component_bytes = 16.kilobytes
+config.harness.max_revision_changes = 16
+config.harness.max_experiment_candidates = 8
+config.harness.max_probe_repetitions = 5
+config.harness.max_context_delta_bytes = 32.kilobytes
+```
+
+Candidate adoption remains advisory. Consume `result.selected_manifest` in a
+separate application-controlled workflow; do not turn the result into a live
+binding without the existing holdout and human-promotion gates.
+
+After upgrading, run:
+
+```bash
+bundle exec rake verify
+```
+
+---
+
 # Upgrading 1.2.0 → 1.3.0
 
 No database migration is required. Existing 1.2 harness checkpoints are

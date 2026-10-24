@@ -1,9 +1,9 @@
-# AgentKit Rails v1.3.0
+# AgentKit Rails v1.4.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.3.0"
+gem "agentkit-rails", "~> 1.4.0"
 ```
 
 ```bash
@@ -13,6 +13,62 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Harness Experiments en 1.4
+
+1.4 añade un ciclo gobernado `Propose -> Probe -> Compose` para mejorar el
+harness sin reentrenar el modelo. Los candidatos son patches declarativos
+sobre un manifest inmutable; no contienen callables ni código ejecutable. Antes
+de un probe, el runtime rechaza ampliaciones de efecto, riesgo o permisos,
+dependencias ausentes, skills sin trigger, recursos protegidos y crecimiento
+excesivo de contexto.
+
+```ruby
+component = Agentkit::Harness::Component.new(
+  name: :planner,
+  type: :system_prompt,
+  configuration: { text: "Plan, execute, verify." }
+)
+
+manifest = Agentkit::Harness::Manifest.new(
+  id: "support-harness",
+  version: "1",
+  components: [component],
+  output_contract: {
+    type: "object",
+    properties: { answer: { type: "string" } },
+    required: ["answer"],
+    additionalProperties: false
+  }
+)
+
+task = Agentkit::Harness::ExperimentTask.new(
+  id: "ticket-42",
+  input_reference: "ticket:42",
+  input_digest: Agentkit::Harness.digest(ticket_body),
+  model: { name: "frozen-model", temperature: 0, seed: 42 },
+  output_contract: manifest.output_contract
+)
+
+result = Agentkit::Harness::Experiment.new(
+  base: manifest,
+  task: task,
+  repetitions: 2,
+  proposer: propose_candidates, # devuelve Revision invariant/domain
+  executor: run_in_isolated_sandbox,
+  contrastor: compare_matched_probes,
+  composer: choose_or_keep_base
+).run
+
+result.composition.action       # "keep_base", "adopt" o "compose"
+result.selected_manifest.digest # el candidato nunca se activa automáticamente
+```
+
+Los callbacks reciben snapshots profundamente congelados. Cada probe conserva
+sólo referencias, digests, observaciones y métricas; el output bruto no entra
+al resultado ni al Audit. El entorno declarado debe ser sandboxed, sin red y
+con efectos aislados. `KEEP_BASE` es una decisión normal y siempre requiere
+evidencia producida por validaciones, probes o contrastes.
 
 ## Harness engineering verificable en 1.3
 

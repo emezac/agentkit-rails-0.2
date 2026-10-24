@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.4.0 — 2026-10-23
+
+### Added
+
+- Immutable, digest-addressed harness `Component`, `Manifest`, `Change` and
+  `Revision` contracts for eight declarative component types.
+- A local, adapter-driven `Propose -> Probe -> Compose` experiment runner with
+  matched task/model/environment identities and bounded repeated probes.
+- Evidence-linked behavioral contrasts with per-change `helped`, `hurt`,
+  `no_observed_effect` and `confounded` attribution.
+- Explicit `KEEP_BASE`, `adopt` and validated `compose` decisions. Composition
+  reasons must cite validation, probe or contrast evidence produced by the run.
+- Audit and telemetry summaries that retain control-plane digests and counts,
+  never raw probe outputs.
+
+### Security
+
+- Candidates are declarative JSON data; scripts, callables and arbitrary code
+  are not harness component types.
+- Static validation runs before every candidate probe and fails closed on
+  privilege/effect/permission expansion, protected or excluded resources,
+  missing dependencies/triggers, output-contract drift and context growth.
+- Component removal requires an explicit validator opt-in because deleting a
+  guardrail can widen effective authority without changing a risk label.
+- Probe environments must declare sandboxing, disabled network and isolated
+  effects. Invalid candidates are never handed to the executor.
+- A successful local experiment is advisory only. It does not modify a live
+  harness, registry or governed exploration binding.
+
+### Compatibility
+
+- No database migration is required. Existing 1.3 goals, checkpoints,
+  verifiers, tools and exploration policies are unchanged.
+- Host applications provide proposer, executor, contrastor and composer
+  adapters; AgentKit 1.4 does not require an LLM provider for this feature.
+
 ## 1.3.0 — 2026-10-23
 
 ### Added
