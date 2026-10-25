@@ -31,7 +31,8 @@ Gem::Specification.new do |spec|
 
   spec.files = Dir[
     "lib/**/*", "app/**/*", "db/migrate/**/*", "config/**/*",
-    "agentkit-rails.gemspec", "README.md", "CHANGELOG.md", "UPGRADING.md", "LICENSE"
+    "agentkit-rails.gemspec", "README.md", "CHANGELOG.md", "UPGRADING.md", "LICENSE",
+    "docs/**/*.md", "examples/knowledge_returns.rb"
   ].reject { |path| path == "lib/agentkit/mcp.rb" || path.start_with?("lib/agentkit/mcp/") }
   spec.require_paths = ["lib"]
 

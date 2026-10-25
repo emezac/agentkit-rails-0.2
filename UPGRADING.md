@@ -1,3 +1,28 @@
+# Upgrading 1.6.0 → 1.7.0
+
+Verified Knowledge Core is opt-in through `Agentkit::Knowledge`; no migration or
+new runtime dependency. It also supports `require "agentkit/knowledge"` outside
+Rails. Existing AgentLoop, Harness, Memory and Actions APIs are unchanged.
+
+Start with [the Rails implementation contract](docs/VERIFIED_KNOWLEDGE_CORE.md).
+The host must define the ontology and approved rules, authorize sources and scope,
+build time-consistent evidence, and own persistence and transactional actions.
+The core validates deductions relative to these inputs; `approved_by` and source
+metadata are not authentication. Do not import LLM-produced approval metadata.
+
+The old standalone `TensorLogic` library is not a dependency and is not migrated
+automatically. Translate relation indices into explicit per-atom variables with
+`Knowledge.var`, add rule versions and provenance, and review the rule semantics.
+`not_entailed` means absent from a completed positive closure, not false in the
+world. `incomplete` requires abstention or further work; a proven positive can
+still be returned with `closure_complete: false`.
+
+Snapshots and results are immutable, in-process data. JSON snapshots can be
+reconstructed with `Snapshot.from_json`; applications must authorize imported
+scope and authenticate storage. Rebuild snapshots after evidence/rule changes.
+No automatic knowledge promotion, distributed ledger, causal estimator, Tensor
+backend or Lean verifier is introduced in this release.
+
 # Upgrading 1.5.1 → 1.6.0
 
 No database migration. Progressive Agent Loop is opt-in via Agent#run_loop.

@@ -15,6 +15,7 @@ require_relative "agentkit/schema"
 require_relative "agentkit/principal"
 require_relative "agentkit/recovery_policy"
 require_relative "agentkit/tool_contract"
+require_relative "agentkit/knowledge"
 
 require_relative "agentkit/telemetry"
 require_relative "agentkit/audit"

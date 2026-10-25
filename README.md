@@ -1,9 +1,9 @@
-# AgentKit Rails v1.6.0
+# AgentKit Rails v1.7.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.6.0"
+gem "agentkit-rails", "~> 1.7.0"
 ```
 
 ```bash
@@ -13,6 +13,29 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Verified Knowledge Core en 1.7.0
+
+`Agentkit::Knowledge` incorpora ontologías tipadas, observaciones con fuente y
+validez temporal, reglas versionadas, snapshots inmutables e inferencia positiva
+con límites. Cada conclusión incluye una derivación comprobable contra su snapshot.
+Las consultas distinguen `entailed`, `not_entailed` e `incomplete`; ausencia de
+evidencia no equivale a falsedad. Las hipótesis no pueden entrar como premisas.
+
+**Para implementar una app Rails:** consultar la
+[guía de responsabilidades y API](docs/VERIFIED_KNOWLEDGE_CORE.md) y el
+[ejemplo ejecutable de devoluciones](examples/knowledge_returns.rb).
+La app define el dominio y las reglas aprobadas, obtiene datos autorizados,
+persiste evidencia y ejecuta acciones con transacciones y permisos. Agentkit
+comprueba las derivaciones. Los metadatos de aprobación no autentican al aprobador;
+esa verificación pertenece a la app.
+
+```bash
+ruby -Ilib examples/knowledge_returns.rb
+```
+
+Opt-in, sin migraciones ni dependencias de ejecución adicionales. No incluye
+aprendizaje automático de reglas, evaluación causal ni gates de acciones automáticos.
 
 ## Progressive Agent Loop en 1.6.0
 

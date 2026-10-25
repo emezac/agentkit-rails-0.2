@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.7.0 — 2026-10-25
+
+### Added
+
+- Opt-in `Agentkit::Knowledge`: immutable typed ontology, observations/hypotheses,
+  explicitly approved rule contracts, scoped temporal snapshots and validated JSON replay.
+- Finite positive Datalog evaluation with explicit variable bindings, accumulating
+  recursive clauses, deterministic witnesses and iteration/work/tuple limits.
+- Exact queries distinguish entailed, not_entailed and incomplete; positive proofs
+  remain available on bounded runs without claiming closure completeness.
+- Independent proof checker validates premise DAGs against trusted active facts,
+  rule versions and substitutions, rejecting altered evidence and cyclic proofs.
+- Rails ownership guide covering domain definitions, evidence adapters, authenticated
+  scope, approvals, storage, replay, revocation and transactional action boundaries.
+- Executable returns-review example packaged with the gem; generated-graph reference
+  checks and regressions for the legacy Tensor Logic join/overwrite problems.
+
+### Compatibility
+
+- No migration, runtime dependency, automatic verifier, persistence or action gate.
+  Existing APIs retain their behavior. Approval metadata is host-attested, not
+  authenticated by the kernel. Deduction does not establish empirical causality.
+
 ## 1.6.0 — 2026-10-24
 
 ### Added
