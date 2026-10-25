@@ -1,9 +1,9 @@
-# AgentKit Rails v1.8.0
+# AgentKit Rails v1.9.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.8.0"
+gem "agentkit-rails", "~> 1.9.0"
 ```
 
 ```bash
@@ -13,6 +13,14 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Business Learning Loop en 1.9.0
+
+`Knowledge::BusinessLearning` vincula ejecuciones verificadas con resultados
+tardíos, informes temporales y propuestas declarativas con revisión independiente,
+caducidad y revocación. No cuenta pendientes como éxitos ni atribuye causalidad.
+La app Rails conserva la definición de métricas, autorización y aplicación de cambios.
+Consulta la [guía y contrato de responsabilidades Rails](docs/BUSINESS_LEARNING_LOOP.md).
 
 ## Rails Evidence & Decision Gates en 1.8.0
 

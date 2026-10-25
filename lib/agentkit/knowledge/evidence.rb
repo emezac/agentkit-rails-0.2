@@ -46,7 +46,7 @@ module Agentkit
     # class is not an HTTP endpoint and never infers authority from LLM arguments.
     class Journal
       MAX_BYTES = 16 * 1024 * 1024
-      KINDS = %w[snapshot decision execution event delivery].freeze
+      KINDS = %w[snapshot decision execution event delivery learning].freeze
 
       def initialize(authorize:)
         raise InvalidContract, "journal authorizer required" unless authorize.respond_to?(:call)

@@ -10,6 +10,28 @@ RSpec.describe "Rails evidence and decision gates", :integration do
   let(:journal) { Agentkit::Knowledge::Journal.new(authorize: ->(_kind, _ctx) { true }) }
   let(:k) { Agentkit::Knowledge }
 
+  it "links business outcomes to durable execution evidence and reloads temporal reports" do
+    gate = build_gate
+    gate.execute(arguments: { id: widget.id }, context: context, operation: "learn", idempotency_key: "1") { { done: true } }
+    now = Time.now.utc
+    options = { name: "orders", version: "1", objective: "lower cost", metrics: { cost: "minimize" },
+      constraints: { approval: "required" }, evidence_versions: { gate: gate.digest }, window_seconds: 60,
+      journal: journal, authorize: ->(*) { true }, clock: -> { now + 120 } }
+    learning = k::BusinessLearning.new(**options)
+    observed = learning.observe(id: "order-1", execution_key: "learn:1", context: context)
+    expect(observed["gate_digest"]).to eq(gate.digest)
+    args = { id: "order-1", values: { cost: 125 }, source: "ledger/1", source_version: "1",
+      observed_at: (now + 90).iso8601(6), context: context }
+    first = learning.outcome(**args)
+    reloaded = k::BusinessLearning.new(**options.merge(clock: -> { now + 180 }))
+    expect(reloaded.outcome(**args)).to eq(first)
+    report = reloaded.evaluate(id: "r", observation_ids: ["order-1"], split_at: (now + 150).iso8601(6),
+                              as_of: (now + 180).iso8601(6), context: context)
+    expect(report["summaries"]["training"]["metrics"]["cost"]).to eq("sum" => 125, "count" => 1)
+    expect(Agentkit::KnowledgeEntryRecord.where(kind: "learning").count).to eq(3)
+    expect { reloaded.outcome(**args.merge(values: { cost: 999 })) }.to raise_error(k::IntegrityError)
+  end
+
   def build_gate(version: "1", permission: ->(_args, _ctx) { true }, resolver: nil, limits: {}, source_authorize: ->(_record, _ctx) { true })
     ontology = k::Ontology.new(name: "Widgets", version: "1", entities: ["Widget"],
                               relations: { "Ready" => ["Widget"], "Allowed" => ["Widget"] })

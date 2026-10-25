@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.9.0 — 2026-10-25
+
+### Added
+
+- Versioned BusinessLearning process contracts and execution-linked observations.
+- Durable final outcomes with source provenance, server receipt time and idempotency.
+- Temporal retrospective reports excluding pending, missing and late-arriving outcomes.
+- Evidence-bound declarative hypotheses, independent review, expiry, revocation and applied-version attribution.
+- Explicit Rails ownership guide for cohort selection, metrics, authorization, deployment and compensation. No automatic causal claims or rule promotion.
+
+
 ## 1.8.0 — 2026-10-25
 
 ### Added

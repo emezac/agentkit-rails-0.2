@@ -1,3 +1,12 @@
+# Upgrading 1.8.0 → 1.9.0
+
+No new migration; migration 024 remains required. BusinessLearning is opt-in.
+Journal authorization callbacks must explicitly allow the new `learning` kind
+for authorized users. Define current evidence dependency versions and human-review
+policy in Rails. Outcome corrections require a new process version, not mutation.
+Rollback revokes a learning proposal; the host restores business configuration.
+See [Business Learning Loop](docs/BUSINESS_LEARNING_LOOP.md) before integration.
+
 # Upgrading 1.7.0 → 1.8.0
 
 Install and run engine migration 024 before starting 1.8 workers:
