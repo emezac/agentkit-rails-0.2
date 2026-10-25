@@ -24,7 +24,8 @@ module Agentkit
               end
               if existing
                 unless existing.arguments_digest == proposal.arguments_digest &&
-                       existing.action_type == proposal.action_type
+                       existing.action_type == proposal.action_type &&
+                       existing.knowledge_gate_digest == proposal.knowledge_gate_digest
                   raise IdempotencyConflict, "idempotency key was already used with a different action"
                 end
                 return [copy(existing), false]
@@ -334,7 +335,8 @@ module Agentkit
         end
 
         def validate_idempotent(row, proposal)
-          unless row && row.arguments_digest == proposal.arguments_digest && row.action_type == proposal.action_type
+          unless row && row.arguments_digest == proposal.arguments_digest && row.action_type == proposal.action_type &&
+                 row.knowledge_gate_digest == proposal.knowledge_gate_digest
             raise IdempotencyConflict, "idempotency key was already used with a different action"
           end
           [wrap_proposal(row), false]

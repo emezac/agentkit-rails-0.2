@@ -1,5 +1,32 @@
 # Changelog
 
+## 1.8.0 — 2026-10-25
+
+### Added
+
+- Rails ActiveRecordSource with scoped/authorized record lookup, root-row locking,
+  time-stamped snapshot rebuilding and same-connection journal checks.
+- Durable Knowledge Journal for snapshots, decisions, idempotent execution
+  receipts and recoverable event inbox/delivery, with scoped unique identities
+  and payload integrity validation.
+- DecisionGate with host-defined required claims, independent proof checks,
+  complete-closure default and authorization rechecked under the business lock.
+- Closed-claim AgentLoop AnswerVerifier and read-only ToolContract precondition
+  adapter, rejecting extra prose and claims for other subjects.
+- Opt-in Capability knowledge gates for synchronous internal DB executors;
+  effects and receipts share a transaction and idempotent replay.
+- Proposal-bound gate digests and worker reconstruction of the original requester
+  with current permissions. Gate drift/removal fails before executor invocation.
+- Rails ownership/integration guide and packaged, integration-tested adapter example.
+
+### Changed
+
+- Migration 024 adds `agentkit_knowledge_entries` and proposal gate digest.
+- Callable parameter inspection preserves declared Proc keyword arguments,
+  including context and idempotency_key, for executors/reconcilers.
+- Gated capability outputs are canonical JSON data; ungated contracts retain
+  their existing introspection format and behavior.
+
 ## 1.7.0 — 2026-10-25
 
 ### Added

@@ -1,3 +1,45 @@
+# Upgrading 1.7.0 → 1.8.0
+
+Install and run engine migration 024 before starting 1.8 workers:
+
+```sh
+rails agentkit:install:migrations
+rails db:migrate
+```
+
+The migration adds the knowledge journal and nullable action proposal gate digest.
+Existing proposals with no gate remain valid for ungated capabilities. Adding,
+removing or changing a gate invalidates pending proposals for that capability;
+create a new reviewed proposal with a new idempotency key. Do not switch gated
+actions back to older workers that do not enforce their persisted gate binding.
+
+Read [the Rails 1.8 implementation contract](docs/RAILS_EVIDENCE_AND_DECISION_GATES.md).
+All adapters are opt-in. Configure scoped relations, read/decision/journal
+authorizers, current requester resolution, sources and required claims in the
+host. Register the same contract versions on web and worker processes.
+
+Only internal synchronous executors with closed input schemas and required
+idempotency support Capability#knowledge_gate. Effects, evidence and receipts
+must use the same DB connection; source/journal pool equality is checked. No
+external calls, asynchronous flows or agents inside the transaction. For external
+effects persist an intent/outbox locally and dispatch with existing reconciliation.
+
+Gate callbacks receive canonical string-keyed data. Gated Capability executors
+receive frozen symbol-keyed inputs; returned/replayed output uses string keys.
+Knowledge payloads support JSON integers, strings, booleans, null, arrays and
+objects (use integer minor units or decimal strings for monetary values).
+Ungated Capability introspection and execution remain compatible. Proc executor
+keyword detection now correctly forwards declared context/idempotency_key.
+
+1.7 snapshots remain valid. Rails adapters use a scope derived from tenant and
+account; rebuild/reimport legacy snapshots through an authorized app adapter when
+their arbitrary old scope differs. A decision check with a repeated event_id
+returns historical evidence; omit it or choose a new one for fresh evaluation.
+
+The inbox persists pending events and retries local DB consumers. The host owns
+job scheduling and event insertion in its business transaction. There is no
+automatic callback on application models and no new recurring worker.
+
 # Upgrading 1.6.0 → 1.7.0
 
 Verified Knowledge Core is opt-in through `Agentkit::Knowledge`; no migration or

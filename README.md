@@ -1,9 +1,9 @@
-# AgentKit Rails v1.7.0
+# AgentKit Rails v1.8.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.7.0"
+gem "agentkit-rails", "~> 1.8.0"
 ```
 
 ```bash
@@ -13,6 +13,23 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Rails Evidence & Decision Gates en 1.8.0
+
+`Knowledge::ActiveRecordSource` reconstruye evidencia autorizada bajo un lock de
+la fila de negocio. `DecisionGate` comprueba las afirmaciones requeridas y
+`Journal` persiste snapshots, decisiones, eventos y comprobantes idempotentes.
+`AnswerVerifier` se integra con `Agent#run_loop`; `gate.precondition` controla
+herramientas de lectura y `Capability#knowledge_gate` protege executors internos
+síncronos dentro de la misma transacción que la evidencia y el comprobante.
+
+**Requiere migración 024.** Las acciones propuestas conservan el digest del gate
+y revalidan evidencia y permisos del solicitante al ejecutar. Las integraciones
+externas usan una intención/outbox de la app, fuera del bloque transaccional.
+
+La [guía de implementación Rails 1.8](docs/RAILS_EVIDENCE_AND_DECISION_GATES.md)
+define callbacks, persistencia, reintentos, workers, aprobación y fronteras de
+transacción. Incluye un [adaptador Rails de ejemplo](examples/rails_evidence.rb).
 
 ## Verified Knowledge Core en 1.7.0
 

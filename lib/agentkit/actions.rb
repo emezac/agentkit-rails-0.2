@@ -11,7 +11,7 @@ module Agentkit
       :requester_principal_id, :required_permission, :target_type, :target_id,
       :risk, :effect, :policy_version, :contract_version, :status,
       :operation_namespace, :idempotency_key, :source_adapter,
-      :canonical_response, :expires_at, :created_at, :updated_at, :lock_version,
+      :canonical_response, :expires_at, :created_at, :updated_at, :lock_version, :knowledge_gate_digest,
       keyword_init: true
     )
     Decision = Struct.new(
@@ -118,6 +118,7 @@ module Agentkit
           target_type: target&.class&.name, target_id: object_id_of(target),
           risk: cap.risk.to_s, effect: cap.effect.to_s, policy_version: policy_version,
           contract_version: cap.contract_version.to_s, status: "draft",
+          knowledge_gate_digest: cap.knowledge_gate&.digest,
           operation_namespace: operation_namespace || "action:#{cap.name}",
           idempotency_key: idempotency_key, source_adapter: source_adapter&.to_s,
           expires_at: expires_at, created_at: Time.now, updated_at: Time.now
@@ -202,9 +203,22 @@ module Agentkit
         capability = Capability[proposal.action_type]
         raise CapabilityError, "capability #{proposal.action_type} is no longer registered" unless capability
 
-        ctx = action_context(proposal, Principal.new(id: "system:action_executor",
+        unless proposal.knowledge_gate_digest == capability.knowledge_gate&.digest
+          raise Knowledge::IntegrityError, "knowledge gate changed since action proposal"
+        end
+
+        ctx = if capability.knowledge_gate
+                resolved = capability.knowledge_gate.context_for(proposal)
+                principal = Principal.coerce(resolved.principal, tenant_key: resolved.tenant_key)
+                unless principal&.allowed?(capability.required_permission)
+                  raise Knowledge::AccessDenied, "requester permission revoked"
+                end
+                resolved
+              else
+                action_context(proposal, Principal.new(id: "system:action_executor",
                                                       tenant_key: proposal.tenant_key,
                                                       permissions: ["*"]))
+              end
         Audit.record(event_type: "action.execution.started", status: "executing",
                      payload: audit_payload(proposal).merge("attempt" => attempt.attempt_number),
                      context: ctx, failure_mode: audit_mode(capability))

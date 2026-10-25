@@ -27,6 +27,7 @@ module Agentkit
       @max_input_bytes = 64 * 1024
       @contract_version = 1
       @exposures = {}
+      @knowledge_gate = nil
     end
 
     def risk(value = nil)
@@ -76,6 +77,14 @@ module Agentkit
     def max_input_bytes(value = nil) = value.nil? ? @max_input_bytes : (@max_input_bytes = Integer(value))
     def contract_version(value = nil) = value.nil? ? @contract_version : (@contract_version = Integer(value))
 
+    def knowledge_gate(value = nil)
+      return @knowledge_gate if value.nil?
+      unless value.is_a?(Knowledge::DecisionGate)
+        raise ConfigurationError, "knowledge_gate requires a Knowledge::DecisionGate"
+      end
+      @knowledge_gate = value
+    end
+
     def expose(adapter, mode: :execute)
       raise ConfigurationError, "exposure mode must be :execute or :propose" unless %i[execute propose].include?(mode.to_sym)
 
@@ -104,7 +113,8 @@ module Agentkit
           capability: true, governed: !directly_callable,
           contract_version: @contract_version,
           required_permission: @required_permission,
-          idempotency: @idempotency, reconciliation: @reconciliation
+          idempotency: @idempotency, reconciliation: @reconciliation,
+          **(@knowledge_gate ? { knowledge_gate_digest: @knowledge_gate.digest } : {})
         }
       )
     end
@@ -123,19 +133,31 @@ module Agentkit
         raise SchemaValidationError, "capability input exceeds #{max_input_bytes} bytes"
       end
       Schema.validate!(inputs, effective_input_schema, label: "input") unless legacy_contract?
+      if @knowledge_gate
+        validate_knowledge_gate!
+        inputs = Harness.deep_freeze(JSON.parse(JSON.generate(Knowledge::Boundary.data(inputs)), symbolize_names: true))
+      end
       Telemetry.emit("capability.execute", dims: { capability: name, risk: @risk, effect: @effect })
 
-      result = if @executor
-                 call_v2_callable(@executor, inputs, ctx, idempotency_key)
-               elsif @flow
-                 @flow.call(context: ctx, **inputs)
-               elsif @agent
-                 @agent.call(inputs, context: ctx)
-               else
-                 raise CapabilityError, "Capability #{name} has neither executor, flow nor agent"
-               end
-      validate_v2_output!(result)
-      result
+      operation = lambda do
+        result = if @executor
+                   call_v2_callable(@executor, inputs, ctx, idempotency_key)
+                 elsif @flow
+                   @flow.call(context: ctx, **inputs)
+                 elsif @agent
+                   @agent.call(inputs, context: ctx)
+                 else
+                   raise CapabilityError, "Capability #{name} has neither executor, flow nor agent"
+                 end
+        validate_v2_output!(result)
+        result
+      end
+      if @knowledge_gate
+        @knowledge_gate.execute(arguments: inputs, context: ctx, operation: name.to_s,
+                                idempotency_key: idempotency_key, &operation)
+      else
+        operation.call
+      end
     end
 
     def reconcile(inputs, idempotency_key:, context: nil)
@@ -145,6 +167,7 @@ module Agentkit
     end
 
     def validate!
+      validate_knowledge_gate! if @knowledge_gate
       if @flow.nil? && @agent.nil? && @executor.nil?
         raise ConfigurationError, "Capability #{name} needs an executor, flow or agent"
       end
@@ -166,11 +189,19 @@ module Agentkit
         effect: @effect, required_permission: @required_permission,
         idempotency: @idempotency, reconciliation: @reconciliation,
         timeout: @timeout, max_input_bytes: @max_input_bytes,
-        contract_version: @contract_version, exposures: exposures
+        contract_version: @contract_version, exposures: exposures,
+        **(@knowledge_gate ? { knowledge_gate_digest: @knowledge_gate.digest } : {})
       )
     end
 
     private
+
+    def validate_knowledge_gate!
+      unless @effect == :internal && @executor && !@flow && !@agent && @idempotency == :required &&
+             !legacy_contract? && effective_input_schema["type"] == "object" && effective_input_schema["additionalProperties"] == false
+        raise ConfigurationError, "knowledge-gated capabilities require internal synchronous executor, closed schema and required idempotency"
+      end
+    end
 
     def effective_input_schema
       return Schema.normalize(@input_schema) if @input_schema
@@ -189,8 +220,7 @@ module Agentkit
     end
 
     def call_v2_callable(callable, inputs, context, idempotency_key)
-      method = callable.method(:call)
-      parameters = method.parameters
+      parameters = callable.respond_to?(:parameters) ? callable.parameters : callable.method(:call).parameters
       accepts_keyrest = parameters.any? { |kind, _| kind == :keyrest }
       accepted = parameters.filter_map { |kind, key| key if %i[key keyreq].include?(kind) }
       keywords = { context: context, idempotency_key: idempotency_key }

@@ -1,5 +1,9 @@
 # Verified Knowledge Core — Agentkit 1.7.0
 
+Para persistencia, adaptadores Rails y gates implementados en 1.8, consultar la
+[guía Rails Evidence & Decision Gates](RAILS_EVIDENCE_AND_DECISION_GATES.md).
+Esta página conserva el contrato del núcleo 1.7.
+
 Esta guía define el contrato de implementación para una aplicación Rails.
 El núcleo es Ruby puro, opt-in y no necesita migraciones ni servicios externos.
 También puede cargarse con `require "agentkit/knowledge"`.
