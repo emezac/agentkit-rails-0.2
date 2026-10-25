@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.10.0 — 2026-10-25
+
+### Added
+
+- Controlled BusinessExperiment protocols with preregistered variants, metrics, gates, observation window and fixed analysis horizon.
+- Private HMAC randomization, durable 50:50 assignments, independent approval and cross-worker quotas (migration 025).
+- Atomic DecisionGate execution/exposure tracking, host unit binding and serialized permanent safety stops.
+- Complete intention-to-treat registry, delayed-outcome cutoff, bounded simultaneous confidence intervals and allocation-imbalance alarms.
+- Human result review and revocation without automatic promotion or universal causal claims.
+- Rails integration guide defining measurement, eligibility, consent, independence, safety and deployment responsibilities.
+
+
 ## 1.9.0 — 2026-10-25
 
 ### Added

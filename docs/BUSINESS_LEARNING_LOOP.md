@@ -4,6 +4,9 @@
 con resultados de negocio tardíos y propuestas revisables. Es aprendizaje
 **retrospectivo**, no una prueba causal ni un entrenador de modelos.
 
+Para contrastar una hipótesis mediante asignación controlada, consultar
+[Controlled Business Experiments (1.10)](CONTROLLED_BUSINESS_EXPERIMENTS.md).
+
 ## Frontera entre framework y aplicación Rails
 
 | Agentkit | Aplicación Rails |

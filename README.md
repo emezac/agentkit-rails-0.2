@@ -1,9 +1,9 @@
-# AgentKit Rails v1.9.0
+# AgentKit Rails v1.10.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.9.0"
+gem "agentkit-rails", "~> 1.10.0"
 ```
 
 ```bash
@@ -13,6 +13,15 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Controlled Business Experiments en 1.10.0
+
+`Knowledge::BusinessExperiment` añade protocolos A/B inmutables, asignación 50:50,
+aprobación independiente, cuotas y ejecución transaccional mediante DecisionGate.
+El análisis ITT de horizonte fijo conserva todos los asignados, exige resultados
+completos y aplica intervalos conservadores y métricas de seguridad. No promueve
+cambios automáticamente. Requiere migración 025.
+Consulta la [guía y responsabilidades Rails](docs/CONTROLLED_BUSINESS_EXPERIMENTS.md).
 
 ## Business Learning Loop en 1.9.0
 

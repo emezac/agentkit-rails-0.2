@@ -1,3 +1,19 @@
+# Upgrading 1.9.0 → 1.10.0
+
+Install engine migration 025 before enabling BusinessExperiment:
+
+```sh
+rails agentkit:install:migrations
+rails db:migrate
+```
+
+The feature is opt-in; existing BusinessLearning contracts are unchanged. Allow
+Journal kind `experiment` only for authorized callers. Define human approval,
+pre-treatment eligibility and unit/arguments binding callbacks. Gates and experiment
+must share a Journal and database pool. Do not route controlled interventions
+through older workers that do not enforce experiment state and quota.
+See [Controlled Business Experiments](docs/CONTROLLED_BUSINESS_EXPERIMENTS.md).
+
 # Upgrading 1.8.0 → 1.9.0
 
 No new migration; migration 024 remains required. BusinessLearning is opt-in.
