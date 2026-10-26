@@ -32,7 +32,7 @@ RSpec.describe "Rails evidence and decision gates", :integration do
     expect { reloaded.outcome(**args.merge(values: { cost: 999 })) }.to raise_error(k::IntegrityError)
   end
 
-  def build_gate(version: "1", permission: ->(_args, _ctx) { true }, resolver: nil, limits: {}, source_authorize: ->(_record, _ctx) { true })
+  def build_gate(version: "1", permission: ->(_args, _ctx) { true }, resolver: nil, limits: {}, source_authorize: ->(_record, _ctx) { true }, backend: nil)
     ontology = k::Ontology.new(name: "Widgets", version: "1", entities: ["Widget"],
                               relations: { "Ready" => ["Widget"], "Allowed" => ["Widget"] })
     x = k.var("x")
@@ -48,7 +48,42 @@ RSpec.describe "Rails evidence and decision gates", :integration do
       end)
     k::DecisionGate.new(name: "widget_gate", version: version, source: source, journal: journal,
       queries: ->(args, _ctx) { [{ "relation" => "Allowed", "values" => ["widget:#{args.fetch('id')}"] }] },
-      authorize: permission, execution_context: resolver || ->(_proposal) { context }, limits: limits)
+      authorize: permission, execution_context: resolver || ->(_proposal) { context }, limits: limits, backend: backend)
+  end
+
+  it "binds optional backend policy to the gate and persists explicit fallback provenance" do
+    tensor = k::Backends::BooleanTensor.new
+    runner = k::Backends::Verified.new(backend: tensor, name: "tensor", version: "1", fallback: "ruby")
+    gate = build_gate(backend: runner)
+    default_gate = build_gate
+    expect(default_gate.digest).to eq(k.digest("name" => "widget_gate", "version" => "1",
+      "source" => default_gate.source.contract, "require_complete" => true, "limits" => {}))
+    expect(gate.digest).not_to eq(default_gate.digest)
+    verdict = gate.check(arguments: { id: widget.id }, context: context, event_id: "backend-1")
+    expect(verdict["accepted"]).to eq(true)
+    expect(verdict["backend"]["execution"]).to eq("ruby_fallback")
+    expect(journal.read(kind: "decision", key: "widget_gate:backend-1", context: context)["backend"]).to eq(verdict["backend"])
+    expect { build_gate(backend: tensor) }.to raise_error(k::InvalidContract)
+    strict = k::Backends::Verified.new(backend: tensor, name: "tensor", version: "1")
+    expect { build_gate(backend: strict).execute(arguments: { id: widget.id }, context: context,
+      operation: "backend", idempotency_key: "1") { widget.update!(name: "unsafe"); {} } }.to raise_error(k::Backends::Failure)
+    expect(widget.reload.name).to eq("Order")
+  end
+
+  it "persists rechecked abstractions and witness views within the authorized evidence scope" do
+    verdict = build_gate.check(arguments: { id: widget.id }, context: context)
+    snapshot = journal.load_snapshot(verdict["snapshot_digest"], context: context)
+    order = k::FiniteOrder.new(name: "ReadyState", version: "1", elements: ["ready"], leq: [["ready", "ready"]])
+    connection = k::GaloisConnection.new(name: "ReadyView", version: "1", concrete: order, abstract: order,
+      alpha: { ready: "ready" }, gamma: { ready: "ready" })
+    journal.save_abstraction(connection, context: context)
+    expect(journal.load_abstraction(connection.digest, context: context).digest).to eq(connection.digest)
+    view = k::AbstractionView.new(connection: connection, snapshot: snapshot, result: k::Engine.new.run(snapshot),
+      claims: { ready: { relation: "Allowed", values: ["widget:#{widget.id}"] } })
+    expect(journal.save_abstraction_view(view, context: context)).to eq(view.digest)
+    other = Agentkit::Context.new(account: Account.create!(name: "Other"), principal: "reader")
+    expect(journal.load_abstraction(connection.digest, context: other)).to be_nil
+    expect { journal.save_abstraction_view(view, context: other) }.to raise_error(k::AccessDenied)
   end
 
   def register_capability(gate, &executor)

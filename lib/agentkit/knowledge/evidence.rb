@@ -46,7 +46,7 @@ module Agentkit
     # class is not an HTTP endpoint and never infers authority from LLM arguments.
     class Journal
       MAX_BYTES = 16 * 1024 * 1024
-      KINDS = %w[snapshot decision execution event delivery learning experiment].freeze
+      KINDS = %w[snapshot decision execution event delivery learning experiment abstraction].freeze
 
       def initialize(authorize:)
         raise InvalidContract, "journal authorizer required" unless authorize.respond_to?(:call)
@@ -90,6 +90,30 @@ module Agentkit
 
       def record_event(id:, payload:, context:)
         append(kind: "event", key: id, payload: { "id" => Knowledge.text(id), "data" => payload }, context: context)
+      end
+
+      def save_abstraction(connection, context:)
+        raise InvalidContract, "verified GaloisConnection required" unless connection.is_a?(GaloisConnection)
+        append(kind: "abstraction", key: "connection:#{connection.digest}", payload: connection.to_h, context: context)
+        connection.digest
+      end
+
+      def load_abstraction(digest, context:)
+        payload = read(kind: "abstraction", key: "connection:#{digest}", context: context)
+        return nil unless payload
+        connection = GaloisConnection.from_json(JSON.generate(payload))
+        raise IntegrityError, "abstraction digest mismatch" unless connection.digest == digest
+        connection
+      end
+
+      def save_abstraction_view(view, context:)
+        raise InvalidContract, "verified AbstractionView required" unless view.is_a?(AbstractionView)
+        unless load_snapshot(view.data.fetch("snapshot_digest"), context: context) &&
+               load_abstraction(view.data.fetch("connection_digest"), context: context)
+          raise AccessDenied, "view requires snapshot and connection stored in current scope"
+        end
+        append(kind: "abstraction", key: "view:#{view.digest}", payload: view.to_h, context: context)
+        view.digest
       end
 
       # Retry this method after a worker crash. Same-database effects and the

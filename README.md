@@ -1,9 +1,9 @@
-# AgentKit Rails v1.10.0
+# AgentKit Rails v1.11.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.10.0"
+gem "agentkit-rails", "~> 1.11.0"
 ```
 
 ```bash
@@ -13,6 +13,14 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Verified Abstractions & Optional Backends en 1.11.0
+
+Órdenes finitos y conexiones de Galois comprobadas exhaustivamente, composición
+de capas, transformadores conservadores y vistas con pruebas concretas. Backend
+tensorial booleano opcional con verificación contra Ruby, y exportación cerrada
+de obligaciones a Lean 4. No convierte abstracciones en permisos ni hechos causales.
+Consulta la [guía de garantías y responsabilidades Rails](docs/VERIFIED_ABSTRACTIONS_AND_BACKENDS.md).
 
 ## Controlled Business Experiments en 1.10.0
 

@@ -6,7 +6,7 @@ module Agentkit
       attr_reader :name, :source, :journal, :digest
 
       def initialize(name:, version:, source:, journal:, queries:, authorize:, execution_context: nil,
-                     require_complete: true, limits: {})
+                     require_complete: true, limits: {}, backend: nil)
         Knowledge.text(name)
         Knowledge.text(version)
         unless source.is_a?(ActiveRecordSource) && journal.is_a?(Journal) &&
@@ -18,9 +18,14 @@ module Agentkit
         end
         @name, @source, @journal = Knowledge.text(name), source, journal
         @queries, @authorize, @execution_context = queries, authorize, execution_context
-        @require_complete, @engine = require_complete, Engine.new(**limits)
-        @digest = Knowledge.digest("name" => name, "version" => version, "source" => source.contract,
-                                   "require_complete" => require_complete, "limits" => Boundary.data(limits))
+        if backend && (!backend.is_a?(Backends::Verified) || !limits.empty?)
+          raise InvalidContract, "gate requires a verified backend; put limits in its contract"
+        end
+        @require_complete, @engine = require_complete, backend || Engine.new(**limits)
+        contract = { "name" => name, "version" => version, "source" => source.contract,
+                     "require_complete" => require_complete, "limits" => Boundary.data(limits) }
+        contract["backend"] = backend.descriptor if backend
+        @digest = Knowledge.digest(contract)
         freeze
       end
 
@@ -110,10 +115,12 @@ module Agentkit
             "proof" => query["proof"] }
         end
         journal.save_snapshot(snapshot, context: context)
-        Knowledge.copy("gate_digest" => digest, "snapshot_digest" => snapshot.digest,
+        verdict = { "gate_digest" => digest, "snapshot_digest" => snapshot.digest,
           "arguments_digest" => Knowledge.digest(arguments), "identity" => Boundary.identity(context),
           "accepted" => checks.all? { |check| check.fetch("verified") } && (!@require_complete || result.complete?),
-          "closure_complete" => result.complete?, "limit_reason" => result.data["reason"], "checks" => checks)
+          "closure_complete" => result.complete?, "limit_reason" => result.data["reason"], "checks" => checks }
+        verdict["backend"] = result.data["backend"] if result.data["backend"]
+        Knowledge.copy(verdict)
       end
     end
 

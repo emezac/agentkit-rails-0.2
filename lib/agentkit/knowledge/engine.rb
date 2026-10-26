@@ -103,11 +103,13 @@ module Agentkit
       attr_reader :snapshot
       def self.key(relation, values) = JSON.generate([relation, values])
 
-      def initialize(snapshot:, nodes:, complete:, reason:, iterations:, steps:, limits:)
+      def initialize(snapshot:, nodes:, complete:, reason:, iterations:, steps:, limits:, backend: nil)
         @snapshot = snapshot
-        super("schema_version" => 1, "snapshot_digest" => snapshot.digest,
+        payload = { "schema_version" => 1, "snapshot_digest" => snapshot.digest,
               "complete" => complete, "reason" => reason, "iterations" => iterations,
-              "steps" => steps, "limits" => limits, "nodes" => nodes)
+              "steps" => steps, "limits" => limits, "nodes" => nodes }
+        payload["backend"] = backend if backend
+        super(payload)
       end
 
       def complete? = data.fetch("complete")

@@ -1,3 +1,16 @@
+# Upgrading 1.10.0 → 1.11.0
+
+No new migration or mandatory dependency. Ruby remains the default engine and
+existing default gate digests are unchanged. Authorize Journal kind `abstraction`
+explicitly if persisting connections/views (requires migration 024).
+
+Optional gates accept only `Knowledge::Backends::Verified`; configure reference
+limits there and candidate limits in its adapter. Adding/changing a backend,
+version, limits or fallback policy changes the gate digest: recreate affected
+action proposals and business experiment protocols rather than bypassing checks.
+Lean export does not execute Lean; opt-in toolchain checks require an explicit
+binary. See [Verified Abstractions & Optional Backends](docs/VERIFIED_ABSTRACTIONS_AND_BACKENDS.md).
+
 # Upgrading 1.9.0 → 1.10.0
 
 Install engine migration 025 before enabling BusinessExperiment:

@@ -241,6 +241,11 @@ Antes de conectar una acción real, la app debe tener pruebas para:
 
 ## Evolución prevista
 
+Actualización 1.11: ya están disponibles las
+[abstracciones verificadas y backends opcionales](VERIFIED_ABSTRACTIONS_AND_BACKENDS.md),
+con alcance finito explícito y Ruby como referencia. El párrafo siguiente conserva
+el alcance histórico de la versión 1.7.
+
 1.8 incorporará adaptadores de evidencia y gates; 1.9, resultados de negocio y
 propuestas evaluadas; 1.10, experimentos controlados. Las abstracciones verificadas
 mediante conexiones de Galois y los backends Tensor/Lean se evaluarán después sobre

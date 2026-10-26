@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.11.0 — 2026-10-25
+
+### Added
+
+- Exhaustively checked finite orders, Galois connections, composition and monotone sound transformer tables.
+- Concrete-proof abstraction views and scoped Journal persistence without automatic rule generation or authorization.
+- Optional exact Boolean tensor backend for binary copy/composition rules, with bounded resources and proof DAGs.
+- Verified adapter boundary: proof checking, reference closure comparison and explicit audited Ruby fallback.
+- DecisionGate backend policy digest binding and persisted execution provenance; default Ruby behavior remains unchanged.
+- Deterministic closed Lean 4 adjunction export and opt-in real-toolchain test, without mandatory dependencies or automatic external execution.
+- Rails integration guide covering semantic ownership, trust boundaries, version changes and limits.
+
+
 ## 1.10.0 — 2026-10-25
 
 ### Added
