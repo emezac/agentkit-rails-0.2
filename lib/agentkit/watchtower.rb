@@ -28,13 +28,21 @@ module Agentkit
       def scan!(now: Time.now, scope: nil)
         return [] unless Agentkit.config.watchtower.enabled
 
-        findings = lifecycle_findings(now, scope) + identity_findings(scope) +
-                   audit_findings(scope) + flow_findings(now, scope) +
-                   telemetry_findings(now, scope) + adapter_findings(scope)
+        complete = true
+        detectors = { lifecycle: [now, scope], identity: [scope], audit: [scope],
+                      flow: [now, scope], telemetry: [now, scope], adapter: [scope] }
+        findings = detectors.flat_map do |name, args|
+          send("#{name}_findings", *args)
+        rescue StandardError => error
+          complete = false
+          tenant = scope.respond_to?(:tenant_key) ? scope.tenant_key : scope&.fetch(:tenant_key, nil)
+          subject = Struct.new(:id, :tenant_key).new(name.to_s, tenant || "__global__")
+          [issue("observation_unavailable", "critical", subject, source: name.to_s, error_class: error.class.name)]
+        end
         fingerprints = findings.map(&:fingerprint)
         findings.each { |issue| store.upsert(issue) }
-        store.resolve_absent!(fingerprints, scope: scope, now: now)
-        Telemetry.emit("watchtower.scan", measures: { findings: findings.size })
+        store.resolve_absent!(fingerprints, scope: scope, now: now) if complete
+        Telemetry.emit("watchtower.scan", measures: { findings: findings.size, complete: complete ? 1 : 0 })
         findings
       end
 
@@ -82,7 +90,8 @@ module Agentkit
       end
 
       def flow_findings(now, scope)
-        return [] unless defined?(Agentkit::RunRecord) && Agentkit::RunRecord.table_exists?
+        return [] unless defined?(Agentkit::RunRecord)
+        raise "flow observation table unavailable" unless Agentkit::RunRecord.table_exists?
 
         relation = Agentkit::RunRecord.where(status: "waiting_join")
         tenant = scope.respond_to?(:tenant_key) ? scope.tenant_key : scope&.fetch(:tenant_key, nil)
@@ -91,8 +100,6 @@ module Agentkit
           issue("stale_flow_join", "high", run,
                 status: run.status, age_seconds: (now - run.updated_at).round)
         end
-      rescue StandardError
-        []
       end
 
       def telemetry_findings(now, scope)
@@ -108,8 +115,6 @@ module Agentkit
 
           system_issue(detector, severity, tenant || "__global__", count: events.size)
         end
-      rescue StandardError
-        []
       end
 
       def adapter_findings(scope)

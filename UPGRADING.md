@@ -1,3 +1,26 @@
+# Upgrading 1.11.0 → 1.12.0
+
+Operations is opt-in. Install migration 026 for the durable escalation outbox;
+migration 024 remains required for dossiers and their audit journal:
+
+```sh
+rails agentkit:install:migrations
+rails db:migrate
+```
+
+Authorize Journal kind `operations` explicitly. Configure Operations action
+authorization separately; `acknowledge` must require an authenticated human.
+Install the same catalog and verifier versions on web and worker processes.
+The host must implement bounded read-only source loading, scoped deployed-diff
+retrieval, semantic verification, a scheduled dispatch job and an idempotent
+notification provider. `deliver` rejects caller-owned DB transactions.
+
+Watchtower no longer resolves absent findings during an incomplete scan and
+surfaces detector exceptions (including an unavailable expected flow table).
+Deploying this update may therefore reveal previously hidden observation gaps.
+No external source, scheduler, remediation, or notifications are enabled by default.
+See [Production Operations Evidence & Escalation](docs/PRODUCTION_OPERATIONS_EVIDENCE_AND_ESCALATION.md).
+
 # Upgrading 1.10.0 → 1.11.0
 
 No new migration or mandatory dependency. Ruby remains the default engine and

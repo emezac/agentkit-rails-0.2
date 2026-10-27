@@ -1,9 +1,9 @@
-# AgentKit Rails v1.11.0
+# AgentKit Rails v1.12.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.11.0"
+gem "agentkit-rails", "~> 1.12.0"
 ```
 
 ```bash
@@ -13,6 +13,17 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Production Operations Evidence & Escalation en 1.12.0
+
+`Operations::Monitor` conserva catálogos versionados, expedientes cronológicos,
+cobertura de fuentes y diffs del código desplegado. Separa observaciones,
+hipótesis y recomendaciones con referencias verificadas, sin autorizar cambios.
+`Operations::Escalations` añade una cola durable con leases, reintentos, fallback
+y confirmación humana; las fuentes no disponibles nunca equivalen a salud.
+Requiere migraciones 024 y 026. La app Rails aporta fuentes, políticas,
+scheduler y proveedor de notificaciones. Consulta la
+[guía y contrato de responsabilidades Rails](docs/PRODUCTION_OPERATIONS_EVIDENCE_AND_ESCALATION.md).
 
 ## Verified Abstractions & Optional Backends en 1.11.0
 

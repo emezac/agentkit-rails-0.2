@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.12.0 — 2026-10-27
+
+### Added
+
+- Versioned operational catalogs with ownership, on-call routes, dependencies, runbooks, SLO metadata and required source freshness.
+- Scoped immutable incident dossiers with chronological evidence, coverage and exact deployed revision/diff binding.
+- Evidence-linked observations, explicit hypotheses and read-only diagnostic recommendations with versioned host verification, never execution permission or causal proof.
+- Atomic durable escalation outbox (migration 026), bounded retries, worker leases, provider idempotency keys, fallback deadlines and separately authorized human acknowledgement.
+- Scoped escalation queries and immutable notification/acknowledgement audit records; historical contract replay evaluation.
+- Rails implementation guide defining source, security, scheduler, provider and human operations responsibilities.
+
+### Fixed
+
+- Watchtower reports detector failures as critical observation-unavailable findings and preserves unresolved issues until a complete scan succeeds.
+
 ## 1.11.0 — 2026-10-25
 
 ### Added
