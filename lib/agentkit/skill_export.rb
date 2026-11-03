@@ -10,7 +10,10 @@ module Agentkit
     SCHEMA_VERSION = 1
     MAX_SKILL_BYTES = 128 * 1024
     MAX_TOOLS_BYTES = 64 * 1024
-    NAME_PATTERN = /\A[a-zA-Z][a-zA-Z0-9_-]{0,63}\z/
+    NAME_PATTERN = /\A[a-z0-9]+(?:-[a-z0-9]+)*\z/
+    MAX_NAME_LENGTH = 64
+    MAX_DESCRIPTION_LENGTH = 1_024
+    MAX_VERSION_LENGTH = 64
 
     class << self
       # Export a skill definition to a structured bundle hash or zip-compatible file payload.
@@ -18,10 +21,12 @@ module Agentkit
       # @param skill_or_name [Agentkit::Skill, Symbol, String] Skill object or skill name
       # @return [Hash] Export bundle ({ "SKILL.md" => content, "tools.json" => content })
       def export(skill_or_name)
-        skill = resolve_skill(skill_or_name)
+        skill = validate!(skill_or_name)
 
         md_content = build_skill_md(skill)
+        raise ConfigurationError, "SKILL.md exceeds #{MAX_SKILL_BYTES} bytes" if md_content.bytesize > MAX_SKILL_BYTES
         tools_content = build_tools_json(skill)
+        raise ConfigurationError, "tools.json exceeds #{MAX_TOOLS_BYTES} bytes" if tools_content.bytesize > MAX_TOOLS_BYTES
 
         {
           "SKILL.md"   => md_content,
@@ -32,6 +37,16 @@ module Agentkit
             "agentkit_v"   => Agentkit::VERSION
           }.to_json
         }
+      end
+
+      # Validate portable metadata without running a model or executing tools.
+      # Internal Ruby skills may use other names; only exported skills must
+      # satisfy the Agent Skills SKILL.md naming and description contract.
+      def validate!(skill_or_name)
+        skill = resolve_skill(skill_or_name)
+        validate_metadata!(name: skill.name.to_s, description: skill.description,
+                           version: skill.version)
+        skill
       end
 
       # Import a skill bundle hash back into Agentkit::SkillRegistry and TeamMemory
@@ -52,10 +67,9 @@ module Agentkit
 
         metadata, prompt_fragment = parse_skill_md(md_text)
         name = metadata.fetch("name").to_s
-        version = metadata.fetch("version", "1.0.0").to_s
+        version = metadata.fetch("version")
         schema_version = Integer(metadata.fetch("schema_version", SCHEMA_VERSION))
         raise ConfigurationError, "Unsupported skill schema_version: #{schema_version}" unless schema_version == SCHEMA_VERSION
-        raise ConfigurationError, "Invalid skill name: #{name.inspect}" unless NAME_PATTERN.match?(name)
 
         existing = TeamMemory::AssetStore.find_by_name(name, asset_type: "skill")
         if existing && existing.version == version && existing.status != "archived"
@@ -65,6 +79,7 @@ module Agentkit
         digest = bundle_digest(md_text.to_s, tools_text.to_s)
         content = {
           "schema_version" => schema_version, "name" => name, "version" => version,
+          "description" => metadata.fetch("description"),
           "prompt_fragment" => prompt_fragment, "tools" => tools,
           "digest" => digest, "origin" => origin, "author" => author,
           "importer" => importer
@@ -94,7 +109,11 @@ module Agentkit
         digest = asset.content["digest"]
         raise ConfigurationError, "Skill digest changed after review" if expected_digest && digest != expected_digest
 
-        skill = Skill.define(asset.name) { |s| s.prompt(asset.content.fetch("prompt_fragment")) }
+        skill = Skill.define(asset.name) do |s|
+          s.prompt(asset.content.fetch("prompt_fragment"))
+          s.description(asset.content["description"]) if asset.content["description"]
+          s.version(asset.content.fetch("version"))
+        end
         reviewed = asset.content.merge("approved_by" => approver.to_s, "approved_at" => Time.now.iso8601)
         TeamMemory::AssetStore.update(asset, status: "active", content: reviewed)
         skill
@@ -114,16 +133,13 @@ module Agentkit
 
       def build_skill_md(skill)
         prompt_text = skill.respond_to?(:system_prompt_fragment) ? skill.system_prompt_fragment(nil) : ""
-        <<~MARKDOWN
-          ---
-          name: #{skill.name}
-          description: Skill bundle for #{skill.name}
-          version: 1.0.0
-          schema_version: #{SCHEMA_VERSION}
-          ---
-
-          #{prompt_text}
-        MARKDOWN
+        frontmatter = YAML.dump(
+          "name" => skill.name.to_s,
+          "description" => skill.description,
+          "metadata" => { "agentkit-version" => skill.version.to_s,
+                          "agentkit-schema-version" => SCHEMA_VERSION.to_s }
+        ).sub(/\A---\s*\n/, "").strip
+        "---\n#{frontmatter}\n---\n\n#{prompt_text}\n"
       end
 
       def build_tools_json(skill)
@@ -140,11 +156,28 @@ module Agentkit
 
         metadata = YAML.safe_load(match[1], permitted_classes: [], permitted_symbols: [], aliases: false)
         raise ConfigurationError, "SKILL.md frontmatter must be a mapping" unless metadata.is_a?(Hash)
-        raise ConfigurationError, "SKILL.md frontmatter requires name" if metadata["name"].to_s.empty?
+        portable = metadata.fetch("metadata", {})
+        raise ConfigurationError, "SKILL.md metadata must be a mapping" unless portable.is_a?(Hash)
+        version = portable["agentkit-version"] || metadata["version"] || "1"
+        metadata["schema_version"] = portable["agentkit-schema-version"] || metadata["schema_version"] || SCHEMA_VERSION
+        validate_metadata!(name: metadata["name"], description: metadata["description"], version: version)
+        metadata["version"] = version.to_s
 
         [metadata, match[2].strip]
       rescue Psych::Exception => e
         raise ConfigurationError, "Unsafe SKILL.md frontmatter: #{e.message}"
+      end
+
+      def validate_metadata!(name:, description:, version:)
+        unless name.is_a?(String) && name.length <= MAX_NAME_LENGTH && NAME_PATTERN.match?(name)
+          raise ConfigurationError, "Invalid portable skill name: #{name.inspect}"
+        end
+        unless description.is_a?(String) && !description.strip.empty? && description.length <= MAX_DESCRIPTION_LENGTH
+          raise ConfigurationError, "Portable skill description must be 1..#{MAX_DESCRIPTION_LENGTH} characters"
+        end
+        unless version.is_a?(String) && !version.strip.empty? && version.length <= MAX_VERSION_LENGTH
+          raise ConfigurationError, "Portable skill version must be 1..#{MAX_VERSION_LENGTH} characters"
+        end
       end
 
 

@@ -184,7 +184,7 @@ transcript = [
   "User: ¿Cómo realizo el deploy seguro?",
   "Agent: Step 1: Correr escaneo SAST. Step 2: Validar firmas container. Step 3: Aplicar migración en staging."
 ]
-extracted_skill = Agentkit::TeamMemory::SkillExtractor.extract(conversation: transcript, name: "DeploySeguroSkill", team_id: team.id)
+extracted_skill = Agentkit::TeamMemory::SkillExtractor.extract(conversation: transcript, name: "deploy-seguro", team_id: team.id)
 puts "🛠️ Skill extraído automáticamente: '#{extracted_skill.name}' con #{extracted_skill.content['steps'].size} pasos."
 
 # 3.5 LayeredPipeline (L0 -> L1 -> L2 -> L3)
@@ -237,7 +237,8 @@ chat_status = Agentkit::Chat.say("mem:status")
 puts "💬 Chat Command 'mem:status': #{chat_status.message}"
 
 # 4.4 SkillExport & Import
-export_bundle = Agentkit::SkillExport.export(:DeploySeguroSkill)
+Agentkit::SkillRegistry[:"deploy-seguro"].description("Prepara un despliegue seguro desde un plan; úsalo para revisar un deploy, no para ejecutarlo.")
+export_bundle = Agentkit::SkillExport.export(:"deploy-seguro")
 puts "📦 Skill Export Bundle generado:"
 puts "   - SKILL.md preview: #{export_bundle['SKILL.md'].lines.first.strip}"
 

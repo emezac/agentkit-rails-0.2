@@ -84,25 +84,44 @@ RSpec.describe "Advanced Memory Improvements (Épica 3)" do
 
   describe Agentkit::SkillExport do
     it "exports a skill to a markdown bundle and imports it back" do
-      skill = Agentkit::Skill.define(:TestExportSkill) do |s|
+      skill = Agentkit::Skill.define(:"test-export-skill") do |s|
+        s.description("Reviews a supplied brief: use for negotiation preparation, not sending messages.")
+        s.version("2.3.0")
         s.prompt("## Test Skill Prompt")
       end
 
       bundle = described_class.export(skill)
 
       expect(bundle["SKILL.md"]).to include("## Test Skill Prompt")
+      expect(bundle["SKILL.md"]).to include("agentkit-version: 2.3.0")
 
       Agentkit::SkillRegistry.reset!
       imported = described_class.import(bundle)
-      expect(imported.name).to eq("TestExportSkill")
+      expect(imported.name).to eq("test-export-skill")
       expect(imported.status).to eq("quarantined")
-      expect(Agentkit::SkillRegistry.registered?(:TestExportSkill)).to be(false)
+      expect(Agentkit::SkillRegistry.registered?(:"test-export-skill")).to be(false)
 
       proposal = Agentkit::HITL.pending(type: "skill_activation").last
       Agentkit::HITL.approve(proposal.id, actor: "human:reviewer")
 
-      expect(Agentkit::SkillRegistry.load_skill(:TestExportSkill)).not_to be_nil
+      activated = Agentkit::SkillRegistry.load_skill(:"test-export-skill")
+      expect(activated.description).to eq(skill.description)
+      expect(activated.version).to eq("2.3.0")
       expect(Agentkit::TeamMemory::AssetStore.find(imported.id).status).to eq("active")
+    end
+
+    it "can still activate a quarantined legacy asset without a description" do
+      legacy = Agentkit::TeamMemory.create_asset(
+        asset_type: "skill", name: "LegacySkill", version: "1.0.0",
+        status: "quarantined", visibility: "restricted",
+        content: { "prompt_fragment" => "Legacy procedure", "version" => "1.0.0", "digest" => "legacy" }
+      )
+
+      activated = described_class.activate(legacy, approver: "human:reviewer")
+
+      expect(activated.prompt).to eq("Legacy procedure")
+      expect(activated.description).to eq("")
+      expect(Agentkit::TeamMemory::AssetStore.find(legacy.id).status).to eq("active")
     end
   end
 end

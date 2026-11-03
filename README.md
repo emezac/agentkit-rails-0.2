@@ -1168,7 +1168,7 @@ Accedé a la consola de gobernanza de memoria en `/agentkit/team_memory`.
   - `mem:sync` → Sincronización y flush de embeddings.
   - `mem:skill` → Extracción de skill de la sesión.
   - `mem:help` → Ayuda interactiva.
-- **Skill Export & Import (`SkillExport`)**: Exporta e importa habilidades como paquetes estructurados `SKILL.md` + `tools.json`.
+- **Skill Export & Import (`SkillExport`)**: Exporta `SKILL.md` con la descripción y versión reales de la skill. `SkillExport.validate!` comprueba nombre portable (`a-z`, números y guiones), descripción y versión sin llamar a un modelo. La importación conserva esos metadatos, queda en cuarentena hasta aprobación humana y nunca activa automáticamente los esquemas de `tools.json`.
 
 ---
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Portable skill bundles now preserve their routable description and version; export and import validate SKILL.md metadata without model calls or automatic tool activation.
+
 ## 1.12.0 — 2026-10-27
 
 ### Added
