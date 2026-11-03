@@ -1496,6 +1496,11 @@ db/migrate/            migraciones aditivas, incluida 018 para replay worlds
 
 ## Testing
 
+Optional operator workflows (tenant-scoped routines, attention inbox,
+asynchronous Flow receipts and reviewable memory proposals) are described in
+[Operator workflows](docs/OPERATOR_WORKFLOWS.md). They require migration 027;
+the console remains disabled until the host configures its guard.
+
 ```ruby
 Agentkit::Flow.test_mode!   # executor síncrono, LLM fake, stores en memoria
 Agentkit.config.memory.store = :memory

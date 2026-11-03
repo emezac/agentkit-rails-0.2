@@ -1,0 +1,19 @@
+<h2>Memoria para revisión</h2>
+<% @proposals.each do |proposal| %>
+  <div class="card">
+    <p><%= proposal.content %></p>
+    <p class="dim">#<%= proposal.id %> · <%= proposal.status %> · <%= proposal.source_agent %> · <%= proposal.tags.join(", ") %></p>
+    <% if proposal.status == "pending" %>
+      <%= button_to "Aprobar", approve_memory_proposal_path(proposal) %>
+      <%= button_to "Rechazar", reject_memory_proposal_path(proposal), class: "ghost" %>
+    <% elsif proposal.status == "approved" %>
+      <%= button_to "Deshacer (archivar)", undo_memory_proposal_path(proposal), class: "ghost" %>
+    <% end %>
+    <details><summary>Historial</summary>
+      <% proposal.review_events.order(:created_at, :id).each do |event| %>
+        <p><%= event.created_at %> · <%= event.event %> · <%= event.actor %></p>
+      <% end %>
+    </details>
+  </div>
+<% end %>
+<% if @proposals.empty? %><div class="card empty">Sin propuestas.</div><% end %>

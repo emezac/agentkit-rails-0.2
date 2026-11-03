@@ -1,3 +1,21 @@
+# Optional operator workflows after 1.12.0
+
+Install migration 027 before enabling the new console pages or the routine
+tick job. Deploy web and worker processes together, then run:
+
+```sh
+rails agentkit:install:migrations
+rails db:migrate
+```
+
+The new routine scheduler is optional and only starts when `sidekiq-cron` is
+available. It dispatches registered Flows; it does not grant permissions or
+relax human gates. Hosts without sidekiq-cron may invoke
+`Agentkit::RoutineTickJob.perform_later` from their own scheduler. Existing
+Flow, memory, HITL and Actions records are unchanged. See
+[Operator workflows](docs/OPERATOR_WORKFLOWS.md) for the creation API,
+attention inbox, delegation receipts and memory review lifecycle.
+
 # Upgrading 1.11.0 → 1.12.0
 
 Operations is opt-in. Install migration 026 for the durable escalation outbox;

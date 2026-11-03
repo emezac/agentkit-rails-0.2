@@ -3,6 +3,21 @@
 Agentkit::Engine.routes.draw do
   root to: "suggestions#index"
 
+  get "attention", to: "attention#index", as: :attention
+  resources :routines, only: %i[index create] do
+    member do
+      post :pause
+      post :resume
+    end
+  end
+  resources :memory_proposals, only: %i[index] do
+    member do
+      post :approve
+      post :reject
+      post :undo
+    end
+  end
+
   # ─── HITL inbox ────────────────────────────────────────────────────────────
   resources :suggestions, only: %i[index show] do
     member do

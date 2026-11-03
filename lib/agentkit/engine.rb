@@ -190,6 +190,9 @@ module Agentkit
       entries["agentkit_embedding_flush"] = {
         "cron" => "*/5 * * * *", "class" => "Agentkit::EmbeddingFlushJob"
       }
+      entries["agentkit_routine_tick"] = {
+        "cron" => "* * * * *", "class" => "Agentkit::RoutineTickJob"
+      }
       ::Sidekiq::Cron::Job.load_from_hash(entries) if entries.any?
     rescue StandardError => e
       Rails.logger.warn("[AgentKit] cron registration skipped: #{e.message}")

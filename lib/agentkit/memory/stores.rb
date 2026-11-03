@@ -91,7 +91,7 @@ module Agentkit
         end
 
         def pending_embedding(limit:, scope: {})
-          all(scope).select { |r| r.embedding_status.to_s == "pending" }.first(limit)
+          all(scope).select { |r| r.active? && r.embedding_status.to_s == "pending" }.first(limit)
         end
 
         # Token-overlap ranking. Not BM25, but enough to make `:keyword` mode a
@@ -216,7 +216,8 @@ module Agentkit
         end
 
         def pending_embedding(limit:, scope: {})
-          scoped(scope).where(embedding_status: "pending").order(:created_at).limit(limit).map { |r| wrap(r) }
+          scoped(scope).where(status: %w[raw embedded consolidated], embedding_status: "pending")
+                       .order(:created_at).limit(limit).map { |r| wrap(r) }
         end
 
         # tsvector + trigram. This is what makes `level: :keyword` a zero-API

@@ -70,6 +70,7 @@ module Agentkit
         filters = resolved.apply
         records = selected.filter_map { |id, _item_scope| @store.find(id, scope: filters) }
         records.concat(@store.pending_embedding(limit: config.embedding.batch_size, scope: filters)) if records.empty?
+        records.select!(&:active?)
         return 0 if records.empty?
 
         embed_records(records.uniq(&:id), config)

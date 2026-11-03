@@ -1,0 +1,31 @@
+<h2>Necesita tu atención</h2>
+<div class="card">
+  <h3>Decisiones humanas (<%= @suggestions.size %>)</h3>
+  <% @suggestions.each do |suggestion| %>
+    <p><%= link_to "Sugerencia ##{suggestion.id}", suggestion_path(suggestion) %> · <%= suggestion.status %></p>
+  <% end %>
+</div>
+<div class="card">
+  <h3>Runs bloqueados o fallidos (<%= @runs.size %>)</h3>
+  <% @runs.each do |run| %>
+    <p><%= link_to run.flow_name, run_path(run) %> · <%= run.status %></p>
+  <% end %>
+</div>
+<div class="card">
+  <h3>Rutinas que requieren revisión (<%= @routine_occurrences.size %>)</h3>
+  <% @routine_occurrences.each do |occurrence| %>
+    <p><%= link_to occurrence.routine.name, routines_path %> · <%= occurrence.status %> · <%= occurrence.error %></p>
+  <% end %>
+</div>
+<div class="card">
+  <h3>Memorias propuestas (<%= @memory_proposals.size %>)</h3>
+  <% @memory_proposals.each do |proposal| %>
+    <p><%= link_to "Revisar ##{proposal.id}", memory_proposals_path %> · <%= truncate(proposal.content, length: 100) %></p>
+  <% end %>
+</div>
+<div class="card">
+  <h3>Escalaciones (<%= @escalations.size %>)</h3>
+  <% @escalations.each do |escalation| %>
+    <p><%= escalation.entry_key %> · <%= escalation.status %></p>
+  <% end %>
+</div>

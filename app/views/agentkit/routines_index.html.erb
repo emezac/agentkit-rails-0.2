@@ -1,0 +1,33 @@
+<h2>Rutinas</h2>
+<div class="card">
+  <%= form_with url: routines_path do |form| %>
+    <p><%= form.label :name, "Nombre" %> <%= form.text_field :name, required: true %></p>
+    <p><%= form.label :flow_name, "Flow registrado" %> <%= form.select :flow_name, Agentkit::Flow::Registry.all.map { |flow| [flow.name, flow.name] } %></p>
+    <p><%= form.label :schedule_kind, "Frecuencia" %> <%= form.select :schedule_kind, [["Una vez", "once"], ["Intervalo", "interval"], ["Diaria", "daily"]] %></p>
+    <p><%= form.label :time_zone, "Zona IANA" %> <%= form.text_field :time_zone, value: "UTC", required: true %></p>
+    <p><%= form.label :at, "Una vez (ISO 8601)" %> <%= form.text_field :at %></p>
+    <p><%= form.label :interval_seconds, "Intervalo (segundos, mínimo 60)" %> <%= form.number_field :interval_seconds %></p>
+    <p><%= form.label :hour, "Hora local" %> <%= form.number_field :hour, min: 0, max: 23 %>
+       <%= form.label :minute, "Minuto" %> <%= form.number_field :minute, min: 0, max: 59 %></p>
+    <p><%= form.label :input_json, "Entrada JSON" %> <%= form.text_area :input_json, value: "{}", rows: 3 %></p>
+    <%= form.submit "Crear rutina" %>
+  <% end %>
+</div>
+<div class="card">
+  <table>
+    <thead><tr><th>Rutina</th><th>Flow</th><th>Estado</th><th>Próxima ejecución</th><th></th></tr></thead>
+    <tbody>
+      <% @routines.each do |routine| %>
+        <tr>
+          <td><%= routine.name %></td><td><%= routine.flow_name %></td>
+          <td><%= routine.status %></td><td><%= routine.next_run_at %></td>
+          <td><% if routine.status == "active" %>
+                <%= button_to "Pausar", pause_routine_path(routine), class: "ghost" %>
+              <% else %>
+                <%= button_to "Reanudar", resume_routine_path(routine), class: "ghost" %>
+              <% end %></td>
+        </tr>
+      <% end %>
+    </tbody>
+  </table>
+</div>

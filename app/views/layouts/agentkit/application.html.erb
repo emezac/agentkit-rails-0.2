@@ -55,8 +55,11 @@
     <header>
       <h1>AgentKit · <%= Agentkit.config.domain_name %></h1>
       <nav>
+        <%= link_to "Atención", attention_path %>
         <%= link_to "Bandeja", suggestions_path %>
         <%= link_to "Runs", runs_path %>
+        <%= link_to "Rutinas", routines_path %>
+        <%= link_to "Memoria", memory_proposals_path %>
         <%= link_to "Fábrica", factory_path %>
         <%= link_to "Exploración", exploration_path %>
       </nav>
