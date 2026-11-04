@@ -4,6 +4,7 @@ require "rspec/core/rake_task"
 require "digest"
 require "fileutils"
 require "json"
+require "open3"
 require "rubygems/installer"
 require "tmpdir"
 
@@ -22,6 +23,35 @@ task verify: :spec do
   ruby_files = Dir["{app,lib,spec,db}/**/*.rb"]
   failures = ruby_files.reject { |file| system(RbConfig.ruby, "-c", file, out: File::NULL) }
   abort "Syntax failures: #{failures.join(', ')}" if failures.any?
+end
+
+namespace :quality do
+  desc "Check the current diff and run explicitly selected behavior specs (BASE=HEAD SPEC='spec/...')"
+  task :focused do
+    base = ENV.fetch("BASE", "HEAD")
+    git = lambda do |*args|
+      output, error, status = Open3.capture3("git", *args)
+      abort "git #{args.first} failed: #{error.strip}" unless status.success?
+      output
+    end
+
+    git.call("rev-parse", "--verify", "#{base}^{commit}")
+    sh "git", "diff", "--check", base, "--"
+    changed = git.call("diff", "--name-only", "-z", "--diff-filter=ACMR", base, "--").split("\0")
+    changed.concat(git.call("ls-files", "--others", "--exclude-standard", "-z").split("\0"))
+    ruby_files = changed.uniq.select { |path| path.end_with?(".rb") && File.file?(path) }
+    ruby_files.each { |path| sh RbConfig.ruby, "-c", "./#{path}" }
+
+    specs = ENV.fetch("SPEC", "").split
+    abort "Set SPEC to the behavior specs for the changed Ruby code" if ruby_files.any? && specs.empty?
+    specs.each do |target|
+      path = target.split(":", 2).first
+      abort "Invalid spec target: #{target}" unless path.start_with?("spec/") &&
+        path.end_with?("_spec.rb") && File.file?(path)
+    end
+    sh "bundle", "exec", "rspec", *specs unless specs.empty?
+    puts "Focused quality check passed (#{ruby_files.size} Ruby files, #{specs.size} spec targets)."
+  end
 end
 
 namespace :release do

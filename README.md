@@ -14,6 +14,15 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
+## Contribuir a AgentKit
+
+La [skill de contribución](skills/agentkit-contributor/SKILL.md) guía cambios
+acotados al kernel. Para revisar el diff local y ejecutar specs de comportamiento
+elegidos para el cambio, usa
+`BASE=HEAD SPEC='spec/lib/agent_loop_spec.rb' bundle exec rake quality:focused`.
+La tarea es optativa y no añade dependencias ni llamadas al modelo; CI conserva
+`bundle exec rake verify` para la suite completa.
+
 ## Production Operations Evidence & Escalation en 1.12.0
 
 `Operations::Monitor` conserva catálogos versionados, expedientes cronológicos,
