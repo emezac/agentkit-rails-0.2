@@ -58,6 +58,7 @@ module Agentkit
       end
 
       ctx = context || Context.resolve
+      TaskMandate.guard_tool!(ctx, name)
       raw_inputs = inputs.respond_to?(:to_h) ? inputs.to_h : inputs
       raw_inputs = raw_inputs.merge(keyword_inputs) if raw_inputs.is_a?(Hash) && keyword_inputs.any?
       normalized = raw_inputs.is_a?(Hash) ? symbolize(raw_inputs) : raw_inputs

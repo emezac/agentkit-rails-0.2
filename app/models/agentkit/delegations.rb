@@ -7,7 +7,7 @@ module Agentkit
     Receipt = Struct.new(:run_id, :flow_name, :status, :output, :error, keyword_init: true)
     module_function
 
-    def dispatch!(flow:, input:, context: nil)
+    def dispatch!(flow:, input:, context: nil, mandate: nil)
       ctx = context || Agentkit::Context.resolve
       Agentkit::Scope.resolve(context: ctx)
       raise Agentkit::ConfigurationError, "delegation requires a principal" if ctx.principal.to_s.empty?
@@ -15,6 +15,15 @@ module Agentkit
 
       klass = flow.is_a?(Class) ? flow : Agentkit::Flow::Registry.find(flow.to_s)
       raise Agentkit::FlowError, "delegation target must be a registered Flow" unless klass.is_a?(Class) && klass <= Agentkit::Flow && Agentkit::Flow::Registry.all.include?(klass)
+
+      if mandate
+        raise Agentkit::PolicyDenied, "a host-issued mandate is required" unless mandate.is_a?(TaskMandate)
+        unless mandate.flow == klass.name && mandate.requester == ctx.principal.to_s &&
+               mandate.tenant_key == ctx.tenant_key && mandate.account_id == (ctx.account.respond_to?(:id) ? ctx.account.id : ctx.account)
+          raise Agentkit::PolicyDenied, "mandate does not match delegation"
+        end
+        ctx = ctx.derive(metadata: { task_mandate: mandate.to_h })
+      end
 
       run = Agentkit.with_context(ctx) { klass.perform_later(context: ctx.derive, **input.symbolize_keys) }
       Receipt.new(run_id: run.run_id, flow_name: run.flow_name, status: run.status)

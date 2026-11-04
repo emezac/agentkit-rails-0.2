@@ -140,6 +140,12 @@ module Agentkit
         raise FlowError, "Run #{run_id} not found" if run.nil?
         return Result.ok(run.output) if run.finished?
 
+        TaskMandate.guard_run!(run, phase: "resume")
+        if (mandate = TaskMandate.mandate_data(run))
+          raise PolicyDenied, "mandate requester changed" unless ctx.principal.to_s == mandate.fetch("requester")
+          ctx = ctx.derive(metadata: { task_mandate: mandate })
+        end
+
         Executor.new(definition: definition, run: run, store: store,
                      context: ctx, input: run.input,
                      mode: mode || (Flow.dispatcher.async? ? :async : :sync)).call

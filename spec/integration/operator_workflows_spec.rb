@@ -7,6 +7,12 @@ class OperatorWorkflowFlow < Agentkit::Flow
   step(:complete) { |ctx| ctx.input[:message] }
 end
 
+class MandatedToolFlow < Agentkit::Flow
+  step(:call_tool) do |ctx|
+    Agentkit::ToolContract.new(name: :private_lookup, callable: -> { "sensitive" }).invoke(context: ctx.context).result
+  end
+end
+
 RSpec.describe "Operator workflows", :integration do
   let(:account) { account! }
   let(:context) do
@@ -23,6 +29,7 @@ RSpec.describe "Operator workflows", :integration do
   after do
     Agentkit.config.flow.dispatcher = :active_job
     Agentkit::Flow.dispatcher = nil
+    Agentkit::TaskMandate.authorizer = nil
   end
 
   it "claims each scheduled occurrence once and keeps its Flow receipt" do
@@ -95,6 +102,120 @@ RSpec.describe "Operator workflows", :integration do
     other_context = Agentkit::Context.new(account: other, tenant_key: other.tenant_key,
                                           principal: "operator:2")
     expect(Agentkit::Delegations.receipt(receipt.run_id, context: other_context)).to be_nil
+  end
+
+  it "holds a mandated run when its policy changes and resumes after authorization returns" do
+    allowed = true
+    Agentkit::TaskMandate.authorizer = ->(data, _phase, _ctx) { allowed && data["policy_version"] == "v1" }
+    mandate = Agentkit::TaskMandate.issue(flow: "OperatorWorkflowFlow", source: "github",
+      resource: "org/repo", thread: "issue:42", policy_version: "v1", context: context)
+    receipt = Agentkit::Delegations.dispatch!(flow: OperatorWorkflowFlow,
+      input: { message: "review" }, context: context, mandate: mandate)
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).context.dig("metadata", "task_mandate", "digest")).to be_present
+    expect { Agentkit::TaskMandate.guard_run!(Agentkit::Flow.shared_store.find_run_by_uuid(receipt.run_id,
+      scope: { tenant_key: context.tenant_key, account_id: account.id })) }.not_to raise_error
+
+    allowed = false
+    expect { OperatorWorkflowFlow.resume(receipt.run_id, context: context, mode: :sync) }
+      .to raise_error(Agentkit::PolicyDenied)
+    Agentkit::Flow::Worker.advance(receipt.run_id, { tenant_key: context.tenant_key, account_id: account.id })
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).status).to eq("waiting_human")
+    expect(Agentkit::RunStepRecord.where(run_id: Agentkit::RunRecord.find_by!(run_id: receipt.run_id).id)).to be_empty
+
+    allowed = true
+    expect { Agentkit::TaskMandate.guard_run!(Agentkit::Flow.shared_store.find_run_by_uuid(receipt.run_id,
+      scope: { tenant_key: context.tenant_key, account_id: account.id })) }.not_to raise_error
+    Agentkit::Flow::Worker.advance(receipt.run_id, { tenant_key: context.tenant_key, account_id: account.id })
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).status).to eq("completed")
+  end
+
+  it "stops an already queued fan-out branch when its mandate is revoked" do
+    Agentkit::Flow::Registry.register(DummyFlow)
+    allowed = true
+    Agentkit::TaskMandate.authorizer = ->(_data, _phase, _ctx) { allowed }
+    widget = Widget.create!(account: account, name: "mandated")
+    mandate = Agentkit::TaskMandate.issue(flow: "DummyFlow", source: "github",
+      resource: "org/repo", thread: "issue:77", policy_version: "v1", context: context)
+    receipt = Agentkit::Delegations.dispatch!(flow: DummyFlow, input: { widget: widget },
+      context: context, mandate: mandate)
+    queue = Agentkit::Flow.dispatcher
+    queue.drain(limit: 1)
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).status).to eq("waiting_join")
+
+    allowed = false
+    queue.drain(limit: 1)
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).status).to eq("waiting_human")
+    expect(Agentkit::RunStepRecord.where(kind: "branch", status: "completed").count).to eq(0)
+
+    allowed = true
+    branch = Agentkit::RunStepRecord.where(kind: "branch", status: "pending").first
+    Agentkit::Flow::Worker.run_branch(receipt.run_id, branch.id,
+      { tenant_key: context.tenant_key, account_id: account.id })
+    queue.drain
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).status).to eq("completed")
+  end
+
+  it "preserves tool restrictions when manually resuming a task" do
+    Agentkit::Flow::Registry.register(MandatedToolFlow)
+    Agentkit::TaskMandate.authorizer = ->(*) { true }
+    mandate = Agentkit::TaskMandate.issue(flow: "MandatedToolFlow", source: "github",
+      resource: "org/repo", thread: "issue:88", policy_version: "v1", context: context)
+    receipt = Agentkit::Delegations.dispatch!(flow: MandatedToolFlow, input: {},
+      context: context, mandate: mandate)
+    expect { MandatedToolFlow.resume(receipt.run_id, context: context, mode: :sync) }
+      .not_to raise_error
+    expect(Agentkit::RunRecord.find_by!(run_id: receipt.run_id).status).to eq("failed")
+  end
+
+  it "deduplicates source events and routes only to the subscribed task" do
+    Agentkit::TaskMandate.authorizer = ->(_data, _phase, _ctx) { true }
+    mandate = Agentkit::TaskMandate.issue(flow: "OperatorWorkflowFlow", source: "github",
+      resource: "org/repo", thread: "issue:42", policy_version: "v1", context: context)
+    receipt = Agentkit::Delegations.dispatch!(flow: OperatorWorkflowFlow,
+      input: { message: "review" }, context: context, mandate: mandate)
+    Agentkit::TaskEvents.subscribe!(run_id: receipt.run_id, context: context)
+    auth = ->(_source, _resource, _thread, _event, _ctx) { true }
+    event = { "kind" => "comment", "text" => "CI failed" }
+    first = Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:42",
+      event_id: "comment:9", payload: event, context: context, authorize: auth)
+    second = Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:42",
+      event_id: "comment:9", payload: event, context: context, authorize: auth)
+    expect(first).to eq(second)
+    expect(first[:run_id]).to eq(receipt.run_id)
+    expect(Agentkit::TaskEvents.pending(run_id: receipt.run_id, context: context).size).to eq(1)
+    expect(Agentkit::TaskEvents.metrics(run_id: receipt.run_id, context: context)[:events_received]).to eq(1)
+    expect { Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:42",
+      event_id: "comment:9", payload: { "text" => "changed" }, context: context, authorize: auth) }
+      .to raise_error(Agentkit::IdempotencyConflict)
+
+    Agentkit::TaskEvents.mark_consumed!(run_id: receipt.run_id, event_key: first[:event_key], context: context)
+    expect(Agentkit::TaskEvents.pending(run_id: receipt.run_id, context: context)).to be_empty
+    expect(Agentkit::TaskEvents.prune_consumed!(before: 1.minute.from_now, context: context,
+      authorize: ->(_action, _ctx) { true })).to eq(1)
+    expect(Agentkit::TaskEventRecord.find_by!(event_key: first[:event_key]).payload).to eq({})
+    expect(Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:42",
+      event_id: "comment:9", payload: event, context: context, authorize: auth)).to eq(first)
+    expect(Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:43",
+      event_id: "comment:10", payload: event, context: context, authorize: auth)).to be_nil
+  end
+
+  it "refuses an event from an unauthenticated source or another tenant" do
+    Agentkit::TaskMandate.authorizer = ->(_data, _phase, _ctx) { true }
+    mandate = Agentkit::TaskMandate.issue(flow: "OperatorWorkflowFlow", source: "github",
+      resource: "org/repo", thread: "issue:42", policy_version: "v1", context: context)
+    receipt = Agentkit::Delegations.dispatch!(flow: OperatorWorkflowFlow,
+      input: { message: "review" }, context: context, mandate: mandate)
+    Agentkit::TaskEvents.subscribe!(run_id: receipt.run_id, context: context)
+    expect { Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:42",
+      event_id: "comment:9", payload: { "text" => "x" }, context: context,
+      authorize: ->(*) { false }) }.to raise_error(Agentkit::PolicyDenied)
+    other = account!(name: "Other")
+    other_context = Agentkit::Context.new(account: other, principal: "operator:2")
+    expect(Agentkit::TaskEvents.ingest!(source: "github", resource: "org/repo", thread: "issue:42",
+      event_id: "comment:9", payload: { "text" => "x" }, context: other_context,
+      authorize: ->(*) { true })).to be_nil
+    expect { Agentkit::TaskEvents.pending(run_id: receipt.run_id, context: other_context) }
+      .to raise_error(ActiveRecord::RecordNotFound)
   end
 
   it "keeps the attention inbox behind the existing console guard" do

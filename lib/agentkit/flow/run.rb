@@ -352,6 +352,7 @@ module Agentkit
                         run_id: row.run_id, status: row.status, input: row.input,
                         output: row.output, context: row.context,
                         idempotency_key: row.idempotency_key, tenant_key: row.tenant_key,
+                        account_id: row.account_id, user_id: row.user_id,
                         deadline_at: row.deadline_at, started_at: row.started_at,
                         finished_at: row.finished_at, cost_usd: row.cost_usd)
           row.steps.each { |s| run.add_step(wrap_step(s)) }

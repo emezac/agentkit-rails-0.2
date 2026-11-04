@@ -1515,6 +1515,11 @@ asynchronous Flow receipts and reviewable memory proposals) are described in
 [Operator workflows](docs/OPERATOR_WORKFLOWS.md). They require migration 027;
 the console remains disabled until the host configures its guard.
 
+Optional [mandated delegations and source-event routing](docs/TASK_MANDATES_AND_EVENTS.md)
+bind authorization to a durable Flow run and route deduplicated events to that
+run without a model call. The event inbox requires migration 028; the host
+authenticates sources, rechecks policy and delivers pending events to workers.
+
 ```ruby
 Agentkit::Flow.test_mode!   # executor síncrono, LLM fake, stores en memoria
 Agentkit.config.memory.store = :memory

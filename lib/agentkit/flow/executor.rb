@@ -585,7 +585,8 @@ module Agentkit
         last   = flow_ctx.last
         output = last.respond_to?(:value) ? last&.value : last
         store.update_run(run, status: status.to_s, finished_at: Time.now,
-                              output: { "result" => Coder.dump(last, store: store) })
+                              output: { "result" => Coder.dump(last, store: store) },
+                              error: status == :completed ? nil : run.error)
         Telemetry.emit("flow.run.#{status}",
                        dims: { flow: run.flow_name, version: run.flow_version },
                        measures: { steps: run.steps.size, cost_usd: run.cost_usd.to_f,

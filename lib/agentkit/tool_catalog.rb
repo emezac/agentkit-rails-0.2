@@ -33,7 +33,8 @@ module Agentkit
         deny = policy[:deny] || policy["deny"] || []
         (allow.nil? || allow.map(&:to_s).include?(name)) && !deny.map(&:to_s).include?(name)
       end
-      policy_allows && (!@authorize || @authorize.call(tool, @context) == true)
+      policy_allows && TaskMandate.guard_tool!(@context, name) &&
+        (!@authorize || @authorize.call(tool, @context) == true)
     rescue StandardError
       false
     end

@@ -24,6 +24,8 @@ module Agentkit
         flow = Registry.find(run.flow_name)
         return log("flow #{run.flow_name} is not loaded") if flow.nil?
 
+        return unless authorized_run?(run, store, "advance")
+
         ctx = rebuild_context(run)
         Agentkit.with_context(ctx) do
           Executor.new(definition: flow.definition, run: run, store: store,
@@ -54,6 +56,8 @@ module Agentkit
         flow    = Registry.find(run.flow_name)
         node    = flow&.definition&.node(step.step_name)
         return log("node #{step.step_name} missing") if node.nil?
+
+        return unless authorized_run?(run, store, "branch")
 
         ctx    = rebuild_context(run)
         result = Agentkit.with_context(ctx) { execute_branch(node, step, ctx, store) }
@@ -153,9 +157,19 @@ module Agentkit
       end
 
       def rebuild_context(run)
+        mandate = TaskMandate.mandate_data(run)
         Context.new(run_id: run.run_id, trace_id: run.context["trace_id"] || run.run_id,
-                    tenant_key: run.tenant_key,
-                    metadata: { resumed: true })
+                    tenant_key: run.tenant_key, account: mandate && run.account_id,
+                    user: mandate && run.user_id, principal: mandate && mandate["requester"],
+                    metadata: { resumed: true, task_mandate: mandate }.compact)
+      end
+
+      def authorized_run?(run, store, phase)
+        TaskMandate.guard_run!(run, phase: phase)
+      rescue PolicyDenied => error
+        store.update_run(run, status: "waiting_human", error: { "reason" => "mandate_denied", "code" => error.class.name })
+        Telemetry.emit("flow.mandate_denied", dims: { flow: run.flow_name, phase: phase })
+        false
       end
 
       def log(message)

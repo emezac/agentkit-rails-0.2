@@ -9,6 +9,7 @@ require_relative "agentkit/errors"
 require_relative "agentkit/settings"
 require_relative "agentkit/configuration"
 require_relative "agentkit/context"
+require_relative "agentkit/task_mandate"
 require_relative "agentkit/scope"
 require_relative "agentkit/result"
 require_relative "agentkit/schema"
@@ -111,6 +112,7 @@ module Agentkit
       HITL.reset!
       A2A::V1.reset! if defined?(A2A::V1)
       Flow::Registry.reset!
+      TaskMandate.authorizer = nil
       TeamMemory.reset! if defined?(TeamMemory)
       Exploration.reset! if defined?(Exploration)
       self
