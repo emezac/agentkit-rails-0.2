@@ -7,10 +7,12 @@ module Agentkit
       class << self
         def extract(conversation:, name: nil, team_id: nil, visibility: "team")
           messages = format_messages(conversation)
+          raise ArgumentError, "a real conversation with at least two messages is required" if messages.size < 2
           name ||= "extracted_skill_#{Time.now.to_i}"
 
           # Extract skill definition structures from text
           steps = extract_steps(messages)
+          raise ArgumentError, "conversation contains no explicit procedure steps" if steps.empty?
           triggers = extract_triggers(messages)
           prompt_fragment = build_prompt_fragment(name, steps, triggers)
 
@@ -19,24 +21,33 @@ module Agentkit
             asset_type: "skill",
             name: name,
             team_id: team_id,
-            visibility: visibility,
+            visibility: "restricted",
+            status: "quarantined",
             content: {
               "name"               => name,
               "steps"              => steps,
               "triggers"           => triggers,
               "prompt_fragment"   => prompt_fragment,
-              "extracted_at"      => Time.now.iso8601
+              "extracted_at"      => Time.now.iso8601,
+              "requested_visibility" => visibility.to_s
             }
           )
 
-          # Register into SkillRegistry if defined
-          if defined?(Agentkit::Skill)
-            Agentkit::Skill.define(name) do |s|
-              s.prompt(prompt_fragment)
-            end
-          end
-
           asset
+        end
+
+        # The Rails host authenticates the reviewer in authorize; extracted text
+        # never registers itself as an executable procedure.
+        def review_and_activate!(asset, actor:, authorize:)
+          raise ArgumentError, "reviewer is required" if actor.to_s.strip.empty?
+          stored = AssetStore.find(asset.id)
+          raise ConfigurationError, "skill candidate is unavailable" unless stored &&
+            stored.asset_type == "skill" && stored.status == "quarantined"
+          raise ConfigurationError, "skill review denied" unless authorize.call(stored, actor) == true
+
+          approved = AssetStore.update(stored, status: "active",
+            content: stored.content.merge("approved_by" => actor.to_s, "approved_at" => Time.now.iso8601))
+          approved || raise(HarnessPersistenceError, "approved skill was not saved")
         end
 
         private
@@ -58,7 +69,7 @@ module Agentkit
               steps << match.first.strip
             end
           end
-          steps.empty? ? ["Analyze user prompt", "Execute domain logic", "Verify result"] : steps.uniq
+          steps.uniq
         end
 
         def extract_triggers(messages)

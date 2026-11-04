@@ -26,6 +26,7 @@ require_relative "agentkit/model_router"
 require_relative "agentkit/skill"
 
 require_relative "agentkit/memory"
+require_relative "agentkit/memory/continuity"
 require_relative "agentkit/harness"
 require_relative "agentkit/harness/context_map"
 require_relative "agentkit/harness/verifier"

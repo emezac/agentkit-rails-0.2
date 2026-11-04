@@ -537,7 +537,8 @@ module Agentkit
     setting :enabled,             default: true
     setting :default_visibility,  default: :team, in: %i[private team restricted agent]
     setting :store,               default: :active_record
-    setting :auto_extract_skills, default: true
+    # Reserved for host orchestration; the kernel never mines live chat implicitly.
+    setting :auto_extract_skills, default: false
     setting :graph_enabled,        default: false
     setting :graph_allowed_roots,  default: -> { [] }
     setting :graph_max_file_bytes, default: 1_048_576

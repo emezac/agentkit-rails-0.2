@@ -133,6 +133,21 @@ RSpec.describe Agentkit::TeamMemory do
       expect(asset.asset_type).to eq("skill")
       expect(asset.content["steps"].size).to be >= 3
       expect(asset.content["prompt_fragment"]).to include("Run specs")
+      expect(asset.status).to eq("quarantined")
+      expect(Agentkit::SkillRegistry.registered?(:DeployAPISkill)).to be false
+      expect { described_class::SkillExtractor.review_and_activate!(asset, actor: "reviewer:1",
+        authorize: ->(*) { false }) }.to raise_error(Agentkit::ConfigurationError)
+      approved = described_class::SkillExtractor.review_and_activate!(asset, actor: "reviewer:1",
+        authorize: ->(*) { true })
+      expect(approved.status).to eq("active")
+      expect(Agentkit::SkillRegistry.registered?(:DeployAPISkill)).to be false
+    end
+
+    it "does not invent a procedure from a command without a transcript" do
+      expect { described_class::SkillExtractor.extract(conversation: ["skill"]) }
+        .to raise_error(ArgumentError)
+      turn = Agentkit::Chat.say("mem:skill")
+      expect(turn.message).to include("transcripción real")
     end
   end
 

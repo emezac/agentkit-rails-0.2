@@ -17,6 +17,24 @@ RSpec.describe "Progressive loop integration", :integration do
     expect(Agentkit::AuditRecord.where(tenant_key: "other", event_type: "agent_loop.completed")).to be_empty
   end
 
+  it "persists opt-in notes and episodes without raw transcripts or embeddings" do
+    account = account!(name: "Continuity")
+    context = Agentkit::Context.new(account: account, principal: "human:continuity")
+    Agentkit::LLM::Adapters::Fake.respond_with_turns(content: "PRIVATE FINAL ANSWER")
+    result = Agentkit::Agent.new(context: context).run_loop("PRIVATE USER INPUT",
+      task_id: "review-42", task_summary: "Review invoice reconciliation")
+    expect(result).to be_answered
+    note = Agentkit::Memory::Continuity.latest(task_id: "review-42", context: context)
+    episodes = Agentkit::Memory::Continuity.search_episodes("invoice", context: context)
+    expect(note.content).to include("finished: answered")
+    expect(episodes.size).to eq(1)
+    expect(Agentkit::MemoryRecord.where(tenant_key: context.tenant_key,
+      memory_type: %w[agent_task_note agent_episode]).pluck(:content).join).not_to include(
+        "PRIVATE USER INPUT", "PRIVATE FINAL ANSWER")
+    expect(Agentkit::MemoryRecord.where(tenant_key: context.tenant_key,
+      memory_type: %w[agent_task_note agent_episode]).where.not(embedding: nil)).to be_empty
+  end
+
   it "evaluates actual progressive loops through the governed task-completion gate" do
     study_settings
     context = Agentkit::Context.new(account: account!(name: "Loop evaluation"), principal: "human:evaluator")

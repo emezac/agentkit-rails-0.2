@@ -277,13 +277,13 @@ module Agentkit
       # An imperative order becomes a confirmable proposal, never a direct
       # execution. Keeping 100% of actions on one rail is what stops the
       # statistics from being corrupted by a back door.
-      def say(text, setup: nil, candidates: nil, context: nil)
+      def say(text, setup: nil, candidates: nil, context: nil, transcript: nil)
         ctx   = context || Context.resolve
         setup ||= Setup.current || Setup.build
 
         if text.to_s.strip =~ /^mem:(.*)/i
           cmd = Regexp.last_match(1).strip.downcase
-          return handle_mem_command(cmd, context: ctx)
+          return handle_mem_command(cmd, context: ctx, transcript: transcript)
         end
 
         match = IntentResolver.resolve(text, setup, ctx)
@@ -318,7 +318,7 @@ module Agentkit
 
       private
 
-      def handle_mem_command(cmd, context:)
+      def handle_mem_command(cmd, context:, transcript: nil)
         msg = case cmd
               when "sync", "flush"
                 Memory.flush_embeddings!
@@ -328,11 +328,12 @@ module Agentkit
                 total_a = defined?(TeamMemory) ? TeamMemory.load_assets.size : 0
                 "Estado de Memoria: #{total_m} registros, #{total_a} assets de equipo."
               when "skill", "extract-skill"
-                if defined?(TeamMemory::SkillExtractor)
-                  TeamMemory::SkillExtractor.extract(conversation: [cmd], name: "InteractiveSkill_#{Time.now.to_i}")
-                  "Skill extraído correctamente desde la sesión interactiva."
+                if transcript && defined?(TeamMemory::SkillExtractor)
+                  TeamMemory::SkillExtractor.extract(conversation: transcript,
+                    name: "InteractiveSkill_#{Time.now.to_i}")
+                  "Procedimiento candidato guardado en cuarentena; requiere revisión antes de activarlo."
                 else
-                  "SkillExtractor no está disponible."
+                  "Para extraer una skill, la app debe pasar la transcripción real a Chat.say(transcript: ...)."
                 end
               else
                 "Comandos de memoria disponibles: mem:sync (consolidar), mem:status (estado), mem:skill (extraer skill), mem:help"

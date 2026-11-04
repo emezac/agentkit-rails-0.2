@@ -195,6 +195,35 @@ RSpec.describe Agentkit::AgentLoop do
     expect(fake_llm.turn_calls).to be_empty
   end
 
+  it "persists an opt-in task note and searchable episode without embeddings" do
+    fake_llm.respond_with_turns(content: "done")
+    result = run_loop(task_id: "task-42", task_summary: "Review invoice reconciliation")
+    expect(result).to be_answered
+    note = Agentkit::Memory::Continuity.latest(task_id: "task-42", context: @context)
+    expect(note.content).to include("finished: answered")
+    expect(Agentkit::Memory::Continuity.search_episodes("invoice", context: @context).size).to eq(1)
+    expect(embedding_calls).to eq(0)
+
+    fake_llm.respond_with_turns(content: "continued")
+    run_loop(task_id: "task-42", task_summary: "Review invoice reconciliation")
+    expect(fake_llm.turn_calls.last.messages.first["content"]).to include("Previous task checkpoint")
+  end
+
+  it "compacts older completed exchanges without another model call" do
+    lookup = tool { { text: "result " * 90 } }
+    Agentkit.config.agent_loop.max_context_bytes = 3_300
+    fake_llm.respond_with_turns(
+      { tool_calls: [call_tool("one", "balance")] },
+      { tool_calls: [call_tool("two", "balance")] },
+      { tool_calls: [call_tool("three", "balance")] },
+      { content: "done" }
+    )
+    result = run_loop(tools: [lookup], eager_tools: ["balance"])
+    expect(result).to be_answered
+    expect(fake_llm.turn_calls.size).to eq(4)
+    expect(emitted("agent_loop.context_compacted")).not_to be_empty
+  end
+
   it "does not truncate skill procedures or mark an oversized skill as loaded" do
     Agentkit.config.agent_loop.max_skill_bytes = 100
     skill = Agentkit::Skill.define(:large) { |s| s.prompt("x" * 500) }

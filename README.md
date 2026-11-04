@@ -92,6 +92,11 @@ aprendizaje automático de reglas, evaluación causal ni gates de acciones autom
 
 ## Progressive Agent Loop en 1.6.0
 
+Para continuidad opcional entre ejecuciones, notas de tarea, episodios consultables,
+hechos de usuario/proyecto y extracción revisable de procedimientos, consulta
+[Agent memory continuity](docs/AGENT_MEMORY_CONTINUITY.md). Estas rutas usan
+búsqueda por palabras y no añaden llamadas al modelo ni embeddings obligatorios.
+
 `Agent#run_loop` mantiene una conversación durante la tarea y controla cada
 turno del modelo. Inicialmente ofrece un catálogo breve de skills y las
 herramientas `load_skill` / `search_tools`; los procedimientos, proveedores de
@@ -1159,14 +1164,14 @@ Accedé a la consola de gobernanza de memoria en `/agentkit/team_memory`.
 
 ### 3. 🌟 Mejoras de Memoria Avanzada
 
-- **4 Capas de Memoria (`Memory::Layers`)**: Progresión continua L0 (logs crudos) → L1 (átomos) → L2 (escenarios/escenas) → L3 (personas/skills).
+- **4 Capas de Memoria (`Memory::Layers`)**: Transformaciones explícitas L0 (logs crudos) → L1 (átomos) → L2 (escenarios/escenas) → L3 (personas/skills); no se ejecutan automáticamente.
 - **ColdStart Importer (`Memory::ColdStart`)**: Ingesta masiva de transcripciones históricas JSON/JSONL preservando timestamps originales.
 - **Custom Prompts (`Memory::CustomPrompts`)**: Plantillas personalizables por inquilino/equipo con interpolación de contexto (`{tenant}`, `{input}`).
 - **Recall por Ventanas de Tiempo**: `Memory.recall(query, since: 1.day.ago, until: Time.now)`.
 - **Comandos Interactivos `mem:`**: Intercepción en `Agentkit::Chat.say`:
   - `mem:status` → Estado de registros y assets.
   - `mem:sync` → Sincronización y flush de embeddings.
-  - `mem:skill` → Extracción de skill de la sesión.
+  - `mem:skill` → Crea una candidata en cuarentena sólo si la app pasa una transcripción real; sin ella, explica lo que falta.
   - `mem:help` → Ayuda interactiva.
 - **Skill Export & Import (`SkillExport`)**: Exporta `SKILL.md` con la descripción y versión reales de la skill. `SkillExport.validate!` comprueba nombre portable (`a-z`, números y guiones), descripción y versión sin llamar a un modelo. La importación conserva esos metadatos, queda en cuarentena hasta aprobación humana y nunca activa automáticamente los esquemas de `tools.json`.
 
