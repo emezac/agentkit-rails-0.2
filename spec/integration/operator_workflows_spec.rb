@@ -13,6 +13,13 @@ class MandatedToolFlow < Agentkit::Flow
   end
 end
 
+class AcceptedWorkflowFlow < Agentkit::Flow
+  input :number
+  step(:normalize, accept: ->(value, _ctx) { value.even? },
+    repair: ->(value, _ctx, _attempt, _reason) { value + 1 }, max_repairs: 1) { |ctx| ctx.input[:number] }
+  step(:finish) { |ctx| ctx[:normalize].value * 2 }
+end
+
 RSpec.describe "Operator workflows", :integration do
   let(:account) { account! }
   let(:context) do
@@ -102,6 +109,20 @@ RSpec.describe "Operator workflows", :integration do
     other_context = Agentkit::Context.new(account: other, tenant_key: other.tenant_key,
                                           principal: "operator:2")
     expect(Agentkit::Delegations.receipt(receipt.run_id, context: other_context)).to be_nil
+  end
+
+  it "persists acceptance evidence and rejected fingerprints across an async Flow" do
+    Agentkit::Flow::Registry.register(AcceptedWorkflowFlow)
+    receipt = Agentkit::Delegations.dispatch!(flow: AcceptedWorkflowFlow,
+      input: { number: 3 }, context: context)
+    Agentkit::Flow.dispatcher.drain
+
+    row = Agentkit::RunRecord.find_by!(run_id: receipt.run_id)
+    step = row.steps.find_by!(step_name: "normalize")
+    expect(row.status).to eq("completed")
+    expect(step.output.dig("acceptance", "verdict")).to eq("accepted")
+    expect(step.attempts.count { |item| item["kind"] == "acceptance_rejected" }).to eq(1)
+    expect(row.steps.find_by!(step_name: "finish").output.dig("result", "value")).to eq(8)
   end
 
   it "holds a mandated run when its policy changes and resumes after authorization returns" do

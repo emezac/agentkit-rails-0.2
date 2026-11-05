@@ -35,4 +35,29 @@ RSpec.describe Agentkit::Flow::Topology do
 
     expect { flow.validate! }.to raise_error(Agentkit::FlowDefinitionError, /idempotency key/)
   end
+
+  it "separates execution order from declared data dependencies" do
+    flow = Class.new(Agentkit::Flow) do
+      define_singleton_method(:name) { "DependencyPlanFlow" }
+      step(:first, ordering: :any, estimated_ms: 10) { 1 }
+      step(:second, ordering: :any, estimated_ms: 20) { 2 }
+      step(:total, depends_on: %i[first second], estimated_ms: 5) { 3 }
+    end
+
+    plan = flow.explain_plan
+    expect(plan.dig(:dag, :execution_edges)).to eq([%i[first second], %i[second total]])
+    expect(plan.dig(:dag, :declared_data_edges)).to eq([%i[first total], %i[second total]])
+    expect(plan[:parallel_review_candidates]).to eq([%i[first second]])
+    expect(plan[:estimated_serial_path_ms]).to eq(35.0)
+  end
+
+  it "rejects invalid acceptance and dependency contracts before running" do
+    flow = Class.new(Agentkit::Flow) do
+      define_singleton_method(:name) { "InvalidContractFlow" }
+      step(:send, effect: :side_effecting, accept: ->(*) { true }) { true }
+      step(:wrong, depends_on: [:missing]) { true }
+    end
+
+    expect { flow.validate! }.to raise_error(Agentkit::FlowDefinitionError, /read_only.*unknown step/)
+  end
 end

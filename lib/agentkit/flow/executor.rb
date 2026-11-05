@@ -88,6 +88,12 @@ module Agentkit
       # ─── step ────────────────────────────────────────────────────────────────
 
       def run_step(node, iteration)
+        if node.accept || node.repair || node.max_repairs != 0
+          valid = node.accept.respond_to?(:call) && node.effect == :read_only &&
+                  node.max_repairs.is_a?(Integer) && node.max_repairs.between?(0, 3) &&
+                  (node.max_repairs.zero? ? node.repair.nil? : node.repair.respond_to?(:call))
+          raise FlowDefinitionError, "step `#{node.name}` has an invalid acceptance contract" unless valid
+        end
         return skip(node, iteration) unless passes_guard?(node)
 
         step, fresh = checkout(node, iteration)
@@ -109,7 +115,89 @@ module Agentkit
 
         return tolerate(node, step, result) if result.err? && node.respond_to?(:tolerant?) && node.tolerant?
 
-        complete_step(node, step, result)
+        result, acceptance = accept_result(node, step, result) if result.ok? && node.accept
+        complete_step(node, step, result, acceptance: acceptance)
+      end
+
+      # Checks one candidate at a time. A repair transforms only this node's
+      # output; completed sibling nodes and the original invocation are reused.
+      def accept_result(node, step, result)
+        candidate = result
+        rejected = step.attempts.filter_map do |attempt|
+          attempt["result_digest"] || attempt[:result_digest] if
+            (attempt["kind"] || attempt[:kind]) == "acceptance_rejected"
+        end
+        repairs = 0
+
+        loop do
+          digest = Harness.digest(Coder.encode(candidate.value))
+          fail_acceptance!(node, step, "duplicate_candidate") if rejected.include?(digest)
+
+          verdict = begin
+            node.accept.call(candidate.value, flow_ctx)
+          rescue StandardError => error
+            fail_acceptance!(node, step, "check_error:#{error.class.name}")
+          end
+          accepted, reason_code, evidence_digest = parse_acceptance_verdict(node, step, verdict)
+          if accepted
+            Telemetry.emit("flow.step.accepted", dims: { flow: run.flow_name, step: node.name },
+                                                  measures: { repairs: repairs })
+            evidence = { "verdict" => "accepted", "result_digest" => digest,
+                         "checker" => "#{run.flow_name}:#{run.flow_version}:#{node.name}",
+                         "repairs" => repairs }
+            evidence["evidence_digest"] = evidence_digest if evidence_digest
+            return [candidate, evidence]
+          end
+
+          step.attempts << { "kind" => "acceptance_rejected", "result_digest" => digest,
+                             "reason_code" => reason_code,
+                             "evidence_digest" => evidence_digest,
+                             "at" => Time.now.utc.iso8601(6) }.compact
+          rejected << digest
+          store.update_step(step, attempts: step.attempts, attempt_count: step.attempt_count)
+          Telemetry.emit("flow.step.rejected", dims: { flow: run.flow_name, step: node.name },
+                                                measures: { repairs: repairs })
+          fail_acceptance!(node, step, "acceptance_failed") if repairs >= node.max_repairs
+
+          repairs += 1
+          replacement = begin
+            node.repair.call(candidate.value, flow_ctx, repairs, reason_code)
+          rescue StandardError => error
+            fail_acceptance!(node, step, "repair_error:#{error.class.name}")
+          end
+          fail_acceptance!(node, step, "invalid_repair_result") if replacement.is_a?(Result)
+          candidate = Result.ok(replacement, usage: candidate.usage,
+                                memories: candidate.memories, suggestions: candidate.suggestions,
+                                artifacts: candidate.artifacts)
+        end
+      end
+
+      def parse_acceptance_verdict(node, step, verdict)
+        return [true, nil, nil] if verdict == true
+        return [false, "rejected", nil] if verdict == false
+        fail_acceptance!(node, step, "invalid_verdict") unless verdict.is_a?(Hash)
+
+        data = verdict.transform_keys(&:to_s)
+        fail_acceptance!(node, step, "invalid_verdict") unless (data.keys - %w[accepted reason_code evidence_digest]).empty?
+        accepted = data["accepted"]
+        fail_acceptance!(node, step, "invalid_verdict") unless accepted == true || accepted == false
+        reason = data["reason_code"]
+        if !accepted && !(reason.is_a?(String) && reason.match?(/\A[a-z0-9][a-z0-9_:.-]{0,63}\z/))
+          fail_acceptance!(node, step, "invalid_verdict")
+        end
+        evidence = data["evidence_digest"]
+        if evidence && !(evidence.is_a?(String) && evidence.match?(/\Asha256:[a-f0-9]{64}\z/))
+          fail_acceptance!(node, step, "invalid_verdict")
+        end
+        [accepted, reason, evidence]
+      end
+
+      def fail_acceptance!(node, step, reason)
+        store.update_step(step, status: "failed", finished_at: Time.now,
+                                error: reason, attempts: step.attempts,
+                                attempt_count: step.attempt_count)
+        raise StepFailed.new("step `#{node.name}` #{reason}", step: node.name,
+                             cause_error: FlowError.new(reason))
       end
 
       # A tolerated failure completes the step with a null value so downstream
@@ -419,6 +507,16 @@ module Agentkit
       # than running the body again.
       def replay(node, step)
         value = decode_output(step)
+        if node.is_a?(Nodes::StepNode) && node.accept && step.completed?
+          evidence = step.output["acceptance"] || step.output[:acceptance]
+          expected = "#{run.flow_name}:#{run.flow_version}:#{node.name}"
+          valid = evidence.is_a?(Hash) && value.is_a?(Result) &&
+                  evidence["verdict"] == "accepted" && evidence["checker"] == expected &&
+                  evidence["result_digest"] == Harness.digest(Coder.encode(value.value))
+          unless valid
+            fail_acceptance!(node, step, "acceptance_evidence_mismatch")
+          end
+        end
         flow_ctx.set(node.name, value) unless flow_ctx.key?(node.name)
         Telemetry.emit("flow.step.replayed", dims: { flow: run.flow_name, step: node.name })
         Telemetry.emit("flow.rework", dims: { flow: run.flow_name, step: node.name, cause: "replay" },
@@ -499,10 +597,12 @@ module Agentkit
 
       class Retry < StandardError; end
 
-      def complete_step(node, step, result)
+      def complete_step(node, step, result, acceptance: nil)
+        output = { "result" => Coder.dump(result, store: store) }
+        output["acceptance"] = acceptance if acceptance
         store.update_step(step, status: result.ok? ? "completed" : "failed",
                                 finished_at: Time.now,
-                                output: { "result" => Coder.dump(result, store: store) },
+                                output: output,
                                 usage: result.usage&.to_h || {},
                                 attempt_count: step.attempt_count, attempts: step.attempts)
         flow_ctx.set(node.name, result)

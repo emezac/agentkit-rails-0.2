@@ -35,6 +35,9 @@ module Agentkit
         def block      = opts[:block]
         def input_fn   = opts[:input]
         def model      = opts[:model]
+        def accept    = opts[:accept]
+        def repair    = opts[:repair]
+        def max_repairs = opts.fetch(:max_repairs, 0)
 
         # `on_error: :continue` lets a non-essential step fail without taking
         # the run down. The failure is still recorded on the step and in
@@ -200,6 +203,15 @@ module Agentkit
           case n
           when Nodes::StepNode
             problems << "step `#{n.name}` has no agent, cognition or block" unless n.executable?
+            if n.accept || n.repair || n.max_repairs != 0
+              problems << "step `#{n.name}` needs a callable accept: check" unless n.accept.respond_to?(:call)
+              problems << "step `#{n.name}` acceptance requires effect: :read_only" unless n.effect == :read_only
+              unless n.max_repairs.is_a?(Integer) && n.max_repairs.between?(0, 3)
+                problems << "step `#{n.name}` max_repairs must be 0..3"
+              end
+              problems << "step `#{n.name}` needs a callable repair: callback" if n.max_repairs.is_a?(Integer) && n.max_repairs.positive? && !n.repair.respond_to?(:call)
+              problems << "step `#{n.name}` repair: needs max_repairs" if n.repair && n.max_repairs == 0
+            end
           when Nodes::JoinNode
             unless Nodes::JoinNode::MODES.include?(n.mode) || n.quorum
               problems << "join `#{n.name}` has unknown mode #{n.mode.inspect}"
@@ -224,6 +236,17 @@ module Agentkit
             problems << "sub_flow `#{n.name}` needs `flow:`" if n.flow.nil?
           when Nodes::LoopNode
             problems << "loop `#{n.name}` has an empty body" if n.body.empty?
+          end
+        end
+
+        names = flatten_nodes.map(&:name)
+        flatten_nodes.each_with_index do |node, index|
+          node.depends_on.each do |dependency|
+            if !names.include?(dependency)
+              problems << "step `#{node.name}` depends on unknown step `#{dependency}`"
+            elsif names.index(dependency) >= index
+              problems << "step `#{node.name}` must follow dependency `#{dependency}`"
+            end
           end
         end
 
@@ -283,8 +306,14 @@ module Agentkit
           row[:timeout] = node.timeout if node.timeout
           row
         end
-        edges = flat.each_cons(2).map { |left, right| [left.name, right.name] }
-        flat.each { |node| node.depends_on.each { |dependency| edges << [dependency, node.name] } }
+        execution_edges = flat.each_cons(2).map { |left, right| [left.name, right.name] }
+        data_edges = flat.flat_map { |node| node.depends_on.map { |dependency| [dependency, node.name] } }.uniq
+        parallel_review_candidates = nodes.each_cons(2).filter_map do |left, right|
+          if [left, right].all? { |node| node.is_a?(Nodes::StepNode) && node.effect == :read_only && node.ordering == :any } &&
+             left.depends_on.empty? && right.depends_on.empty?
+            [left.name, right.name]
+          end
+        end
         fanouts = flat.select { |node| node.is_a?(Nodes::ParallelNode) || node.is_a?(Nodes::MapNode) }
         fanout_sizes = fanouts.map { |node| node.over.is_a?(Array) ? node.over.size : nil }.compact
         joins = flat.grep(Nodes::JoinNode).map do |node|
@@ -293,8 +322,11 @@ module Agentkit
         end
         plan = {
           flow: flow_class.name.to_s, version: version,
-          dag: { nodes: node_rows, edges: edges.uniq },
+          dag: { nodes: node_rows, edges: (execution_edges + data_edges).uniq,
+                 execution_edges: execution_edges, declared_data_edges: data_edges },
           estimated_critical_path_ms: estimated_critical_path(flat),
+          estimated_serial_path_ms: estimated_critical_path(flat),
+          parallel_review_candidates: parallel_review_candidates,
           max_fanout: fanout_sizes.max,
           fanout_budget: fanouts.sum { |node| static_concurrency(node) },
           joins: joins,

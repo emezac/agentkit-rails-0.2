@@ -188,6 +188,69 @@ RSpec.describe Agentkit::Flow do
     end
   end
 
+  describe "step acceptance" do
+    it "repairs only a rejected read-only result and records check evidence" do
+      calls = 0
+      repairs = 0
+      flow = Class.new(described_class) do
+        def self.name = "AcceptedStepFlow"
+        step(:extract, accept: ->(value, _ctx) { value >= 3 ? true : { accepted: false, reason_code: "below_minimum" } },
+          repair: ->(value, _ctx, _attempt, reason) { repairs += 1; raise "wrong reason" unless reason == "below_minimum"; value + 1 }, max_repairs: 2) do
+          calls += 1
+          1
+        end
+        step(:use) { |ctx| ctx[:extract].value * 2 }
+      end
+
+      result = flow.call
+      expect(result).to be_ok
+      expect(result.value).to eq(6)
+      expect(calls).to eq(1)
+      expect(repairs).to eq(2)
+      step = result.run.step(:extract)
+      expect(step.attempts.count { |item| item["kind"] == "acceptance_rejected" }).to eq(2)
+      expect(step.attempts.select { |item| item["kind"] == "acceptance_rejected" }.map { |item| item["reason_code"] }).to eq(%w[below_minimum below_minimum])
+      expect(step.output.dig("acceptance", "verdict")).to eq("accepted")
+      expect(step.output.dig("acceptance", "result_digest")).to start_with("sha256:")
+    end
+
+    it "stops repeated rejected candidates without rerunning earlier steps" do
+      earlier = 0
+      checks = 0
+      flow = Class.new(described_class) do
+        def self.name = "RejectedStepFlow"
+        step(:earlier) { earlier += 1 }
+        step(:bad, accept: ->(_value, _ctx) { checks += 1; false },
+          repair: ->(value, _ctx, _attempt, _reason) { value }, max_repairs: 3) { "same" }
+        step(:never) { raise "should not run" }
+      end
+
+      result = flow.call
+      expect(result).to be_err
+      expect(result.run.status).to eq("failed")
+      expect(result.run.step(:bad).error).to eq("duplicate_candidate")
+      expect(earlier).to eq(1)
+      expect(checks).to eq(1)
+      expect(result.run.step(:never)).to be_nil
+    end
+
+    it "refuses a resumed step whose stored result no longer matches its acceptance evidence" do
+      flow = Class.new(described_class) do
+        def self.name = "AcceptanceReplayFlow"
+        step(:checked, accept: ->(value, _ctx) { value.even? }) { 2 }
+        human_gate :approve
+      end
+
+      flow.call
+      run = described_class.store_for.runs.last
+      run.step(:checked).output["result"]["value"] = 3
+      outcome = flow.resume(run.run_id, mode: :sync)
+      expect(outcome).to be_err
+      expect(run.status).to eq("failed")
+      expect(run.step(:checked).error).to eq("acceptance_evidence_mismatch")
+    end
+  end
+
   describe "loop_until" do
     it "stops as soon as the condition holds and records every iteration" do
       flow = Class.new(described_class) do

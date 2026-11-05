@@ -1254,6 +1254,10 @@ decrementa dos veces.
 Estado en `agentkit_runs` / `agentkit_run_steps`, con índice único
 `(run_id, step_key)`: eso es lo que hace que un run sea reanudable e idempotente.
 
+Los pasos de lectura pueden declarar `accept:` y una reparación acotada al
+resultado de ese paso. El plan separa el orden de ejecución de las dependencias
+de datos declaradas. Consulta [contratos de aceptación y plan](docs/FLOW_ACCEPTANCE_AND_PLAN.md).
+
 **En modo async** cada rama es su propio job y lleva en su fila todo lo que
 necesita, así que corre en cualquier worker. El run **se suspende** en un join o
 en un gate humano en vez de bloquear un worker, y la rama que baja la barrera a
