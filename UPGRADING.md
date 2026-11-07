@@ -16,6 +16,34 @@ Flow, memory, HITL and Actions records are unchanged. See
 [Operator workflows](docs/OPERATOR_WORKFLOWS.md) for the creation API,
 attention inbox, delegation receipts and memory review lifecycle.
 
+# Upgrading 1.12.0 → 1.13.0
+
+Install migration 030 before enabling reviewed memory publication; migration 024
+provides the Journal. Existing migrations 027–029 are unchanged.
+
+```sh
+rails agentkit:install:migrations
+rails db:migrate
+```
+
+Allow Journal kind `memory` only for authorized contexts. Configure a scoped
+source loader, versioned independent verifier and action authorizer; `publish`
+must require a human reviewer different from the candidate creator.
+Grant `read_history` only to authorized custodians/reviewers: historical APIs
+expose retained quotations without current source revalidation. Schedule
+source-change invalidation in Rails. Retrieval rechecks dependencies even without
+a scheduled job; unavailable sources are not a reason to trust cached assertions.
+
+**Behavior change:** new legacy dreaming insights are `imagined` candidates with
+confidence zero, no candidate embedding and no source supersession, even when
+legacy `supersede`/`embed` flags request it. Layered L1 extractions are reported
+candidates, and L2/L3 assets are quarantined. Explicitly reviewed publication uses
+`Memory::Consolidation`, not `Memory.promote!` (which only manages embeddings).
+No previous data is relabeled or deleted. Audit previously generated insights
+before using them as facts; deploy consistent versions across workers.
+
+See [Evidence-Grounded Memory Consolidation](docs/EVIDENCE_GROUNDED_MEMORY_CONSOLIDATION.md).
+
 # Upgrading 1.11.0 → 1.12.0
 
 Operations is opt-in. Install migration 026 for the durable escalation outbox;

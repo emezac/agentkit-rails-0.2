@@ -161,12 +161,16 @@ RSpec.describe Agentkit::TeamMemory do
 
       l1_atoms = described_class::LayeredPipeline.process_l0_to_l1(raw_logs, source_agent: "AuditAgent")
       expect(l1_atoms.size).to eq(3)
+      expect(l1_atoms.map(&:ontological_type).uniq).to eq(["imagined"])
+      expect(l1_atoms.map { |a| a.metadata["claim_kind"] }.uniq).to eq(["reported"])
 
       l2_scene = described_class::LayeredPipeline.process_l1_to_l2(l1_atoms, scene_name: "SecurityBasics")
       expect(l2_scene.asset_type).to eq("chat_memory")
+      expect(l2_scene.status).to eq("quarantined")
 
       l3_persona = described_class::LayeredPipeline.process_l2_to_l3([l2_scene], persona_name: "SecurityExpertSkill")
       expect(l3_persona.asset_type).to eq("skill")
+      expect(l3_persona.status).to eq("quarantined")
     end
   end
 

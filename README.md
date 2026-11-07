@@ -1,9 +1,9 @@
-# AgentKit Rails v1.12.0
+# AgentKit Rails v1.13.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.12.0"
+gem "agentkit-rails", "~> 1.13.0"
 ```
 
 ```bash
@@ -13,6 +13,17 @@ rails g agentkit:team_memory
 rails db:migrate
 rails agentkit:doctor
 ```
+
+## Evidence-Grounded Memory Consolidation en 1.13.0
+
+`Memory::Consolidation` separa candidatas de notas/wikis revisadas: comprueba
+citas y fuentes versionadas, exige revisión independiente, serializa la publicación
+y revalida dependencias al recuperar. Conserva revisiones, invalida contenido
+obsoleto y prepara índices pequeños mediante `ContextMap`. `Memory::Evaluation`
+compara búsqueda, memoria actual y consolidada incluyendo el coste de consolidación.
+Dreaming ya no aumenta la confianza ni sustituye observaciones sin revisión.
+Requiere migraciones 024 y 030 para publicación durable; no activa jobs ni permisos.
+Consulta la [guía y responsabilidades Rails](docs/EVIDENCE_GROUNDED_MEMORY_CONSOLIDATION.md).
 
 ## Contribuir a AgentKit
 

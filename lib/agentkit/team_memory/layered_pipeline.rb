@@ -38,8 +38,10 @@ module Agentkit
               source_agent: source_agent,
               tags: tags + ["layer:l1", type],
               type: type,
-              ontological_type: "real",
-              metadata: { "memory_layer" => LAYERS[:l1] }
+              ontological_type: "imagined", confidence: 0.0, embed: false,
+              metadata: { "memory_layer" => LAYERS[:l1], "claim_kind" => "reported",
+                "review_status" => "candidate", "source_digest" => Knowledge.digest(line),
+                "authorizes" => false, "causal_proof" => false }
             )
             atoms << atom
           end
@@ -56,10 +58,12 @@ module Agentkit
           asset = AssetStore.create(
             asset_type: "chat_memory",
             name: scene_name,
+            status: "quarantined",
             team_id: team_id,
             visibility: "team",
             content: {
               "layer"       => LAYERS[:l2],
+              "review_status" => "candidate",
               "scene_name"  => scene_name,
               "atom_count"  => atom_contents.size,
               "summary"     => atom_contents.join("\n"),
@@ -80,10 +84,12 @@ module Agentkit
           asset = AssetStore.create(
             asset_type: "skill",
             name: persona_name,
+            status: "quarantined",
             team_id: team_id,
             visibility: "team",
             content: {
               "layer"         => LAYERS[:l3],
+              "review_status" => "candidate",
               "persona_name"  => persona_name,
               "profile"       => summaries.join("\n\n"),
               "consolidated" => true,

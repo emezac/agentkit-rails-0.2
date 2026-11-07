@@ -233,7 +233,7 @@ RSpec.describe "Memory embedding policy" do
     end
   end
 
-  describe "dreaming does not pre-pay for vectors it will supersede" do
+  describe "dreaming batches source vectors and does not embed unreviewed candidates" do
     it "embeds the window once at consolidation time, not per observation" do
       Agentkit.config.memory.embedding.policy = :on_promotion
       Agentkit.config.memory.dreaming.clustering = :batch_embed

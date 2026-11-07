@@ -1,9 +1,20 @@
 # Changelog
 
-## Unreleased
+## 1.13.0 — 2026-11-06
+
+### Added
+
+- Evidence-grounded memory candidates with typed per-claim citations, exact source content/version checks and independent host verification.
+- Human-authorized, independent publication of notes/wiki representations, immutable Journal revisions and optimistic revision expectations serialized in PostgreSQL (migration 030).
+- Revalidation on retrieval, event-driven dependency invalidation, revocation and historical revision access without deleting evidence.
+- Bounded pointer indexes using ContextMap; no automatic prompt or skill activation.
+- Offline three-arm memory evaluation with blinded runner inputs, host grading, provenance, latency/token measurements and consolidation-inclusive reported costs.
+- Rails integration guide defining authoritative sources, retention, authorization, review, invalidation and evaluation ownership.
 
 ### Fixed
 
+- Legacy dreaming now stores unverified hypotheses without confidence inflation, candidate embedding or source supersession; explicit supersede/embed flags cannot bypass review.
+- Layered extraction records reported candidates rather than verified facts and quarantines downstream scenes/persona assets.
 - Portable skill bundles now preserve their routable description and version; export and import validate SKILL.md metadata without model calls or automatic tool activation.
 
 ## 1.12.0 — 2026-10-27

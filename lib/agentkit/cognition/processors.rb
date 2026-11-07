@@ -44,12 +44,8 @@ module Agentkit
 
       # ─── Dreaming ────────────────────────────────────────────────────────────
 
-      # On-demand, configurable, non-destructive consolidation.
-      #
-      # Three changes from v0.1: cron is only one trigger, `dry_run` returns the
-      # plan without writing anything, and sources are marked `superseded`
-      # instead of being blindly archived (`update_all(status: "archived")` was
-      # irreversible and cost the embeddings of everything it archived).
+      # On-demand candidate generation. Sources remain active; synthesizing text
+      # is not verification. Publication belongs to Memory::Consolidation.
       class Dreaming < Base
         def call(dry_run: false)
           dry       = dry?(dry_run)
@@ -162,14 +158,18 @@ module Agentkit
             source_agent: "Agentkit::Cognition::Dreaming",
             tags: cluster.flat_map(&:tags).uniq + ["consolidated"],
             type: "insight",
-            confidence: [(cluster.sum { |m| m.confidence.to_f } / cluster.size) + 0.05, 1.0].min,
-            importance: 0.85,
-            # No forced embedding: under :on_promotion an insight is promoted by
-            # type anyway, and under :never the operator meant never.
-            embed: options[:embed],
+            confidence: 0.0,
+            importance: 0.5,
+            ontological_type: "imagined",
+            embed: false,
+            metadata: { "review_status" => "candidate", "claim_kind" => "hypothesis",
+              "sources" => cluster.map { |m| { "id" => m.id, "digest" => Knowledge.digest(m.content.to_s) } },
+              "authorizes" => false, "causal_proof" => false },
             context: context
           )
-          Memory.supersede!(cluster, by: insight) if options.fetch(:supersede, config.dreaming.supersede_sources)
+          raise HarnessPersistenceError, "dreaming candidate was not saved" unless insight
+          # A model synthesis cannot replace observations. Legacy supersede/embed
+          # options never bypass review; use Memory::Consolidation for publication.
           trace.phase(:consolidated, cluster: cluster.map(&:id), insight: insight.id)
           insight
         end

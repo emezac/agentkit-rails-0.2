@@ -192,19 +192,20 @@ RSpec.describe Agentkit::Cognition do
       expect(Agentkit::Memory.all(types: ["insight"])).to be_empty
     end
 
-    it "consolidates non-destructively so it can be rolled back" do
+    it "quarantines synthesis without increasing confidence or superseding its sources" do
       fake_llm.respond_with("Acme es un pagador crónicamente tardío.")
 
-      described_class.run(:dreaming, threshold: 0.9, min_cluster: 2)
+      described_class.run(:dreaming, threshold: 0.9, min_cluster: 2, supersede: true, embed: true)
 
       insight = Agentkit::Memory.all(types: ["insight"]).first
       sources = Agentkit::Memory.all.select { |m| m.superseded_by_id == insight.id }
       expect(insight).not_to be_nil
-      expect(sources).not_to be_empty
-      expect(sources.first.status).to eq("superseded")
-
-      restored = Agentkit::Memory.rollback_supersede!(insight.id)
-      expect(restored).to eq(sources.size)
+      expect(sources).to be_empty
+      expect(insight.ontological_type).to eq("imagined")
+      expect(insight.confidence).to eq(0.0)
+      expect(insight.embedded?).to be(false)
+      expect(insight.metadata["review_status"]).to eq("candidate")
+      expect(insight.metadata["sources"].size).to be >= 2
     end
 
     it "clusters lexically with zero embeddings when configured to" do
