@@ -118,11 +118,11 @@ module Agentkit
       def call_with_retries(prompt:, profile:, profile_name:, system:, temperature:, max_tokens:,
                             timeout:, tools:, schema:, cache:, stream:, agent:,
                             prompt_id:, prompt_version:, experiment_id:, experiment_arm:,
-                            fallback_used:)
+                            fallback_used:, repair_schema: true)
         cfg      = Agentkit.config.llm
         attempts = 0
         started  = monotonic
-        system   = augment_system(system, schema)
+        system   = augment_system(system, schema) if repair_schema
 
         begin
           attempts += 1
@@ -161,43 +161,44 @@ module Agentkit
           raise error
         end
 
+        content = raw.content
         usage = build_usage(raw, profile, started)
-        charge_budget(usage)
-        parsed, violations = parse_with_schema(raw.content, schema)
-
-        # One re-ask with the violations spelled out before giving up. This is
-        # what replaces the hand-rolled `parse_json` + regex fallback that four
-        # projects wrote independently.
-        if schema && violations.any? && attempts <= cfg.schema_retries + 1
-          repaired = complete(
-            repair_prompt(raw.content, violations, schema),
-            model: profile.model, system: system, temperature: 0.0, agent: agent,
-            prompt_id: prompt_id, prompt_version: prompt_version,
-            experiment_id: experiment_id, experiment_arm: experiment_arm
-          )
-          parsed, violations = parse_with_schema(repaired.content, schema)
-          usage += repaired.usage
-          raw = Adapters::Raw.new(content: repaired.content, model: profile.model,
-                                  input_tokens: 0, output_tokens: 0)
-        end
-
-        if schema && violations.any?
+        status = "error"
+        violations = []
+        begin
+          charge_budget(usage)
+          parsed, violations = parse_with_schema(content, schema)
+          status = violations.empty? ? "ok" : "schema_violation"
+        ensure
+          # Record this response even when its measured usage exhausts the budget.
           emit_call(profile: profile, profile_name: profile_name, agent: agent, usage: usage,
-                    attempts: attempts, status: "schema_violation", prompt: prompt,
-                    prompt_id: prompt_id, prompt_version: prompt_version, started: started,
-                    experiment_id: experiment_id, experiment_arm: experiment_arm,
-                    violations: violations.size)
-          raise SchemaViolation.new("LLM output failed schema: #{violations.join('; ')}",
-                                    raw: raw.content, violations: violations)
+                    attempts: attempts, status: status, error: status == "error" ? $! : nil,
+                    prompt: prompt, prompt_id: prompt_id, prompt_version: prompt_version,
+                    experiment_id: experiment_id, experiment_arm: experiment_arm, started: started,
+                    violations: violations.size, fallback_used: fallback_used)
         end
 
-        emit_call(profile: profile, profile_name: profile_name, agent: agent, usage: usage,
-                  attempts: attempts, status: "ok", prompt: prompt, prompt_id: prompt_id,
-                  prompt_version: prompt_version, experiment_id: experiment_id,
-                  experiment_arm: experiment_arm, started: started,
-                  fallback_used: fallback_used)
+        if violations.any?
+          unless repair_schema && attempts <= cfg.schema_retries + 1
+            raise SchemaViolation.new("LLM output failed schema: #{violations.join('; ')}",
+                                      raw: content, violations: violations)
+          end
 
-        Response.new(content: raw.content, parsed: parsed, usage: usage, model: profile.model,
+          repaired = call_with_retries(
+            prompt: repair_prompt(content, violations, schema),
+            profile: profile, profile_name: profile_name, system: system,
+            temperature: 0.0, max_tokens: nil, timeout: nil, tools: nil,
+            schema: schema, cache: nil, stream: nil, agent: agent,
+            prompt_id: prompt_id, prompt_version: prompt_version,
+            experiment_id: experiment_id, experiment_arm: experiment_arm,
+            fallback_used: fallback_used, repair_schema: false
+          )
+          content = repaired.content
+          parsed = repaired.parsed
+          usage += repaired.usage
+        end
+
+        Response.new(content: content, parsed: parsed, usage: usage, model: profile.model,
                      profile: profile_name, cached: false, attempts: attempts,
                      fallback_used: fallback_used)
       end

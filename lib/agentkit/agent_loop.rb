@@ -169,8 +169,8 @@ module Agentkit
     def system_prompt
       original = @system
       unless original
-        original = @agent.send(:resolve_prompt, nil).first
-        original ||= ContextEngineer.build(agent: @agent, skills: [], memories: [])
+        registered_prompt, = @agent.send(:resolve_prompt, nil)
+        original = ContextEngineer.build(agent: @agent, registered_prompt: registered_prompt)
       end
       <<~TEXT
         #{original}

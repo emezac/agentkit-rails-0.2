@@ -1257,13 +1257,20 @@ OverdueInvoiceCouncilFlow.perform_later(factura: invoice) # asíncrono
 Primitivas: `step` · `parallel` · `join` · `map`/`reduce` · `loop_until` · `race` ·
 `human_gate` · `sub_flow` · `on_error` · `compensate`.
 
+Cuando `loop_until` recibe `until:`, devuelve `LoopLimitReached` si agota
+`max` con la condición pendiente. Cumplirla en la última iteración cuenta como
+convergencia. El plazo de un run se verifica en los límites de ejecución,
+incluido el retorno del último paso, y el vencimiento se registra como `timed_out`.
+
 **El join no es un `sleep`.** El fan-out crea la barrera con `pending_count = N`;
 cada rama la decrementa atómicamente al cerrarse y la que llega a 0 dispara la
 continuación. Una reentrega de job encuentra el paso ya `completed` y no
 decrementa dos veces.
 
 Estado en `agentkit_runs` / `agentkit_run_steps`, con índice único
-`(run_id, step_key)`: eso es lo que hace que un run sea reanudable e idempotente.
+`(run_id, step_key)`. Al reanudar, el executor reclama los pasos pendientes con
+una transición atómica y reutiliza los resultados guardados. Una reentrega
+que encuentra el paso en ejecución se detiene a la espera del resultado.
 
 Los pasos de lectura pueden declarar `accept:` y una reparación acotada al
 resultado de ese paso. El plan separa el orden de ejecución de las dependencias

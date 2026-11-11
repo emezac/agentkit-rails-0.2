@@ -12,9 +12,10 @@ module Agentkit
 
     module_function
 
-    def build(agent:, query: nil, memories: [], skills: [], extra: nil, budget: DEFAULT_BUDGET)
-      cfg   = Agentkit.config
+    def build(agent:, query: nil, memories: [], skills: [], extra: nil, budget: DEFAULT_BUDGET,
+              registered_prompt: nil)
       ctx   = agent.respond_to?(:agent_context) ? agent.agent_context : Context.resolve
+      cfg   = ctx.config
       parts = []
 
       # 1. Stable identity block first: it is identical across calls, which is
@@ -33,6 +34,17 @@ module Agentkit
       domain = agent.respond_to?(:domain_context) ? agent.domain_context.to_s : ""
       parts << [70, "## Domain Context\n#{domain}"] unless domain.empty?
 
+      # Keep the registered prompt and the agent's instructions together,
+      # then spend the remaining budget on dynamic context.
+      prefix = ""
+      unless registered_prompt.nil?
+        prefix = (parts.map(&:last) << registered_prompt.to_s).map(&:strip).reject(&:empty?).join("\n\n")
+        if estimate_tokens(prefix) > budget
+          raise ConfigurationError, "Agent instructions and registered prompt exceed the system context budget"
+        end
+        parts = []
+      end
+
       Array(skills).each do |skill|
         skill.context_providers.each_value do |provider|
           value = safely { provider.call(ctx) }
@@ -44,7 +56,7 @@ module Agentkit
       parts << [10, extra.to_s] if extra && !extra.to_s.empty?
       parts << [90, "Current time: #{Time.now.strftime('%Y-%m-%d %H:%M %Z')}."]
 
-      assemble(parts, budget)
+      assemble(parts, budget, prefix: prefix)
     end
 
     def autonomy_text(level)
@@ -81,19 +93,18 @@ module Agentkit
       "## Relevant Past Knowledge\n#{kept.join("\n")}"
     end
 
-    def assemble(parts, budget)
+    def assemble(parts, budget, prefix: "")
       ordered = parts.reject { |(_, text)| text.nil? || text.to_s.strip.empty? }
                      .sort_by { |(priority, _)| -priority }
-      out   = []
-      spent = 0
+      out = prefix.dup
       ordered.each do |(_, text)|
-        cost = estimate_tokens(text)
-        next if spent + cost > budget
+        separator = out.empty? ? "" : "\n\n"
+        fragment = "#{separator}#{text.to_s.strip}"
+        next if estimate_tokens(out + fragment) > budget
 
-        out << text.to_s.strip
-        spent += cost
+        out << fragment
       end
-      out.join("\n\n")
+      out
     end
 
     def estimate_tokens(text) = (text.to_s.length / 4.0).ceil
@@ -217,10 +228,16 @@ module Agentkit
     def complete(prompt, model: nil, system: nil, schema: nil, tools: nil, temperature: nil,
                  max_tokens: nil, stream: nil)
       prompt_text, version = resolve_prompt(system)
+      instructions = if version
+                       ContextEngineer.build(agent: self, skills: self.class.skills,
+                                              registered_prompt: prompt_text.to_s)
+                     else
+                       prompt_text || build_context
+                     end
       selected_tools = tools.nil? ? default_tools : tools
       response = LLM.complete(
         prompt,
-        model: model || default_model, system: prompt_text || build_context,
+        model: model || default_model, system: instructions,
         schema: schema || default_schema, tools: apply_tool_policy(selected_tools),
         temperature: temperature, max_tokens: max_tokens, stream: stream,
         agent: self.class.name, prompt_id: self.class.prompt_id, prompt_version: version,
@@ -333,6 +350,7 @@ module Agentkit
 
     def resolve_prompt(system)
       if system || !(self.class.prompt_id && Prompt.defined?(self.class.prompt_id))
+        @prompt_version = nil
         @prompt_experiment_id = @prompt_experiment_arm = nil
         return [system, nil]
       end

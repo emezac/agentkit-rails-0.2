@@ -103,6 +103,8 @@ module Agentkit
         mode  = executor || :sync
 
         if (existing = find_existing(store, input))
+          return Result.err(existing.failure, run: existing) unless existing.ok?
+
           return Result.ok(existing.output&.dig(:result), run: existing)
         end
 
@@ -138,7 +140,9 @@ module Agentkit
         scope = Scope.resolve(context: ctx)
         run   = store.find_run_by_uuid(run_id, scope: scope) || store.find_run(run_id, scope: scope)
         raise FlowError, "Run #{run_id} not found" if run.nil?
-        return Result.ok(run.output) if run.finished?
+        if run.finished?
+          return run.ok? ? Result.ok(run.output, run: run) : Result.err(run.failure, run: run)
+        end
 
         TaskMandate.guard_run!(run, phase: "resume")
         if (mandate = TaskMandate.mandate_data(run))
@@ -146,9 +150,10 @@ module Agentkit
           ctx = ctx.derive(metadata: { task_mandate: mandate })
         end
 
-        Executor.new(definition: definition, run: run, store: store,
-                     context: ctx, input: run.input,
-                     mode: mode || (Flow.dispatcher.async? ? :async : :sync)).call
+        result = Executor.new(definition: definition, run: run, store: store,
+                              context: ctx, input: run.input,
+                              mode: mode || (Flow.dispatcher.async? ? :async : :sync)).call
+        decorate(result, run)
       end
 
       # One store per process, not per flow class: a run must be findable from

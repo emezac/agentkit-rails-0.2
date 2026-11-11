@@ -44,13 +44,12 @@ module Agentkit
         step = store.find_step(run, step_id, scope: resolved_scope)
         return log("step #{step_id} not found") if step.nil?
 
-        # Redelivery: the step already closed. Do NOT execute and do NOT
-        # decrement the barrier a second time.
         if step.settled?
-          Telemetry.emit("flow.branch.redelivered",
-                         dims: { flow: run.flow_name, step: step.step_name })
+          Telemetry.emit("flow.branch.redelivered", dims: { flow: run.flow_name, step: step.step_name })
           return
         end
+        return if run.finished?
+        return advance(run_uuid, resolved_scope) if run.timed_out?
 
         barrier = store.find_step(run, step.parent_step_id, scope: resolved_scope)
         flow    = Registry.find(run.flow_name)
@@ -58,6 +57,12 @@ module Agentkit
         return log("node #{step.step_name} missing") if node.nil?
 
         return unless authorized_run?(run, store, "branch")
+
+        # A duplicate job can arrive before the first worker records a result.
+        unless store.claim_step(step)
+          Telemetry.emit("flow.branch.redelivered", dims: { flow: run.flow_name, step: step.step_name })
+          return
+        end
 
         ctx    = rebuild_context(run)
         result = Agentkit.with_context(ctx) { execute_branch(node, step, ctx, store) }
@@ -75,7 +80,7 @@ module Agentkit
 
         # "Last one turns off the lights": exactly one branch sees zero and
         # releases the join. No polling, no arbitrary delay.
-        Flow.dispatcher.advance(run_uuid, resolved_scope) if remaining && remaining <= 0
+        Flow.dispatcher.advance(run_uuid, resolved_scope) if run.timed_out? || (remaining && remaining <= 0)
       end
 
       # Fired once per join, scheduled at fan-out time.
@@ -84,6 +89,7 @@ module Agentkit
         resolved_scope = Scope.resolve(scope)
         run     = store.find_run_by_uuid(run_uuid, scope: resolved_scope)
         return if run.nil? || run.finished?
+        return advance(run_uuid, resolved_scope) if run.timed_out?
 
         barrier = store.find_step(run, step_id, scope: resolved_scope)
         return if barrier.nil? || barrier.pending_count.to_i <= 0 # already released

@@ -25,6 +25,29 @@ RSpec.describe Agentkit::AgentLoop do
     @context = Agentkit::Context.new(tenant_key: "acme", principal: "human:42")
   end
 
+  it "composes registered prompts with the base context while loading skills on demand" do
+    agent_class = Class.new(Agentkit::Agent) do
+      uses_skills :registered_loop_skill
+      prompt_id :registered_loop
+
+      def domain_context = "Loop domain procedures"
+    end
+    Agentkit::Skill.define(:registered_loop_skill) do |skill|
+      skill.description("Procedure metadata")
+      skill.prompt("Procedure body")
+    end
+    Agentkit::Prompt.define(:registered_loop, body: "Versioned loop instructions")
+    fake_llm.respond_with_turns({ content: "done" })
+
+    outcome = agent_class.new(context: @context).run_loop("Review the record")
+
+    expect(outcome).to be_answered
+    system = fake_llm.turn_calls.first.messages.first.fetch("content")
+    expect(system).to include("## Agent Identity", "## Autonomy Level", "Loop domain procedures",
+                              "Versioned loop instructions", "Procedure metadata")
+    expect(system).not_to include("Procedure body")
+  end
+
   it "loads procedures/providers once and exposes only metadata before loading" do
     renders = 0
     providers = 0

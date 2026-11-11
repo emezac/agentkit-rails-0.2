@@ -143,7 +143,8 @@ RSpec.describe Agentkit::Flow do
       first = flow.call
       run   = first.run
 
-      # Simulate a redelivered job: same run, executor invoked again.
+      # Simulate interruption after the step's output was saved.
+      flow.store_for.update_run(run, status: "running", finished_at: nil)
       Agentkit::Flow::Executor.new(definition: flow.definition, run: run,
                                    store: flow.store_for, context: Agentkit::Context.resolve,
                                    input: {}).call
@@ -264,21 +265,78 @@ RSpec.describe Agentkit::Flow do
       result = flow.call
 
       expect(result).to be_ok
+      expect(result.value).to include(iterations: 3, converged: true, reason: :condition_met)
       expect(result.run.steps_named("propose").size).to eq(3)
       expect(result.run.steps.map(&:step_key)).to include("propose:1", "propose:3")
     end
 
-    it "honours the max even when the condition never holds" do
+    it "recognizes success on the final allowed iteration" do
+      flow = Class.new(described_class) do
+        def self.name = "LastIterationFlow"
+        loop_until :verify, max: 2, until: ->(ctx) { ctx[:tick].value == 2 } do
+          step(:tick) { |ctx| (ctx[:tick]&.value || 0) + 1 }
+        end
+      end
+
+      result = flow.call
+
+      expect(result).to be_ok
+      expect(result.value).to eq(iterations: 2, converged: true, reason: :condition_met)
+    end
+
+    it "fails a verified loop at the limit and stops downstream steps" do
       flow = Class.new(described_class) do
         def self.name = "RunawayFlow"
         loop_until :spin, max: 2, until: ->(_ctx) { false } do
           step(:tick) { 1 }
         end
+        step(:publish) { raise "must not execute" }
       end
 
-      flow.call
-      expect(Agentkit::Flow.store_for.runs.last.steps_named("tick").size).to eq(2)
+      result = flow.call
+
+      expect(result.error).to be_a(Agentkit::LoopLimitReached)
+      expect(result.run.status).to eq("failed")
+      expect(result.run.steps.map(&:step_key)).to eq(%w[tick:1 tick:2])
+      expect(emitted("flow.loop").last.dims[:reason]).to eq(:max_iterations)
+      expect(flow.resume(result.run.run_id)).to be_err
     end
+
+    it "evaluates a resumed loop against each iteration's own output" do
+      flow = Class.new(described_class) do
+        def self.name = "ResumedVerificationFlow"
+        loop_until :verify, max: 2, until: ->(ctx) { ctx[:tick].value == 2 } do
+          step(:tick) { raise "the completed step must replay" }
+        end
+      end
+      Agentkit::Flow.dispatcher = Agentkit::Flow::Dispatcher::TestQueue.new
+      run = flow.perform_later
+      1.upto(2) do |iteration|
+        flow.store_for.find_or_create_step(run, step_key: "tick:#{iteration}", step_name: "tick",
+          kind: "step", status: "completed", position: iteration,
+          output: { "result" => Agentkit::Flow::Coder.dump(Agentkit::Result.ok(iteration)) })
+      end
+
+      result = flow.resume(run.run_id)
+
+      expect(result).to be_ok
+      expect(result.value).to include(iterations: 2, converged: true)
+    end
+  end
+
+  it "propagates an explicit step failure without marking the run complete" do
+    flow = Class.new(described_class) do
+      def self.name = "ExplicitFailureFlow"
+      step(:verify) { Agentkit::Result.err(Agentkit::FlowError.new("verification failed")) }
+      step(:publish) { raise "must not execute" }
+    end
+
+    result = flow.call
+
+    expect(result).to be_err
+    expect(result.run.status).to eq("failed")
+    expect(result.run.step(:verify).status).to eq("failed")
+    expect(result.run.step(:publish)).to be_nil
   end
 
   describe "map / reduce" do

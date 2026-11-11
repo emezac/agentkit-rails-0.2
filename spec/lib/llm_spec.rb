@@ -11,6 +11,12 @@ RSpec.describe Agentkit::LLM do
         array  :tags
       end
     end
+    let(:charges) { [] }
+    let(:budget) do
+      double("budget").tap do |ledger|
+        allow(ledger).to receive(:charge) { |resource, cost| charges << [resource, cost] }
+      end
+    end
 
     it "extracts JSON out of a fenced markdown block" do
       fake_llm.respond_with(<<~REPLY)
@@ -41,25 +47,90 @@ RSpec.describe Agentkit::LLM do
       expect(llm_calls).to eq(1)
     end
 
-    it "re-asks once with the violations, then succeeds" do
+    it "repairs on the same profile and accounts for each provider response once" do
+      Agentkit::ModelRouter.register(:structured, model: "structured-model", provider: :openai_compatible,
+                                                api_base: "https://example.test/v1", api_key: "test-key",
+                                                price_in: 2.0, price_out: 10.0)
       fake_llm.respond_with(
         '{"concept": "x", "score": 5}',                       # too short + out of range
         '{"concept": "valid concept", "score": 0.7}'
       )
 
-      response = described_class.complete("x", schema: schema)
+      execution_budget = Agentkit::ExecutionBudget.new(external: budget)
+      response = with_context(budget: execution_budget) do
+        described_class.complete("x", model: :structured, schema: schema, system: "Analyse the text",
+                                      prompt_id: "extract", prompt_version: 3,
+                                      experiment_id: "test-experiment", experiment_arm: "variant")
+      end
 
       expect(response.parsed[:concept]).to eq("valid concept")
+      expect(response.model).to eq("structured-model")
+      expect(response.profile).to eq(:structured)
       expect(llm_calls).to eq(2)
-      repair = fake_llm.calls.last.prompt
-      expect(repair).to include("shorter than", "above 1")
+      original, repair = fake_llm.calls
+      expect(repair).to have_attributes(model: original.model, system: original.system, temperature: 0.0,
+                                         api_base: original.api_base, api_key: original.api_key)
+      expect(repair.prompt).to include("shorter than", "above 1")
+
+      events = emitted("llm.call")
+      expect(events.map { |event| event.dims[:status] }).to eq(%w[schema_violation ok])
+      events.each do |event|
+        expect(event.dims).to include(model: "structured-model", profile: :structured,
+                                      provider: :openai_compatible, prompt_id: "extract", prompt_version: 3,
+                                      experiment_id: "test-experiment", experiment_arm: "variant")
+        usage = event.measures
+        expect(usage[:cost_usd]).to eq((usage[:input_tokens] * 2.0 + usage[:output_tokens] * 10.0) / 1_000_000.0)
+      end
+      expect(charges).to eq(events.map { |event| [:llm_usd, event.measures[:cost_usd]] })
+      expect(response.usage).to have_attributes(calls: 2, cost_usd: charges.sum(&:last),
+                                               input_tokens: events.sum { |event| event.measures[:input_tokens] },
+                                               output_tokens: events.sum { |event| event.measures[:output_tokens] })
+      expect(execution_budget.snapshot[:admitted_calls]).to eq(2)
+      expect(execution_budget.usage).to have_attributes(calls: 2, total_tokens: response.usage.total_tokens,
+                                                        cost_usd: response.usage.cost_usd)
     end
 
-    it "raises SchemaViolation when the model never complies" do
-      fake_llm.respond_with("not json at all", "still not json", "nope")
+    it "charges and records both responses when repair still violates the schema" do
+      fake_llm.respond_with("not json at all", "still not json")
 
-      expect { described_class.complete("x", schema: schema) }
-        .to raise_error(Agentkit::SchemaViolation, /failed schema/)
+      expect do
+        with_context(budget: budget) { described_class.complete("x", schema: schema) }
+      end.to raise_error(Agentkit::SchemaViolation, /failed schema/) { |error| expect(error.raw).to eq("still not json") }
+
+      expect(llm_calls).to eq(2)
+      events = emitted("llm.call")
+      expect(events.map { |event| event.dims[:status] }).to eq(%w[schema_violation schema_violation])
+      expect(charges).to eq(events.map { |event| [:llm_usd, event.measures[:cost_usd]] })
+      expect(charges.map(&:last)).to all(be > 0)
+    end
+
+    it "records usage when an invalid response exhausts the budget before repair" do
+      execution_budget = Agentkit::ExecutionBudget.new(max_tokens: 1)
+      fake_llm.respond_with("not json at all")
+
+      expect do
+        with_context(budget: execution_budget) { described_class.complete("x", schema: schema) }
+      end.to raise_error(Agentkit::BudgetExceeded)
+
+      expect(llm_calls).to eq(1)
+      events = emitted("llm.call")
+      expect(events.size).to eq(1)
+      expect(events.first.dims).to include(status: "error", error_class: "Agentkit::BudgetExceeded")
+      expect(events.first.measures[:cost_usd]).to eq(execution_budget.usage.cost_usd)
+      expect(execution_budget.usage.calls).to eq(1)
+    end
+
+    it "admits the repair as a separate request under the execution budget" do
+      execution_budget = Agentkit::ExecutionBudget.new(max_turns: 1)
+      fake_llm.respond_with("not json at all")
+
+      expect do
+        with_context(budget: execution_budget) { described_class.complete("x", schema: schema) }
+      end.to raise_error(Agentkit::BudgetExceeded)
+
+      expect(llm_calls).to eq(1)
+      expect(emitted("llm.call").map { |event| event.dims[:status] }).to eq(["schema_violation"])
+      expect(execution_budget.usage.calls).to eq(1)
     end
 
     # `object` accepted a block from the start; `array` did not, silently —

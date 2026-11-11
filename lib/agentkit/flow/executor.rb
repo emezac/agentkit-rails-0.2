@@ -11,9 +11,8 @@ module Agentkit
     #            SUSPENDS at a join or a gate instead of blocking a worker.
     #
     # Both re-walk the graph from the top on every entry: completed steps replay
-    # from their persisted output instead of executing again. That is what makes
-    # a run resumable from any crash point — the executor holds no state that
-    # isn't in the database.
+    # from their persisted output instead of executing again. Pending steps can
+    # be claimed on resume. Running steps may still have an effect in flight.
     class Executor
       # Raised internally to stop the walk. Never escapes `call`.
       class Suspended < FlowError
@@ -43,15 +42,20 @@ module Agentkit
       def async? = @mode == :async
 
       def call
-        store.update_run(run, status: "running", started_at: run.started_at || Time.now)
+        return terminal_result unless store.update_active_run(run, status: "running", started_at: run.started_at || Time.now)
+
         Telemetry.emit("flow.run.started", dims: { flow: run.flow_name, version: run.flow_version })
 
+        check_run!
         execute_nodes(definition.nodes)
+        check_run!
         finish(:completed)
       rescue Suspended => e
         suspend_run(e)
       rescue RunCancelled
         finish(:cancelled)
+      rescue RunTimedOut => e
+        finish(:timed_out, error: e)
       rescue StepFailed => e
         handle_failure(e)
       end
@@ -65,8 +69,7 @@ module Agentkit
       end
 
       def execute_node(node, iteration: nil)
-        raise RunCancelled if run.status == "cancelled"
-        raise RunTimedOut, "run deadline exceeded" if run.timed_out?
+        check_run!
 
         Telemetry.emit("flow.transition",
                        dims: { flow: run.flow_name, node: node.name, kind: node.kind, phase: "entered" },
@@ -85,6 +88,11 @@ module Agentkit
         end
       end
 
+      def check_run!
+        raise RunCancelled if run.status == "cancelled"
+        raise RunTimedOut, "run deadline exceeded" if run.timed_out?
+      end
+
       # ─── step ────────────────────────────────────────────────────────────────
 
       def run_step(node, iteration)
@@ -94,15 +102,14 @@ module Agentkit
                   (node.max_repairs.zero? ? node.repair.nil? : node.repair.respond_to?(:call))
           raise FlowDefinitionError, "step `#{node.name}` has an invalid acceptance contract" unless valid
         end
-        return skip(node, iteration) unless passes_guard?(node)
-
-        step, fresh = checkout(node, iteration)
-        return replay(node, step) unless fresh
-
-        input = resolve_input(node.input_fn)
+        step, claimed = checkout_claimed(node, iteration)
+        return replay(node, step) unless claimed
 
         result =
           begin
+            return mark_skipped(node, step) unless passes_guard?(node)
+
+            input = resolve_input(node.input_fn)
             with_retries(node, step) { invoke(node, input) }
           rescue StepFailed => e
             raise unless node.respond_to?(:tolerant?) && node.tolerant?
@@ -111,6 +118,10 @@ module Agentkit
                            dims: { flow: run.flow_name, step: node.name },
                            measures: { count: 1 })
             Result.err(e.cause_error || e, tolerated: true)
+          rescue RunCancelled, RunTimedOut, Suspended
+            raise
+          rescue StandardError => e
+            Result.err(e)
           end
 
         return tolerate(node, step, result) if result.err? && node.respond_to?(:tolerant?) && node.tolerant?
@@ -130,6 +141,7 @@ module Agentkit
         repairs = 0
 
         loop do
+          check_run!
           digest = Harness.digest(Coder.encode(candidate.value))
           fail_acceptance!(node, step, "duplicate_candidate") if rejected.include?(digest)
 
@@ -159,6 +171,7 @@ module Agentkit
                                                 measures: { repairs: repairs })
           fail_acceptance!(node, step, "acceptance_failed") if repairs >= node.max_repairs
 
+          check_run!
           repairs += 1
           replacement = begin
             node.repair.call(candidate.value, flow_ctx, repairs, reason_code)
@@ -203,10 +216,11 @@ module Agentkit
       # A tolerated failure completes the step with a null value so downstream
       # guards can see it, instead of unwinding the run.
       def tolerate(node, step, result)
+        tolerated = Result.ok(nil, tolerated: true, error: result.error.to_s)
         store.update_step(step, status: "failed", finished_at: Time.now,
                                 error: result.error.to_s,
-                                output: { "result" => Coder.dump(Result.ok(nil), store: store) })
-        flow_ctx.set(node.name, Result.ok(nil, tolerated: true, error: result.error.to_s))
+                                output: { "result" => Coder.dump(tolerated, store: store) })
+        flow_ctx.set(node.name, tolerated)
         emit_step(node, step, result)
         flow_ctx[node.name]
       end
@@ -219,8 +233,8 @@ module Agentkit
       def run_parallel(node, iteration)
         return skip(node, iteration) unless passes_guard?(node)
 
-        barrier, fresh = checkout(node, iteration, kind: "parallel")
-        return replay_fanout(node, barrier) unless fresh
+        barrier, claimed = checkout_claimed(node, iteration, kind: "parallel")
+        return replay_fanout(node, barrier) unless claimed
 
         branches = resolve_branches(node)
         payload  = resolve_input(node.with_fn)
@@ -312,8 +326,8 @@ module Agentkit
         end
 
         results = flow_ctx[node.target] || rebuild_results(barrier)
-        step, fresh = checkout(node, iteration, kind: "join")
-        return replay(node, step) unless fresh
+        step, claimed = checkout_claimed(node, iteration, kind: "join")
+        return replay(node, step) unless claimed
 
         outcome = evaluate_join(node, results)
         Telemetry.emit("flow.join.resolve",
@@ -345,8 +359,8 @@ module Agentkit
       def run_map(node, iteration)
         return skip(node, iteration) unless passes_guard?(node)
 
-        barrier, fresh = checkout(node, iteration, kind: "map")
-        return replay_fanout(node, barrier) unless fresh
+        barrier, claimed = checkout_claimed(node, iteration, kind: "map")
+        return replay_fanout(node, barrier) unless claimed
 
         items   = Array(resolve_input(node.over))
         batches = node.batch_size > 1 ? items.each_slice(node.batch_size).to_a : items
@@ -388,8 +402,8 @@ module Agentkit
         source = raw.is_a?(Result) && raw.ok? && raw.value.is_a?(StepResults) ? raw.value : raw
         raise FlowError, "reduce `#{node.name}` found no map results for `#{node.target}`" if source.nil?
 
-        step, fresh = checkout(node, iteration, kind: "reduce")
-        return replay(node, step) unless fresh
+        step, claimed = checkout_claimed(node, iteration, kind: "reduce")
+        return replay(node, step) unless claimed
 
         values = source.values
         level  = 0
@@ -408,21 +422,32 @@ module Agentkit
 
       def run_loop(node)
         iterations = 0
+        converged = false
         node.max.times do |i|
           iterations = i + 1
           execute_nodes(node.body, iteration: iterations)
-          break if node.until_fn && truthy?(node.until_fn.call(flow_ctx))
+          check_run!
+          converged = node.until_fn && truthy?(node.until_fn.call(flow_ctx))
+          break if converged
         end
-        flow_ctx.set(node.name, Result.ok(iterations: iterations, converged: iterations < node.max))
-        Telemetry.emit("flow.loop", dims: { flow: run.flow_name, step: node.name },
+        reason = converged ? :condition_met : :max_iterations
+        summary = { iterations: iterations, converged: !!converged, reason: reason }
+        Telemetry.emit("flow.loop", dims: { flow: run.flow_name, step: node.name, reason: reason },
                                     measures: { iterations: iterations })
+        if node.until_fn && !converged
+          error = LoopLimitReached.new("loop `#{node.name}` did not converge after #{iterations} iterations", step: node.name)
+          flow_ctx.set(node.name, Result.err(error, value: summary, **summary))
+          raise error
+        end
+
+        flow_ctx.set(node.name, Result.ok(summary, **summary))
       end
 
       # ─── race ────────────────────────────────────────────────────────────────
 
       def run_race(node, iteration)
-        step, fresh = checkout(node, iteration, kind: "race")
-        return replay(node, step) unless fresh
+        step, claimed = checkout_claimed(node, iteration, kind: "race")
+        return replay(node, step) unless claimed
 
         payload = resolve_input(node.with_fn)
         winner  = nil
@@ -478,8 +503,8 @@ module Agentkit
       # ─── sub flow ────────────────────────────────────────────────────────────
 
       def run_sub_flow(node, iteration)
-        step, fresh = checkout(node, iteration, kind: "sub_flow")
-        return replay(node, step) unless fresh
+        step, claimed = checkout_claimed(node, iteration, kind: "sub_flow")
+        return replay(node, step) unless claimed
 
         input  = resolve_input(node.input_fn) || {}
         result = node.flow.call(**(input.is_a?(Hash) ? input : { value: input }),
@@ -495,6 +520,11 @@ module Agentkit
                                        kind: kind || node.kind, position: next_position, **attrs)
       end
 
+      def checkout_claimed(node, iteration, kind: nil)
+        step, = checkout(node, iteration, kind: kind)
+        [step, !step.settled? && store.claim_step(step)]
+      end
+
       def step_key(node, iteration)
         iteration ? "#{node.name}:#{iteration}" : node.name.to_s
       end
@@ -503,10 +533,16 @@ module Agentkit
         run.steps_named(name).find { |s| %w[parallel map].include?(s.kind) }
       end
 
-      # A step that already exists is a replay: reuse its recorded output rather
-      # than running the body again.
+      # Only settled checkpoints can supply a result. A duplicate delivery can
+      # arrive while the original worker is still executing the step.
       def replay(node, step)
-        value = decode_output(step)
+        raise Suspended.new(:waiting_step, node.name) unless step.settled?
+
+        value = step.status == "skipped" ? Result.ok(nil, skipped: true) : decode_output(step)
+        if value.err? || %w[timed_out cancelled].include?(step.status) || (step.failed? && step.raw_result.nil?)
+          raise StepFailed.new(value.error&.to_s || step.error || "step `#{node.name}` #{step.status}",
+                               step: node.name, cause_error: value.error)
+        end
         if node.is_a?(Nodes::StepNode) && node.accept && step.completed?
           evidence = step.output["acceptance"] || step.output[:acceptance]
           expected = "#{run.flow_name}:#{run.flow_version}:#{node.name}"
@@ -517,7 +553,7 @@ module Agentkit
             fail_acceptance!(node, step, "acceptance_evidence_mismatch")
           end
         end
-        flow_ctx.set(node.name, value) unless flow_ctx.key?(node.name)
+        flow_ctx.set(node.name, value)
         Telemetry.emit("flow.step.replayed", dims: { flow: run.flow_name, step: node.name })
         Telemetry.emit("flow.rework", dims: { flow: run.flow_name, step: node.name, cause: "replay" },
                                       measures: { count: 1 })
@@ -528,6 +564,8 @@ module Agentkit
       # Replaying a fan-out rebuilds the StepResults from the children rows, so a
       # resumed run sees exactly what the original walk saw.
       def replay_fanout(node, barrier)
+        raise Suspended.new(:waiting_step, node.name) unless barrier.settled? || barrier.pending_count
+
         results = rebuild_results(barrier)
         key     = node.respond_to?(:as) ? node.as : node.name
         flow_ctx.set(key, results)
@@ -554,8 +592,14 @@ module Agentkit
       alias decode_output decode_result
 
       def skip(node, iteration)
-        step, fresh = checkout(node, iteration)
-        store.update_step(step, status: "skipped", finished_at: Time.now) if fresh
+        step, claimed = checkout_claimed(node, iteration)
+        return replay(node, step) unless claimed
+
+        mark_skipped(node, step)
+      end
+
+      def mark_skipped(node, step)
+        store.update_step(step, status: "skipped", finished_at: Time.now)
         flow_ctx.set(node.name, Result.ok(nil, skipped: true))
         Telemetry.emit("flow.step.skipped", dims: { flow: run.flow_name, step: node.name })
         nil
@@ -568,12 +612,11 @@ module Agentkit
         tries    = 0
 
         begin
+          check_run!
           tries += 1
           started = monotonic
           result  = yield
           step.record_attempt(duration_ms: ((monotonic - started) * 1000).round)
-          raise StepFailed.new(result.error.to_s, step: node.name, cause_error: result.error) if result.err? && !result.retryable?
-
           if result.err? && result.retryable? && tries < attempts
             sleep(backoff(tries, spec))
             raise Retry
@@ -582,7 +625,7 @@ module Agentkit
         rescue Retry
           retry
         rescue StandardError => e
-          raise if e.is_a?(StepFailed) || e.is_a?(Suspended) || e.is_a?(RunCancelled)
+          raise if [StepFailed, Suspended, RunCancelled, RunTimedOut].any? { |type| e.is_a?(type) }
 
           step.record_attempt(error: e)
           if tries < attempts && on.any? { |k| e.is_a?(k) }
@@ -681,22 +724,34 @@ module Agentkit
 
       # ─── finish / suspend / compensate ───────────────────────────────────────
 
-      def finish(status)
+      def finish(status, error: nil)
         last   = flow_ctx.last
         output = last.respond_to?(:value) ? last&.value : last
-        store.update_run(run, status: status.to_s, finished_at: Time.now,
-                              output: { "result" => Coder.dump(last, store: store) },
-                              error: status == :completed ? nil : run.error)
+        stored_error = error ? { message: error.message } : (status == :completed ? nil : run.error)
+        saved = store.update_active_run(run, status: status.to_s, finished_at: Time.now,
+          output: { "result" => Coder.dump(last, store: store) }, error: stored_error)
+        return terminal_result unless saved
+
         Telemetry.emit("flow.run.#{status}",
                        dims: { flow: run.flow_name, version: run.flow_version },
                        measures: { steps: run.steps.size, cost_usd: run.cost_usd.to_f,
                                    duration_ms: run.started_at ? ((Time.now - run.started_at) * 1000).round : 0 })
-        status == :completed ? Result.ok(output, usage: flow_ctx.usage) : Result.err(FlowError.new(status.to_s))
+        status == :completed ? Result.ok(output, usage: flow_ctx.usage) : Result.err(error || run.failure)
+      end
+
+      def terminal_result
+        return Result.err(run.failure) unless run.ok?
+
+        value = Coder.load(run.output["result"] || run.output[:result], store: store)
+        value.is_a?(Result) ? value : Result.ok(value)
       end
 
       def suspend_run(suspension)
-        status = suspension.reason == :waiting_human ? "waiting_human" : "waiting_join"
-        store.update_run(run, status: status)
+        return finish(:timed_out, error: RunTimedOut.new("run deadline exceeded")) if run.timed_out?
+
+        if suspension.reason != :waiting_step
+          return terminal_result unless store.update_active_run(run, status: suspension.reason.to_s)
+        end
         Telemetry.emit("flow.run.suspended",
                        dims: { flow: run.flow_name, step: suspension.step_name, reason: suspension.reason })
 
@@ -710,12 +765,14 @@ module Agentkit
 
       # Saga: undo completed steps in reverse order.
       def handle_failure(error)
-        store.update_run(run, status: "failed", error: { message: error.message },
-                              finished_at: Time.now)
+        compensate = definition.compensations.any?
+        saved = store.update_active_run(run, status: compensate ? "compensating" : "failed",
+          error: { message: error.message, step: error.step }, finished_at: compensate ? nil : Time.now)
+        return terminal_result unless saved
+
         definition.error_handlers.each { |h| safely { h.call(flow_ctx, error) } }
 
-        if definition.compensations.any?
-          store.update_run(run, status: "compensating")
+        if compensate
           @completed.reverse_each do |(node, _step)|
             comp = definition.compensations[node.name]
             next if comp.nil?
@@ -723,7 +780,7 @@ module Agentkit
             safely { comp.call(flow_ctx) }
             Telemetry.emit("flow.compensated", dims: { flow: run.flow_name, step: node.name })
           end
-          store.update_run(run, status: "compensated")
+          store.update_active_run(run, status: "compensated", finished_at: Time.now)
         end
 
         Telemetry.emit("flow.run.failed",

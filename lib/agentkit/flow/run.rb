@@ -8,6 +8,7 @@ module Agentkit
     class Run
       STATUSES = %w[pending running waiting_join waiting_human completed failed
                     compensating compensated cancelled timed_out].freeze
+      FINISHED_STATUSES = %w[completed failed compensated cancelled timed_out].freeze
 
       attr_accessor :id, :flow_name, :flow_version, :run_id, :status, :input, :output,
                     :context, :idempotency_key, :account_id, :user_id, :tenant_key,
@@ -38,13 +39,19 @@ module Agentkit
       def children_of(parent_id) = @steps.select { |s| s.parent_step_id == parent_id }
 
       def running?   = status == "running"
-      def finished?  = %w[completed failed compensated cancelled timed_out].include?(status)
+      def finished?  = FINISHED_STATUSES.include?(status)
       def waiting?   = %w[waiting_join waiting_human].include?(status)
       def ok?        = status == "completed"
 
       def cancel! = @status = "cancelled"
 
       def timed_out?(now = Time.now) = !deadline_at.nil? && deadline_at < now
+
+      def failure
+        type = status == "timed_out" ? RunTimedOut : FlowError
+        message = error.is_a?(Hash) ? error[:message] || error["message"] || error[:reason] || error["reason"] : error
+        type.new(message || status)
+      end
 
       def to_h
         { id: id, run_id: run_id, flow: flow_name, version: flow_version, status: status,
@@ -57,6 +64,7 @@ module Agentkit
     # makes a redelivered job a no-op instead of a double execution.
     class RunStep
       STATUSES = %w[pending running completed failed skipped timed_out cancelled].freeze
+      SETTLED_STATUSES = %w[completed failed skipped timed_out cancelled].freeze
 
       attr_accessor :id, :run_id, :step_key, :step_name, :kind, :status, :position,
                     :parent_step_id, :pending_count, :input, :output, :attempts,
@@ -74,7 +82,7 @@ module Agentkit
 
       def completed? = status == "completed"
       def failed?    = status == "failed"
-      def settled?   = %w[completed failed skipped timed_out cancelled].include?(status)
+      def settled?   = SETTLED_STATUSES.include?(status)
 
       # Decoded value of the step. `output` holds the wire format (see
       # Flow::Coder); nobody outside the executor should have to know that.
@@ -170,6 +178,16 @@ module Agentkit
           run
         end
 
+        def update_active_run(run, **attrs)
+          @mutex.synchronize do
+            recording_cancellation = attrs[:status] == "cancelled" && run.status == "cancelled" && !run.finished_at
+            return false if run.finished? && !recording_cancellation
+
+            update_run(run, **attrs)
+            true
+          end
+        end
+
         def find_by_idempotency(key, tenant_key: Context.current&.tenant_key || "__global__")
           return nil if key.nil?
 
@@ -183,16 +201,32 @@ module Agentkit
         # enforced here in-process and by a unique index in SQL — it is the
         # idempotency guarantee the whole engine rests on.
         def find_or_create_step(run, step_key:, **attrs)
-          existing = run.steps.find { |s| s.step_key == step_key }
-          return [existing, false] if existing
+          @mutex.synchronize do
+            existing = run.steps.find { |s| s.step_key == step_key }
+            return [existing, false] if existing
 
-          step = RunStep.new(step_key: step_key, run_id: run.id, id: @mutex.synchronize { @steps += 1 }, **attrs)
-          run.add_step(step)
-          [step, true]
+            step = RunStep.new(step_key: step_key, run_id: run.id, id: (@steps += 1), **attrs)
+            run.add_step(step)
+            [step, true]
+          end
+        end
+
+        def claim_step(step)
+          @mutex.synchronize do
+            return false unless step.status == "pending"
+
+            step.started_at = Time.now
+            step.status = "running"
+            true
+          end
         end
 
         def update_step(step, **attrs)
-          attrs.each { |k, v| step.public_send(:"#{k}=", v) }
+          @mutex.synchronize do
+            status = attrs.delete(:status)
+            attrs.each { |k, v| step.public_send(:"#{k}=", v) }
+            step.status = status if status
+          end
           step
         end
 
@@ -202,12 +236,12 @@ module Agentkit
         # not decrement twice.
         def close_and_decrement(step, join_step, status:, output: nil)
           @mutex.synchronize do
-            return nil if step.status == "completed"
+            return nil if step.settled?
 
-            step.status      = status
             step.output      = output if output
             step.finished_at = Time.now
-            next nil if join_step.nil?
+            step.status      = status
+            next nil if join_step.nil? || !join_step.pending_count.to_i.positive?
 
             join_step.pending_count = join_step.pending_count.to_i - 1
           end
@@ -266,6 +300,19 @@ module Agentkit
           run
         end
 
+        def update_active_run(run, **attrs)
+          scope = Agentkit::RunRecord.where(id: run.id, tenant_key: run.tenant_key, account_id: run.account_id)
+          updated = scope.where.not(status: Run::FINISHED_STATUSES).update_all(attrs.merge(updated_at: Time.now))
+          if updated.positive?
+            attrs.each { |k, v| run.public_send(:"#{k}=", v) }
+            return true
+          end
+
+          row = scope.take!
+          run.status, run.error, run.finished_at, run.output = row.status, row.error, row.finished_at, row.output
+          false
+        end
+
         def find_by_idempotency(key, tenant_key: Context.current&.tenant_key || "__global__")
           return nil if key.nil?
 
@@ -295,28 +342,39 @@ module Agentkit
           step
         end
 
+        def claim_step(step)
+          scope = Agentkit::RunStepRecord.where(id: step.id, run_id: step.run_id)
+          now = Time.now
+          updated = scope.where(status: "pending").update_all(status: "running", started_at: now, updated_at: now)
+          if updated.positive?
+            step.status, step.started_at = "running", now
+            return true
+          end
+
+          row = scope.take!
+          step.status, step.output, step.error = row.status, row.output, row.error
+          false
+        end
+
         def close_and_decrement(step, join_step, status:, output: nil)
-          closed = Agentkit::RunStepRecord
-                   .where(id: step.id).where.not(status: "completed")
-                   .update_all(status: status, output: output || {}, finished_at: Time.now)
-          return nil if closed.zero?   # redelivery: someone already closed it
+          now = Time.now
+          Agentkit::RunStepRecord.transaction do
+            closed = Agentkit::RunStepRecord
+                     .where(id: step.id).where.not(status: RunStep::SETTLED_STATUSES)
+                     .update_all(status: status, output: output || {}, finished_at: now)
+            next if closed.zero? # Already closed or cancelled by a timeout.
 
-          step.status      = status
-          step.output      = output if output
-          step.finished_at = Time.now
-          return nil if join_step.nil?
+            step.status, step.output, step.finished_at = status, output || {}, now
+            next if join_step.nil?
 
-          remaining = Agentkit::RunStepRecord.connection.select_value(
-            Agentkit::RunStepRecord.sanitize_sql_array(
-              ["UPDATE agentkit_run_steps SET pending_count = pending_count - 1 " \
-               "WHERE id = ? RETURNING pending_count", join_step.id]
+            remaining = Agentkit::RunStepRecord.connection.select_value(
+              Agentkit::RunStepRecord.sanitize_sql_array(
+                ["UPDATE agentkit_run_steps SET pending_count = pending_count - 1 " \
+                 "WHERE id = ? AND pending_count > 0 RETURNING pending_count", join_step.id]
+              )
             )
-          ).to_i
-
-          # The caller holds an in-memory copy of the barrier; without this the
-          # join reads a stale count and waits for branches that already closed.
-          join_step.pending_count = remaining
-          remaining
+            join_step.pending_count = remaining.to_i unless remaining.nil?
+          end
         end
 
         private
@@ -342,7 +400,7 @@ module Agentkit
             status: run.status, input: run.input, context: run.context,
             idempotency_key: run.idempotency_key, account_id: run.account_id,
             user_id: run.user_id, tenant_key: run.tenant_key, deadline_at: run.deadline_at,
-            started_at: run.started_at }
+            started_at: run.started_at, steps_total: run.steps_total }
         end
 
         def wrap(row)
@@ -354,7 +412,8 @@ module Agentkit
                         idempotency_key: row.idempotency_key, tenant_key: row.tenant_key,
                         account_id: row.account_id, user_id: row.user_id,
                         deadline_at: row.deadline_at, started_at: row.started_at,
-                        finished_at: row.finished_at, cost_usd: row.cost_usd)
+                        finished_at: row.finished_at, error: row.error, cost_usd: row.cost_usd,
+                        steps_total: row.steps_total, steps_completed: row.steps_completed)
           row.steps.each { |s| run.add_step(wrap_step(s)) }
           run
         end
@@ -367,7 +426,7 @@ module Agentkit
                       position: row.position, parent_step_id: row.parent_step_id,
                       pending_count: row.pending_count, input: row.input, output: row.output,
                       attempts: row.attempts, attempt_count: row.attempt_count,
-                      usage: row.usage, started_at: row.started_at, finished_at: row.finished_at)
+                      usage: row.usage, error: row.error, started_at: row.started_at, finished_at: row.finished_at)
         end
       end
     end
