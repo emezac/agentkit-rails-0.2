@@ -14,6 +14,19 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
+## Goal revisions and release candidates
+
+`Harness::GoalRevision` permite cambiar un contrato de trabajo sin mutar el
+goal original ni reinterpretar evidencia silenciosamente. Los cambios
+materiales requieren autorización del host; requisitos modificados, alcance y
+recursos protegidos invalidan evidencia con reason codes, mientras lo que sigue
+siendo aplicable se conserva por digest. `Harness::VerificationGate` vincula
+resultados deterministas a un commit completo y
+`Harness::ReleaseCandidateReceipt` falla cerrado ante evidencia faltante,
+obsoleta o producida para otro commit. El kernel no ejecuta comandos ni concede
+permiso de despliegue. Consulta la
+[guía de integración](docs/GOAL_REVISIONS_AND_RELEASE_CANDIDATES.md).
+
 ## Evidence-Grounded Memory Consolidation en 1.13.0
 
 `Memory::Consolidation` separa candidatas de notas/wikis revisadas: comprueba

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Governed immutable goal revisions with host-authorized material changes, explicit evidence/output/approval invalidation and redacted Audit receipts.
+- Deterministic verification-gate contracts and results bound to full Git commit identifiers, configuration and dependency digests.
+- Fail-closed release-candidate receipts binding completed goals, artifacts, required gates, deployment plans and rollback plans without granting deployment permission.
+- Integration guidance and focused compatibility coverage for the new opt-in lifecycle APIs.
+
 ## 1.13.0 — 2026-11-06
 
 ### Added
