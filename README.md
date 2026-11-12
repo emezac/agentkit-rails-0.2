@@ -27,6 +27,15 @@ obsoleta o producida para otro commit. El kernel no ejecuta comandos ni concede
 permiso de despliegue. Consulta la
 [guía de integración](docs/GOAL_REVISIONS_AND_RELEASE_CANDIDATES.md).
 
+`LifecycleEvent` y `LifecycleReplanner` convierten cambios de CI, revisión o
+requisitos en propuestas declarativas ligadas al goal actual; nunca aplican una
+revisión automáticamente. `LifecycleProjection` expone fases, blockers y
+evidencia invalidada sin llamadas al modelo. Los puertos opcionales
+`LifecycleAdapters::Repository`, `ContinuousIntegration` y `Deployment`
+normalizan evidencia del host para Git/CI/CD; el último sólo permite planear y
+observar, no desplegar. Consulta
+[orquestación y adaptadores](docs/LIFECYCLE_ORCHESTRATION_AND_ADAPTERS.md).
+
 ## Evidence-Grounded Memory Consolidation en 1.13.0
 
 `Memory::Consolidation` separa candidatas de notas/wikis revisadas: comprueba

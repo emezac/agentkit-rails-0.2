@@ -7,6 +7,9 @@
 - Governed immutable goal revisions with host-authorized material changes, explicit evidence/output/approval invalidation and redacted Audit receipts.
 - Deterministic verification-gate contracts and results bound to full Git commit identifiers, configuration and dependency digests.
 - Fail-closed release-candidate receipts binding completed goals, artifacts, required gates, deployment plans and rollback plans without granting deployment permission.
+- Event-driven replan proposals bound to an exact goal digest, with closed planner output and no automatic revision authority.
+- Read-only lifecycle projections covering exact blockers, work items, event counts, open replans and invalidated evidence.
+- Host-authorized repository, CI and deployment-evidence ports with full-commit binding, closed response contracts and no provider SDKs or deploy operation.
 - Integration guidance and focused compatibility coverage for the new opt-in lifecycle APIs.
 
 ## 1.13.0 — 2026-11-06
