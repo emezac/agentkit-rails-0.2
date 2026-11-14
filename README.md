@@ -1,9 +1,9 @@
-# AgentKit Rails v1.13.0
+# AgentKit Rails v1.14.0
 
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
-gem "agentkit-rails", "~> 1.13.0"
+gem "agentkit-rails", "~> 1.14.0"
 ```
 
 ```bash
@@ -35,6 +35,18 @@ evidencia invalidada sin llamadas al modelo. Los puertos opcionales
 normalizan evidencia del host para Git/CI/CD; el último sólo permite planear y
 observar, no desplegar. Consulta
 [orquestación y adaptadores](docs/LIFECYCLE_ORCHESTRATION_AND_ADAPTERS.md).
+
+## Supervised Unattended Runs en 1.14.0
+
+`Harness::UnattendedRun` coordina trabajo desatendido con contratos inmutables,
+presupuesto durable reservado por llamada, leases, verificación independiente
+ligada al commit y registro de intentos. Distingue éxito verificado, ausencia de
+trabajo, estancamiento, límites, verificación no disponible y violaciones de política.
+Los estados que requieren atención se encolan en `Operations::Escalations`.
+Requiere migraciones 024, 026 y 031. Rails aporta ejecutores aislados, timeouts
+efectivos, verificadores, scheduler y notificaciones; AgentKit no ejecuta shell,
+no hace commits/push y no despliega. Consulta la
+[guía y responsabilidades Rails](docs/SUPERVISED_UNATTENDED_RUNS.md).
 
 ## Evidence-Grounded Memory Consolidation en 1.13.0
 

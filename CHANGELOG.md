@@ -1,9 +1,14 @@
 # Changelog
 
-## Unreleased
+## 1.14.0 — 2026-11-13
 
 ### Added
 
+- Supervised unattended run contracts with PostgreSQL-backed identity, role-bound leases, immutable receipts and conservative crash handling (migration 031).
+- Durable per-call cost/token reservations including verifier calls, absolute deadlines and bounded work attempts across process restarts.
+- Independent commit/configuration/dependency-bound gate verification, explicit baseline-green policy and structured failure/progress fingerprints.
+- Distinct terminal states and atomic Operations escalation for failures, policy violations, unknown usage and expired leases; no deployment authority.
+- Host integration guide covering sandboxing, process termination, executor idempotency, accounting and human review.
 - Governed immutable goal revisions with host-authorized material changes, explicit evidence/output/approval invalidation and redacted Audit receipts.
 - Deterministic verification-gate contracts and results bound to full Git commit identifiers, configuration and dependency digests.
 - Fail-closed release-candidate receipts binding completed goals, artifacts, required gates, deployment plans and rollback plans without granting deployment permission.

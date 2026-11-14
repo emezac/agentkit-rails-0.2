@@ -1,3 +1,24 @@
+# Upgrading 1.13.0 → 1.14.0
+
+Unattended runs are opt-in. Install migration 031; migrations 024 (Journal) and
+026 (Operations escalation outbox) are also required and must share a DB pool:
+
+```sh
+rails agentkit:install:migrations
+rails db:migrate
+```
+
+Authorize Journal kind `unattended` and the Operations enqueue action for trusted
+runner identities. Configure distinct worker/verifier principals and a restricted
+operator role for start/cancel/expiry. The host must validate run contracts, enforce
+sandbox permissions, hard process deadlines and per-call spend caps, deduplicate
+executor launches, and schedule expiry/escalation dispatch. A lease is not a sandbox
+or a provider spending limit. Unknown execution does not automatically retry.
+
+Existing AgentLoop, Flow and release gates keep their behavior; no unattended job,
+new permission, repository write or automatic deployment is enabled on upgrade.
+See [Supervised Unattended Runs](docs/SUPERVISED_UNATTENDED_RUNS.md).
+
 # Optional operator workflows after 1.12.0
 
 Install migration 027 before enabling the new console pages or the routine
