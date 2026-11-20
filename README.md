@@ -475,6 +475,13 @@ declaradas, y devuelve `retain`, `recommend_review` o `needs_choice`. La
 recomendación siempre contiene `authorizes: false` y `auto_promoted: false`;
 la aplicación anfitriona conserva la decisión y el control de routing.
 
+P3 añade `Organization::CompositionPilot` para llevar una única recomendación
+P2 a un piloto durable de dos brazos. Reutiliza `Knowledge::BusinessExperiment`
+y sus garantías de aprobación independiente, cohorte elegible, cuota global,
+asignación HMAC estable, ejecución mediante `DecisionGate`, stop, resultados
+maduros y revisión final. El piloto no adopta la topología ganadora: una
+aprobación del resultado continúa siendo evidencia, no un cambio de routing.
+
 ## Governed Self-Improvement en 1.5.0
 
 `Harness::GovernedStudy` evalúa manifests con probes reales, repetidos y

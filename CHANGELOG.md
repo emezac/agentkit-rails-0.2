@@ -15,6 +15,9 @@
 - Governed `Organization::CompositionStudy` for authorized topology sets with
   disjoint training/holdout evidence, profile identity checks and deterministic
   Pareto recommendations that never activate or auto-promote a composition.
+- `Organization::CompositionPilot` adapter that binds a unique P2 candidate to
+  the durable controlled-experiment rail: independent approval, stable HMAC
+  assignment, quotas, DecisionGate execution, stop, analysis and final review.
 - Deterministic `Harness::ReadinessReport` preflight for goal bounds, tool contracts, budgets, context provenance, independent verification, rollback and protected resources.
 - Redacted, size-bounded execution receipts containing model route, usage, source/tool digests, verification evidence and artifact/rollback references without raw prompts, results or context bodies.
 - Consultative N3 Factory findings for repeated tool failures and verifier rejection loops, with no automatic intervention plan.

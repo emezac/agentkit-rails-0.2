@@ -207,3 +207,81 @@ Every recommendation is immutable, redacted, size-bounded and reports
 `authorizes: false` and `auto_promoted: false`. P2 therefore provides endogenous
 selection inside an approved experimental boundary, not autonomous team
 formation. Routing changes, agent creation and deployment remain host actions.
+
+## P3: controlled composition pilot
+
+`CompositionPilot` accepts only a P2 `recommend_review` result with one selected
+candidate. It recomputes the study recommendation to reject stale or foreign
+evidence, then binds the baseline and candidate topology digests to the mature
+`Knowledge::BusinessExperiment` rail.
+
+```ruby
+pilot = O::CompositionPilot.new(
+  study: study,
+  recommendation: recommendation,
+  version: "1",
+  unit: "account",
+  metrics: {
+    "quality" => {
+      "min" => 0, "max" => 100,
+      "direction" => "maximize", "max_harm" => 0
+    },
+    "cost_cents" => {
+      "min" => 0, "max" => 10_000,
+      "direction" => "minimize", "max_harm" => 0
+    }
+  },
+  primary_metric: "quality",
+  starts_at: 1.hour.from_now,
+  enrollment_ends_at: 2.days.from_now,
+  analysis_at: 3.days.from_now,
+  window_seconds: 86_400,
+  max_units: 100,
+  min_per_arm: 20,
+  gates: {
+    "control" => baseline_gate.digest,
+    "treatment" => candidate_gate.digest
+  },
+  measurement_versions: {
+    "quality_ledger" => "v1",
+    "cost_ledger" => "v1"
+  },
+  journal: decision_journal,
+  authorize: ->(action, context) { PilotPolicy.allowed?(action, context) },
+  eligible: ->(unit_id, context) { CanaryCohort.include?(unit_id, context) },
+  bind_unit: ->(unit_id, arguments, _context) {
+    arguments.fetch(:account_id).to_s == unit_id.to_s
+  }
+)
+
+pilot.register(context: operator_context)
+pilot.approve(reason: "bounded organizational canary", context: independent_reviewer_context)
+
+assignment = pilot.assign(unit_id: account.id.to_s, context: operator_context)
+pilot.execute(
+  unit_id: account.id.to_s,
+  gate: assignment["arm"] == "control" ? baseline_gate : candidate_gate,
+  arguments: { account_id: account.id },
+  context: operator_context
+) do |_arm, assigned_topology|
+  HostRouter.call(topology: assigned_topology, account: account)
+end
+```
+
+The underlying experiment provides durable, tenant-scoped controls already
+used elsewhere in AgentKit:
+
+- registration and approval must be performed by different principals;
+- the eligible host cohort limits the overall canary population;
+- units inside that cohort are assigned 50/50 with a committed HMAC seed;
+- the quota is serialized across workers and assignments are stable;
+- execution requires the arm's exact `DecisionGate` and is idempotent;
+- `stop` permanently blocks later assignment and execution;
+- missing outcomes remain missing and cannot silently become zero;
+- fixed-horizon analysis and final review never promote a topology.
+
+P3 requires the Rails persistence installed by migration 025 and a shared
+transactional decision journal. It intentionally requires at least 40 units
+and 20 per arm because it is an evidence-producing controlled pilot, not a
+single-request smoke test. Stopping prevents future exposure; compensating
+already committed domain effects remains the responsibility of the host gate.

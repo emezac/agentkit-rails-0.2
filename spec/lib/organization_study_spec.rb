@@ -91,7 +91,7 @@ RSpec.describe Agentkit::Harness::Organization::CompositionStudy do
     }
     training = report(topologies, phase: "training", metrics: training_metrics || defaults)
     holdout = report(topologies, phase: "holdout", metrics: holdout_metrics || defaults)
-    described_class.new(
+    Agentkit::Harness::Organization::CompositionStudy.new(
       id: "research-composition", training_report: training, holdout_report: holdout,
       profiles: profiles || profiles_for(*topologies),
       approved_topology_digests: topologies.map(&:digest), approved_by: "operator-7",
@@ -204,5 +204,92 @@ RSpec.describe Agentkit::Harness::Organization::CompositionStudy do
     expect(recommendation.blockers.fetch(pair.digest)).to include(
       "identity_mismatch:researcher:model_profile"
     )
+  end
+
+
+  describe Agentkit::Harness::Organization::CompositionPilot do
+    def pilot_options(study, recommendation)
+      now = Time.now.utc
+      {
+        study: study,
+        recommendation: recommendation,
+        version: "1",
+        unit: "account",
+        metrics: {
+          "quality" => { "min" => 0, "max" => 100,
+                         "direction" => "maximize", "max_harm" => 0 },
+          "cost_cents" => { "min" => 0, "max" => 10_000,
+                            "direction" => "minimize", "max_harm" => 0 }
+        },
+        primary_metric: "quality",
+        starts_at: (now + 60).iso8601(6),
+        enrollment_ends_at: (now + 3_600).iso8601(6),
+        analysis_at: (now + 7_200).iso8601(6),
+        window_seconds: 60,
+        max_units: 40,
+        min_per_arm: 20,
+        gates: {
+          "control" => digest.call("control-gate"),
+          "treatment" => digest.call("treatment-gate")
+        },
+        measurement_versions: { "quality_ledger" => "v1", "cost_ledger" => "v1" },
+        journal: Object.new,
+        authorize: ->(*) { true },
+        eligible: ->(*) { true },
+        bind_unit: ->(*) { true }
+      }
+    end
+
+    it "binds the P2 evidence to a durable two-arm pilot without promoting it" do
+      study = build_study
+      recommendation = study.recommend
+
+      pilot = described_class.new(**pilot_options(study, recommendation))
+
+      expect(pilot.protocol.fetch("variants").dig("control", "topology_digest"))
+        .to eq(baseline.digest)
+      expect(pilot.protocol.fetch("variants").dig("treatment", "topology_digest"))
+        .to eq(pair.digest)
+      expect(pilot.protocol.fetch("evidence_versions")).to include(
+        "composition_study" => study.digest,
+        "composition_recommendation" => recommendation.digest
+      )
+      expect(pilot.to_h).to include("auto_promoted" => false, "authorizes" => false)
+      expect(emitted("llm.call")).to be_empty
+    end
+
+    it "refuses to pilot a retained or ambiguous recommendation" do
+      holdout = {
+        "solo" => { quality: 0.6, cost: 0.1, latency: 200 },
+        "pair" => { quality: 0.8, cost: 0.2, latency: 180 }
+      }
+      study = build_study(holdout_metrics: holdout)
+
+      expect do
+        described_class.new(**pilot_options(study, study.recommend))
+      end.to raise_error(Agentkit::PolicyDenied, /reviewable P2 candidate/)
+    end
+
+    it "resolves only the assigned approved topology inside gated execution" do
+      study = build_study
+      recommendation = study.recommend
+      fake_experiment = instance_double(Agentkit::Knowledge::BusinessExperiment)
+      allow(Agentkit::Knowledge::BusinessExperiment).to receive(:new).and_return(fake_experiment)
+      allow(fake_experiment).to receive(:execute)
+        .and_yield("treatment", { "topology_digest" => pair.digest })
+      pilot = described_class.new(**pilot_options(study, recommendation))
+      received = nil
+
+      result = pilot.execute(
+        unit_id: "account-1", gate: Object.new,
+        arguments: { account_id: 1 }, context: context
+      ) do |arm, assigned_topology|
+        received = [arm, assigned_topology]
+        :host_result
+      end
+
+      expect(result).to eq(:host_result)
+      expect(received).to eq(["treatment", pair])
+    end
   end
 end
