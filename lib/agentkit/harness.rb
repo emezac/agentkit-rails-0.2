@@ -394,7 +394,10 @@ module Agentkit
         touch!
       end
 
-      def evaluate!
+      # Evaluate completion gates without changing the durable progress state.
+      # Receipts, dashboards and readiness checks use this snapshot so merely
+      # observing a run can never complete it.
+      def evaluate
         required = goal.criteria.select(&:required?)
         required_constraints = goal.constraints.select(&:required?)
         missing = missing_ids(required)
@@ -411,7 +414,21 @@ module Agentkit
         gates_satisfied = unverified.empty? && missing_outputs.empty? && missing_approvals.empty?
         complete = gates_satisfied && status != "failed"
 
-        if complete
+        Evaluation.new(
+          complete: complete, status: complete ? "completed" : status, missing_criteria: missing,
+          failed_criteria: failed, unresolved_criteria: unresolved,
+          missing_constraints: missing_constraints,
+          failed_constraints: failed_constraints,
+          unresolved_constraints: unresolved_constraints,
+          missing_outputs: missing_outputs, missing_approvals: missing_approvals,
+          step_count: step_count, max_steps: goal.max_steps
+        )
+      end
+
+      def evaluate!
+        report = evaluate
+
+        if report.complete?
           prior_status = @status
           @status = "completed"
           @next_action = nil
@@ -430,15 +447,7 @@ module Agentkit
           end
         end
 
-        Evaluation.new(
-          complete: complete, status: status, missing_criteria: missing,
-          failed_criteria: failed, unresolved_criteria: unresolved,
-          missing_constraints: missing_constraints,
-          failed_constraints: failed_constraints,
-          unresolved_constraints: unresolved_constraints,
-          missing_outputs: missing_outputs, missing_approvals: missing_approvals,
-          step_count: step_count, max_steps: goal.max_steps
-        )
+        report
       end
 
       def complete!

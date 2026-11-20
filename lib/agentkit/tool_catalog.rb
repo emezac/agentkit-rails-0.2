@@ -74,6 +74,23 @@ module Agentkit
     def names = schemas.map { |schema| schema.fetch("name") }
     def exposed_names = @exposed.keys.dup
 
+    # Redacted contract provenance for receipts. This intentionally excludes
+    # schemas, arguments and results; the immutable digest is sufficient to
+    # identify exactly which contract was offered or executed.
+    def contract_receipts(names = exposed_names)
+      Harness.deep_freeze(Array(names).map(&:to_s).uniq.filter_map do |name|
+        entry = entries[name]
+        next unless entry
+
+        integrity!(entry)
+        tool = entry.fetch(:tool)
+        {
+          "name" => name, "contract_digest" => entry.fetch(:digest),
+          "risk" => tool.risk.to_s, "effect" => tool.effect.to_s
+        }
+      end)
+    end
+
     def fetch_exposed!(name, offered:)
       entry = @exposed[name.to_s]
       unless offered.include?(name.to_s) && entry && permitted?(entry[:tool])

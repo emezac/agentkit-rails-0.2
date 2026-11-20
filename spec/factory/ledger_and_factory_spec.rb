@@ -206,6 +206,43 @@ RSpec.describe Agentkit::Factory do
       gap = findings.find { |f| f.detector == "capability_gap" }
       expect(gap.severity).to eq(:high)
     end
+
+    it "surfaces repeated tool failures for policy review without proposing a change" do
+      3.times do
+        Agentkit::Telemetry.emit("tool.execute",
+          dims: { tool: "crm_lookup", status: :error, category: :transient }, measures: { attempts: 1 })
+      end
+      2.times do
+        Agentkit::Telemetry.emit("tool.execute",
+          dims: { tool: "crm_lookup", status: :ok }, measures: { attempts: 1 })
+      end
+
+      finding = described_class.diagnose!(window: 86_400)
+                               .find { |item| item.detector == "tool_failure_loop" }
+
+      expect(finding).not_to be_nil
+      expect(finding.suggested_level).to eq(:n3)
+      expect(finding.evidence).to include(failures: 3, attempts: 5, rate: 0.6)
+      expect(described_class.suggest_interventions!([finding])).to eq([])
+    end
+
+    it "surfaces a repeated verifier rejection loop as a consultative finding" do
+      3.times do
+        Agentkit::Telemetry.emit("harness.verification",
+          dims: { verifier: "release-auditor", accepted: false }, measures: { accepted: false })
+      end
+      2.times do
+        Agentkit::Telemetry.emit("harness.verification",
+          dims: { verifier: "release-auditor", accepted: true }, measures: { accepted: true })
+      end
+
+      finding = described_class.diagnose!(window: 86_400)
+                               .find { |item| item.detector == "verification_rejection_loop" }
+
+      expect(finding).not_to be_nil
+      expect(finding.suggested_level).to eq(:n3)
+      expect(finding.evidence).to include(rejections: 3, reviews: 5, rate: 0.6)
+    end
   end
 
   describe "promotion criteria" do

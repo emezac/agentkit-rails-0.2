@@ -691,6 +691,13 @@ receipt = Agentkit::Harness::Receipt.build(progress, risks: ["rollout latency"])
 Agentkit::Harness::Metrics.summary(goal_id: goal.id, context: Agentkit.context)
 ```
 
+Para inspección y operación, `progress.evaluate` no muta el estado;
+`Harness::ReadinessReport` valida contratos, presupuesto, procedencia,
+verificador y rollback antes de ejecutar; y `Receipt.execution` produce un
+recibo acotado sin prompts, respuestas ni cuerpos privados. La
+[guía de readiness y recibos](docs/EXECUTION_RECEIPTS_AND_READINESS.md) incluye
+el contrato completo y sus límites.
+
 `RecoveryPolicy` aporta una taxonomía compartida (`timeout`, `rate_limited`,
 `missing_context`, `permission_denied`, `ambiguous_effect`, etc.) y detiene
 errores repetidos sin cambio. Los checkpoints 1.2 se leen y se actualizan al

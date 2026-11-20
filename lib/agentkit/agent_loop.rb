@@ -6,7 +6,9 @@ module Agentkit
   class AgentLoop
     Outcome = Struct.new(:content, :stop_reason, :usage, :turns, :loaded_skills,
                          :exposed_tools, :evidence_refs, :transcript_digest,
-                         :budget, :error_code, :parsed, keyword_init: true) do
+                         :budget, :error_code, :parsed, :model_route,
+                         :context_sources, :tool_contracts, :verifier_rejections,
+                         keyword_init: true) do
       def answered? = stop_reason == "answered"
       def to_h = members.to_h { |key| [key, key == :usage ? usage.to_h : public_send(key)] }
     end
@@ -65,7 +67,12 @@ module Agentkit
       @catalog = ToolCatalog.new(tools: (explicit_tools + @skills.tools).uniq,
         context: @context, settings: @settings, policies: state[:policies], authorize: tool_authorizer)
       @catalog.activate!(Array(eager_tools).map(&:to_s))
-      @profile = ModelRouter.profile_for(model || agent.send(:default_model) || :default).with
+      selected_model = model || agent.send(:default_model) || :default
+      @profile = ModelRouter.profile_for(selected_model).with
+      @model_route = Harness.deep_freeze({
+        "profile" => route_name(selected_model), "model" => @profile.model.to_s,
+        "provider" => @profile.provider&.to_s
+      }.compact)
       if @profile.max_tokens && (!@profile.max_tokens.is_a?(Integer) || @profile.max_tokens <= 0)
         raise ConfigurationError, "model max_tokens must be a positive integer"
       end
@@ -86,6 +93,7 @@ module Agentkit
         @used = true
       end
       @messages, @evidence, @seen_calls, @turns, @rejections = [], [], [], 0, 0
+      @tool_attempts = Hash.new(0)
       @prompt = prompt.to_s
       Agentkit.with_context(@context) do
         @task_summary ||= @prompt.each_char.take(200).join if @task_id
@@ -300,7 +308,11 @@ module Agentkit
                   end
         else
           tool = @catalog.fetch_exposed!(name, offered: offered)
+          @mutex.synchronize { @tool_attempts[name] += 1 }
           execution = tool.invoke(args, context: @context)
+          if execution.attempts > 1
+            @mutex.synchronize { @tool_attempts[name] += execution.attempts - 1 }
+          end
           raw = execution.result
           raw = raw.value! if raw.is_a?(Result)
           value = Harness::DeclarativeData.normalize(raw, label: "tool result", error_class: AgentLoopProtocolError)
@@ -341,11 +353,16 @@ module Agentkit
     end
 
     def finish(reason, content: nil, error_code: nil, parsed: nil)
+      tool_contracts = @catalog.contract_receipts(@tool_attempts.keys).map do |contract|
+        contract.merge("attempts" => @tool_attempts.fetch(contract.fetch("name"))).freeze
+      end.freeze
       outcome = Outcome.new(content: content, stop_reason: reason, usage: @budget.usage,
         turns: @turns, loaded_skills: @skills.loaded_names, exposed_tools: @catalog.exposed_names.freeze,
         evidence_refs: @evidence.dup.sort.freeze, transcript_digest: Harness.digest(@messages),
         budget: @budget.snapshot, error_code: error_code,
-        parsed: parsed && Harness.deep_freeze(parsed)).freeze
+        parsed: parsed && Harness.deep_freeze(parsed), model_route: @model_route,
+        context_sources: @skills.source_receipts, tool_contracts: tool_contracts,
+        verifier_rejections: @rejections).freeze
       Audit.record(event_type: "agent_loop.completed", agent_name: @agent.class.name, status: reason,
                    usage: outcome.usage, context: @context,
                    payload: { transcript_digest: outcome.transcript_digest, stop_reason: reason,
@@ -359,6 +376,13 @@ module Agentkit
                      measures: { turns: @turns, input_tokens: outcome.usage.input_tokens,
                                  output_tokens: outcome.usage.output_tokens, cost_usd: outcome.usage.cost_usd })
       outcome
+    end
+
+    def route_name(selected)
+      return selected.to_s if selected.is_a?(Symbol)
+      return "ad_hoc" if selected.is_a?(String)
+
+      "inline"
     end
   end
 

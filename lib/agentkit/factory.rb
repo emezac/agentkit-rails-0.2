@@ -911,6 +911,38 @@ module Agentkit
           { subject: "flow", summary: "#{(rate * 100).round}% of joins time out or wait", rate: rate }
         end
 
+        # Repeated failures are surfaced as policy-level findings only. There
+        # is deliberately no default plan: diagnosis cannot weaken a contract,
+        # increase retries or change a verifier without explicit host review.
+        Detectors.register(:tool_failure_loop, severity: :high, level: :n3) do |s|
+          candidate = s.events("tool.execute").group_by { |event| event.dims[:tool].to_s }
+                       .filter_map do |tool, events|
+            failures = events.select { |event| event.dims[:status].to_s == "error" }
+            rate = failures.size.to_f / events.size
+            next if failures.size < 3 || events.size < 5 || rate < 0.4
+
+            categories = failures.group_by { |event| event.dims[:category].to_s }
+                                 .transform_values(&:size)
+            { subject: tool, summary: "#{failures.size}/#{events.size} executions of #{tool} failed repeatedly",
+              failures: failures.size, attempts: events.size, rate: rate.round(4), categories: categories }
+          end
+          candidate.max_by { |item| [item[:rate], item[:failures]] }
+        end
+
+        Detectors.register(:verification_rejection_loop, severity: :high, level: :n3) do |s|
+          candidate = s.events("harness.verification").group_by { |event| event.dims[:verifier].to_s }
+                       .filter_map do |verifier, events|
+            rejected = events.reject { |event| event.dims[:accepted] == true || event.dims[:accepted].to_s == "true" }
+            rate = rejected.size.to_f / events.size
+            next if rejected.size < 3 || events.size < 5 || rate < 0.4
+
+            { subject: verifier,
+              summary: "#{rejected.size}/#{events.size} reviews by #{verifier} rejected the run",
+              rejections: rejected.size, reviews: events.size, rate: rate.round(4) }
+          end
+          candidate.max_by { |item| [item[:rate], item[:rejections]] }
+        end
+
         Detectors.register(:capability_gap, severity: :high, level: :n4) do |_s|
           gaps = Proposals.gaps
           next if gaps.size < 5

@@ -8,7 +8,7 @@ module Agentkit
     def initialize(skills:, context:, settings:, authorize: nil)
       @context, @settings = context, settings
       @authorize = authorize
-      @entries, @loaded, @activated = {}, {}, []
+      @entries, @loaded, @activated, @source_receipts = {}, {}, [], {}
       raise ConfigurationError, "too many loop skills" if skills.size > settings.max_skills
       skills.each do |skill|
         skill = SkillRegistry.load_skill(skill) if skill.is_a?(Symbol) || skill.is_a?(String)
@@ -35,6 +35,9 @@ module Agentkit
     def descriptors = entries.values.select { |entry| permitted?(entry) }.map { |entry| entry.fetch(:descriptor) }
     def tools = entries.values.flat_map { |entry| entry.fetch(:tools) }
     def loaded_names = @activated.dup.freeze
+    def source_receipts
+      Harness.deep_freeze(@activated.flat_map { |name| @source_receipts.fetch(name, []) })
+    end
     def mark_loaded!(name)
       @activated |= [name.to_s]
     end
@@ -58,6 +61,12 @@ module Agentkit
           "content" => Harness.truncate(content, @context.config.harness.max_context_source_bytes),
           "digest" => Harness.digest(content) }
       end
+      @source_receipts[key] = Harness.deep_freeze(sources.map do |source|
+        {
+          "skill" => key, "name" => source.fetch("name"),
+          "kind" => source.fetch("kind"), "digest" => source.fetch("digest")
+        }
+      end)
       payload = entry.fetch(:descriptor).merge(
         "kind" => "skill_instructions", "instructions" => instructions,
         "context_sources" => sources, "tool_names" => permitted_names

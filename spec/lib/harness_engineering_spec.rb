@@ -147,6 +147,78 @@ RSpec.describe "Harness engineering contracts" do
     expect(receipt[:receipt_digest]).to match(/\Asha256:[0-9a-f]{64}\z/)
   end
 
+  it "evaluates and snapshots completion without mutating progress" do
+    simple_goal = Agentkit::Harness.define(
+      objective: "verify a result", criteria: [{ id: "done", description: "result verified" }]
+    )
+    progress = Agentkit::Harness.start(simple_goal)
+    progress.record_evidence(criterion: "done", verdict: :verified, source: "test:1")
+
+    evaluation = progress.evaluate
+    receipt = Agentkit::Harness::Receipt.build(progress)
+
+    expect(evaluation).to be_complete
+    expect(evaluation.status).to eq("completed")
+    expect(receipt).to include(complete: true, status: "completed")
+    expect(progress.status).to eq("running")
+    expect(emitted("harness.run.completed")).to be_empty
+  end
+
+  it "builds a bounded execution receipt without raw context or model output" do
+    progress = Agentkit::Harness.start(goal)
+    private_source = {
+      source_id: "crm", reference: "crm://tenant/current", digest: Agentkit::Harness.digest("PRIVATE LEAD"),
+      content: "PRIVATE LEAD"
+    }
+    lookup = Agentkit::ToolContract.new(name: :lookup, callable: -> { "PRIVATE TOOL RESULT" })
+    outcome = Agentkit::AgentLoop::Outcome.new(
+      content: "PRIVATE MODEL OUTPUT", stop_reason: "answered", usage: Agentkit::Usage.zero,
+      turns: 1, loaded_skills: ["crm"], exposed_tools: ["lookup"], evidence_refs: ["tool:lookup:digest"],
+      transcript_digest: Agentkit::Harness.digest("PRIVATE TRANSCRIPT"), budget: {},
+      model_route: { "profile" => "default", "model" => "test-model" },
+      context_sources: [private_source], tool_contracts: [], verifier_rejections: 0
+    )
+
+    receipt = Agentkit::Receipt.execution(
+      progress: progress, policy_version: "policy-7", outcome: outcome, tools: [lookup],
+      artifact: { reference: "artifact://release", digest: Agentkit::Harness.digest("artifact") },
+      rollback: { reference: "git://rollback/abc", digest: Agentkit::Harness.digest("rollback") }
+    )
+
+    expect(receipt).to include(schema: "agentkit.execution_receipt.v1", authorizes: false)
+    expect(receipt.dig(:runtime, :model_route, "model")).to eq("test-model")
+    expect(receipt.dig(:context_sources, 0, "reference")).to eq("crm://tenant/current")
+    expect(receipt.dig(:tools, 0, "contract_digest")).to eq(lookup.contract_digest)
+    expect(receipt.to_s).not_to include("PRIVATE LEAD", "PRIVATE MODEL OUTPUT", "PRIVATE TOOL RESULT")
+  end
+
+  it "reports deterministic readiness blockers without invoking execution" do
+    progress = Agentkit::Harness.start(goal)
+    context_source = {
+      source_id: "policy", reference: "docs://policy", digest: Agentkit::Harness.digest("policy")
+    }
+    report = Agentkit::Harness::ReadinessReport.build(
+      progress: progress, budget: Agentkit::ExecutionBudget.new,
+      context_sources: [context_source], verifier: ->(*) { true }, rollback_reference: "git://rollback/main",
+      required: %i[budget context verifier rollback]
+    )
+
+    expect(report).to be_ready
+    expect(report.blockers).to be_empty
+    expect(report.digest).to match(/\Asha256:[0-9a-f]{64}\z/)
+
+    unguarded = Agentkit::Harness.start(Agentkit::Harness.define(
+      objective: "touch protected data", criteria: [{ id: "checked", description: "change inspected" }],
+      protected_resources: ["production/db"]
+    ))
+    blocked = Agentkit::Harness::ReadinessReport.build(
+      progress: unguarded, required: %i[budget context verifier rollback]
+    )
+    expect(blocked).not_to be_ready
+    expect(blocked.blockers).to include("execution_budget", "context_provenance",
+                                        "independent_verifier", "rollback_reference", "protected_resources")
+  end
+
   it "reports acceptance, recovery, unsupported claims and harness overhead" do
     context = Agentkit::Context.new(tenant_key: "acme")
     Agentkit::Harness.start(goal, context: context)

@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Deterministic `Harness::ReadinessReport` preflight for goal bounds, tool contracts, budgets, context provenance, independent verification, rollback and protected resources.
+- Redacted, size-bounded execution receipts containing model route, usage, source/tool digests, verification evidence and artifact/rollback references without raw prompts, results or context bodies.
+- Consultative N3 Factory findings for repeated tool failures and verifier rejection loops, with no automatic intervention plan.
+
+### Changed
+
+- `Harness::Progress#evaluate` and harness receipt generation are non-mutating; explicit `evaluate!`/`complete!` calls retain state-transition behavior.
+- Progressive-loop outcomes expose redacted context-source and tool-contract provenance plus verifier rejection counts.
+
 ## 1.14.0 — 2026-11-13
 
 ### Added

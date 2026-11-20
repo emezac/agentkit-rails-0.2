@@ -68,6 +68,15 @@ RSpec.describe Agentkit::AgentLoop do
     expect(outcome).to be_answered
     expect([renders, providers, captured.size]).to eq([1, 1, 1])
     expect(outcome.loaded_skills).to eq(["finance"])
+    expect(outcome.model_route).to include("profile" => "default")
+    expect(outcome.context_sources).to contain_exactly(
+      include("skill" => "finance", "name" => "notes", "kind" => "untrusted_context",
+              "digest" => match(/\Asha256:/))
+    )
+    expect(outcome.tool_contracts).to contain_exactly(
+      include("name" => "balance", "attempts" => 1, "contract_digest" => match(/\Asha256:/))
+    )
+    expect(outcome.to_h.to_s).not_to include("PRIVATE CONTEXT")
     expect(fake_llm.turn_calls.first.messages.first["content"]).to include("Financial account lookup")
     expect(fake_llm.turn_calls.first.messages.first["content"]).not_to include("SECRET PROCEDURE", "PRIVATE CONTEXT")
     expect(fake_llm.turn_calls.first.tools.map { |schema| schema["name"] }).not_to include("balance")
@@ -209,6 +218,7 @@ RSpec.describe Agentkit::AgentLoop do
     })
     expect(result.stop_reason).to eq("verification_failed")
     expect(result.content).to be_nil
+    expect(result.verifier_rejections).to eq(2)
     expect(fake_llm.turn_calls.size).to eq(2)
   end
 
