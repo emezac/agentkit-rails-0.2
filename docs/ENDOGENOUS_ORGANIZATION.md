@@ -153,9 +153,9 @@ The report compares every candidate with the baseline:
 - `blocked`: insufficient or unmatched samples, missing capability coverage, a
   budget violation or a required-check failure in the baseline or candidate.
 
-These are measurements for a future governed composition study. Factory N4
-remains human-reviewed, and Exploration, A2A and runtime team selection remain
-unchanged.
+These measurements do not activate a composition by themselves. P2 through P4
+add an opt-in governed study, controlled pilot and reviewed binding while
+Factory N4, Exploration and A2A retain their existing authority boundaries.
 
 ## P2: governed composition study
 
@@ -355,3 +355,20 @@ O::CompositionGovernance.rollback!(
 P4 records required audit evidence for submission, approval, rejection and
 rollback. It does not register implementations, instantiate agents, execute a
 topology or automatically adopt the next candidate.
+
+## Completion boundary
+
+P0 through P4 complete the safe kernel lifecycle:
+
+1. observe organizational work without extra model calls;
+2. build evidence-bound capability and coordination profiles;
+3. compare approved compositions on disjoint training and holdout evidence;
+4. run a durable, independently approved controlled pilot;
+5. adopt or roll back an exact topology binding under human governance.
+
+There is intentionally no automatic P5 that invents organizations, expands
+permissions, registers implementations or continuously moves production
+traffic. Those actions would add model cost and turn measured endogenous
+selection into autonomous organizational control. Applications may generate
+candidate topologies outside the kernel, but candidates must re-enter at P1/P2
+and traverse the same evidence, pilot and review gates.
