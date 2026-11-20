@@ -4,6 +4,14 @@
 
 ### Added
 
+- Opt-in organizational telemetry that propagates redacted team, topology,
+  capability, handoff and component-digest dimensions through the execution
+  context while aggregating measured LLM usage without storing request bodies.
+- Evidence-bound `Organization::AgentProfile`, `WorkloadContract`, `Topology`
+  and `CoordinationReport` contracts for multidimensional capability and
+  coordination curves against a mandatory single-agent baseline.
+- Scoped `Organization::TraceSet` export into delegation diagnostics, including
+  observed capabilities, handoff failures, context retention and completeness.
 - Deterministic `Harness::ReadinessReport` preflight for goal bounds, tool contracts, budgets, context provenance, independent verification, rollback and protected resources.
 - Redacted, size-bounded execution receipts containing model route, usage, source/tool digests, verification evidence and artifact/rollback references without raw prompts, results or context bodies.
 - Consultative N3 Factory findings for repeated tool failures and verifier rejection loops, with no automatic intervention plan.

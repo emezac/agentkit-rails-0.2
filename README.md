@@ -425,6 +425,49 @@ que el host conozca. La cobertura comprueba casos de evaluación declarados;
 el grader comprueba que cada caso cumpla realmente su procedimiento.
 Los diagnósticos son hipótesis para ensayar, no decisiones automáticas.
 
+### Telemetría y perfiles organizacionales
+
+AgentKit puede medir una composición aprobada sin crear agentes ni cambiar su
+topología. `Organization.instrument` deriva un contexto con dimensiones
+allowlisted, agrega el uso real de las llamadas LLM anidadas y emite un único
+evento `organization.call`. El identificador de la solicitud se guarda sólo
+como digest.
+
+```ruby
+organization = Agentkit::Harness::Organization
+topology = organization::Topology.new(
+  id: "support-pipeline", pattern: :pipeline,
+  members: [
+    { agent: "orders", role: "domain", capabilities: ["orders"] },
+    { agent: "shipping", role: "domain", capabilities: ["shipping"] }
+  ],
+  edges: [{ from: "orders", to: "shipping", kind: "handoff" }]
+)
+
+organization.instrument(
+  request_id: request.id, organization_id: "support", topology: topology,
+  agent: "orders", role: "domain", capability: "orders",
+  model_profile: "fast", context: Agentkit.context
+) do |measures|
+  result = OrdersAgent.call(request)
+  measures[:success] = result.success?
+  measures[:context_bytes] = result.context_bytes
+  result
+end
+
+traces = organization::TraceSet.from_telemetry(context: Agentkit.context)
+diagnostics = traces.analyze(context: Agentkit.context)
+```
+
+`AgentProfile` resume evaluaciones por dominio y evidencia digerida.
+`CoordinationReport` compara topologías bajo un `WorkloadContract`, exige un
+baseline de un agente y expone calidad, éxito, costo, latencia, handoffs,
+retención de contexto y límites. Exige cobertura de capacidades y las mismas
+solicitudes medidas en baseline y candidato. Devuelve `pareto_better`,
+`pareto_worse`, `tradeoff` o `blocked`; no inventa un score agregado ni
+promueve una composición. Ver [la guía de organización
+endógena](docs/ENDOGENOUS_ORGANIZATION.md).
+
 ## Governed Self-Improvement en 1.5.0
 
 `Harness::GovernedStudy` evalúa manifests con probes reales, repetidos y

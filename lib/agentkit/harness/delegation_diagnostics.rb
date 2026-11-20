@@ -9,7 +9,7 @@ module Agentkit
       MAX_CALLS = 2_000
       MAX_CALLS_PER_TRACE = 64
       MAX_AGENTS = 64
-      ROLES = %w[router planner domain research verifier unknown].freeze
+      ROLES = %w[router coordinator planner domain research verifier human tool unknown].freeze
 
       class Report
         attr_reader :data
@@ -56,7 +56,11 @@ module Agentkit
           end
           group = data["context_group"]
           ArchitectureEvaluation.name!(group) if group
-          [name, flags.merge("name" => name, "role" => role, "context_group" => group)]
+          capabilities = Array(data.fetch("capabilities", [])).map do |capability|
+            ArchitectureEvaluation.name!(capability.to_s)
+          end.uniq.sort
+          [name, flags.merge("name" => name, "role" => role,
+            "context_group" => group, "capabilities" => capabilities)]
         end
         raise HarnessExperimentError, "duplicate delegation agent name" unless catalog.size == agents.size
         seen = {}
@@ -98,8 +102,14 @@ module Agentkit
             pair["agents"].include?(name) && pair["shared_context"] && pair["serial_requests"] >= @minimum_requests
           end
           decision, reason = verdict(descriptor, requests.size, concurrent, shared)
+          measured_success = calls.select { |call| call.key?("success") }
           descriptor.merge("requests" => requests.size, "calls" => calls.size,
                            "duration_ms" => calls.sum { |call| call["duration_ms"] },
+                           "observed_capabilities" => calls.filter_map { |call| call["capability"] }.uniq.sort,
+                           "successful_calls" => measured_success.count { |call| call["success"] },
+                           "reported_success_calls" => measured_success.size,
+                           "handoffs" => calls.sum { |call| call.fetch("handoffs", 0) },
+                           "failed_handoffs" => calls.sum { |call| call.fetch("failed_handoffs", 0) },
                            "usage" => usage(calls), "decision" => decision, "reason" => reason)
         end
         report = Report.new(
@@ -108,6 +118,7 @@ module Agentkit
           "minimum_requests" => @minimum_requests, "coupling_threshold" => @threshold,
           "request_count" => normalized.size, "call_count" => count,
           "usage" => usage(normalized.flat_map { |trace| trace["calls"] }),
+          "coordination" => coordination(normalized.flat_map { |trace| trace["calls"] }),
           "observed_chains" => chains.tally.sort.map { |chain, requests| { "chain" => chain, "requests" => requests } },
           "nonlinear_requests" => normalized.size - chains.size,
           "agents" => agent_rows, "pairs" => pairs
@@ -137,6 +148,33 @@ module Agentkit
           end
           result[key] = key == "cost_usd" ? number : number.to_i
         end
+        %w[retries verifier_rejections duplicate_work handoffs failed_handoffs].each do |key|
+          next unless data.key?(key)
+          number = nonnegative!(data[key], key)
+          raise HarnessExperimentError, "delegation counts must be integers" unless number == number.to_i
+
+          result[key] = number.to_i
+        end
+        if result.fetch("failed_handoffs", 0) > result.fetch("handoffs", 0)
+          raise HarnessExperimentError, "failed handoffs exceed handoffs"
+        end
+        %w[quality context_retention].each do |key|
+          next unless data.key?(key)
+          number = nonnegative!(data[key], key)
+          raise HarnessExperimentError, "delegation #{key} must be at most one" if number > 1
+
+          result[key] = number
+        end
+        if data.key?("success")
+          raise HarnessExperimentError, "delegation success must be boolean" unless [true, false].include?(data["success"])
+          result["success"] = data["success"]
+        end
+        %w[capability handoff_from model_profile].each do |key|
+          result[key] = ArchitectureEvaluation.name!(data[key].to_s) if data[key]
+        end
+        %w[toolset_digest skills_digest policy_digest].each do |key|
+          result[key] = Harness.valid_digest!(data[key].to_s) if data[key]
+        end
         unless finish(result).finite?
           raise HarnessExperimentError, "delegation span overflow"
         end
@@ -154,11 +192,24 @@ module Agentkit
       def finish(call) = call.fetch("start_ms") + call.fetch("duration_ms")
 
       def usage(calls)
-        %w[cost_usd input_tokens output_tokens context_bytes].to_h do |key|
+        %w[cost_usd input_tokens output_tokens context_bytes retries verifier_rejections duplicate_work].to_h do |key|
           known = calls.select { |call| call.key?(key) }
           [key, { "reported" => known.sum { |call| call[key] }, "known_calls" => known.size,
                   "complete" => known.size == calls.size && !calls.empty? }]
         end
+      end
+
+      def coordination(calls)
+        successes = calls.select { |call| call.key?("success") }
+        handoffs = calls.sum { |call| call.fetch("handoffs", 0) }
+        retention = calls.filter_map { |call| call["context_retention"] }
+        {
+          "success_rate" => successes.empty? ? nil : successes.count { |call| call["success"] }.to_f / successes.size,
+          "reported_success_calls" => successes.size,
+          "handoffs" => handoffs,
+          "failed_handoffs" => calls.sum { |call| call.fetch("failed_handoffs", 0) },
+          "mean_context_retention" => retention.empty? ? nil : retention.sum.to_f / retention.size
+        }
       end
 
       def protected?(agent)

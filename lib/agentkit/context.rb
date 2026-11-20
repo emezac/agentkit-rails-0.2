@@ -59,11 +59,25 @@ module Agentkit
 
     # Dimensions attached to every telemetry event emitted under this context.
     def telemetry_dims
-      {
+      base = {
         tenant:   tenant_key,
+        account_id: account.respond_to?(:id) ? account.id : account,
         user_id:  user.respond_to?(:id) ? user.id : user,
         run_id:   run_id
       }.compact
+      organization = metadata[:organization] || metadata["organization"]
+      return base unless organization.is_a?(Hash)
+
+      allowed = %i[
+        organization_id request_digest topology_digest topology_pattern
+        agent role capability handoff_from model_profile toolset_digest
+        skills_digest policy_digest independent_context permission_boundary
+      ]
+      dimensions = organization.each_with_object({}) do |(key, value), result|
+        name = key.to_sym
+        result[name] = value if allowed.include?(name) && !value.nil?
+      end
+      base.merge(dimensions)
     end
 
     def to_h
