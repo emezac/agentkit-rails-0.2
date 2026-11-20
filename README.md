@@ -468,6 +468,13 @@ solicitudes medidas en baseline y candidato. Devuelve `pareto_better`,
 promueve una composición. Ver [la guía de organización
 endógena](docs/ENDOGENOUS_ORGANIZATION.md).
 
+P2 añade `Organization::CompositionStudy`: compara únicamente topologías
+autorizadas sobre reportes separados de entrenamiento y holdout, comprueba que
+los perfiles todavía correspondan con modelo, tools, skills y políticas
+declaradas, y devuelve `retain`, `recommend_review` o `needs_choice`. La
+recomendación siempre contiene `authorizes: false` y `auto_promoted: false`;
+la aplicación anfitriona conserva la decisión y el control de routing.
+
 ## Governed Self-Improvement en 1.5.0
 
 `Harness::GovernedStudy` evalúa manifests con probes reales, repetidos y

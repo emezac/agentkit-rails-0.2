@@ -12,6 +12,9 @@
   coordination curves against a mandatory single-agent baseline.
 - Scoped `Organization::TraceSet` export into delegation diagnostics, including
   observed capabilities, handoff failures, context retention and completeness.
+- Governed `Organization::CompositionStudy` for authorized topology sets with
+  disjoint training/holdout evidence, profile identity checks and deterministic
+  Pareto recommendations that never activate or auto-promote a composition.
 - Deterministic `Harness::ReadinessReport` preflight for goal bounds, tool contracts, budgets, context provenance, independent verification, rollback and protected resources.
 - Redacted, size-bounded execution receipts containing model route, usage, source/tool digests, verification evidence and artifact/rollback references without raw prompts, results or context bodies.
 - Consultative N3 Factory findings for repeated tool failures and verifier rejection loops, with no automatic intervention plan.

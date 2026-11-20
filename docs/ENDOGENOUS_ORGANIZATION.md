@@ -156,3 +156,54 @@ The report compares every candidate with the baseline:
 These are measurements for a future governed composition study. Factory N4
 remains human-reviewed, and Exploration, A2A and runtime team selection remain
 unchanged.
+
+## P2: governed composition study
+
+`CompositionStudy` turns the P1 measurements into a bounded decision dossier.
+It does not generate topologies or run probes. The host first creates separate
+`CoordinationReport` objects from training and holdout requests, supplies
+evidence-bound profiles, explicitly approves the exact topology digest set and
+authorizes the evaluation from authenticated application context.
+
+```ruby
+study = O::CompositionStudy.new(
+  id: "market-brief-composition",
+  training_report: training_coordination,
+  holdout_report: holdout_coordination,
+  profiles: [researcher_profile, writer_profile, baseline_profile],
+  approved_topology_digests: [
+    single_agent.digest,
+    specialist_pipeline.digest
+  ],
+  approved_by: "operator-42",
+  approval_evidence_digest: Agentkit::Harness.digest(change_ticket),
+  authorize: ->(action, request, context) {
+    OrganizationPolicy.allowed?(action, request, context)
+  },
+  context: authenticated_context
+)
+
+recommendation = study.recommend
+```
+
+The study fails closed when:
+
+- training and holdout reuse a request or evidence digest;
+- workload, baseline or topology identities differ between phases;
+- the approved digest set is incomplete or stale;
+- an agent profile is missing, has insufficient evaluated samples, or no
+  longer matches a declared model/tool/skill/policy identity;
+- a candidate is not Pareto-better than the baseline in both phases.
+
+Eligible candidates are compared with one another on success, quality, cost
+and latency. The result is:
+
+- `retain` when no candidate survives training and holdout;
+- `recommend_review` when one candidate is the unique non-dominated result;
+- `needs_choice` when several candidates remain non-dominated and a human must
+  choose the tradeoff explicitly.
+
+Every recommendation is immutable, redacted, size-bounded and reports
+`authorizes: false` and `auto_promoted: false`. P2 therefore provides endogenous
+selection inside an approved experimental boundary, not autonomous team
+formation. Routing changes, agent creation and deployment remain host actions.

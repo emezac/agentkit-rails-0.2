@@ -417,7 +417,8 @@ module Agentkit
       # utility score that could hide safety, cost or latency regressions.
       class CoordinationReport
         attr_reader :workload, :topologies, :baseline_digest, :summaries,
-                    :comparisons, :evidence_digests
+                    :comparisons, :evidence_digests, :request_digests,
+                    :request_set_digest
 
         def self.build(workload:, topologies:, baseline:, observations:)
           new(workload: workload, topologies: topologies, baseline: baseline,
@@ -452,6 +453,8 @@ module Agentkit
           end.transform_values do |group|
             group.map { |row| row.fetch("request_digest") }.tally.sort.to_h
           end)
+          @request_digests = @request_counts.values.flat_map(&:keys).uniq.sort.freeze
+          @request_set_digest = Harness.digest(@request_counts).freeze
           @evidence_digests = rows.map { |row| row.fetch("evidence_digest") }.uniq.sort.freeze
           @summaries = summarize(rows)
           @comparisons = compare
@@ -469,7 +472,8 @@ module Agentkit
             "schema_version" => 1, "kind" => "organization_coordination_report",
             "workload" => workload.to_h, "topologies" => topologies.map(&:to_h),
             "baseline_digest" => baseline_digest, "summaries" => summaries,
-            "comparisons" => comparisons, "evidence_digests" => evidence_digests
+            "comparisons" => comparisons, "request_set_digest" => request_set_digest,
+            "evidence_digests" => evidence_digests
           )
         end
 
