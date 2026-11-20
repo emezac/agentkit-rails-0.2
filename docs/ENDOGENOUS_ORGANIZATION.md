@@ -285,3 +285,73 @@ transactional decision journal. It intentionally requires at least 40 units
 and 20 per arm because it is an evidence-producing controlled pilot, not a
 single-request smoke test. Stopping prevents future exposure; compensating
 already committed domain effects remains the responsibility of the host gate.
+
+## P4: reviewed adoption and rollback
+
+P4 converts only an approved, unrevoked P3 analysis into a pending
+organizational review. It reuses the durable exploration review and binding
+store from migration 022, under an isolated `organization:` target namespace.
+No new table or migration is required.
+
+```ruby
+review = O::CompositionGovernance.submit!(
+  target: "support-routing",
+  pilot: pilot,
+  context: operator_context
+)
+
+approved = O::CompositionGovernance.approve!(
+  review,
+  actor: "organization-owner",
+  reason: "P3 outcome and operational assumptions reviewed",
+  authorize: ->(action, request, context) {
+    OrganizationPolicy.allowed?(action, request, context)
+  },
+  context: owner_context
+)
+```
+
+The P4 approver must differ from the human who approved the P3 result. Approval
+is atomic with the active binding: if another adoption changed the incumbent
+after submission, the stale review fails and a new study is required.
+
+The binding contains only topology identity and evidence references. Host code
+must authorize every resolution and return the exact immutable topology from a
+trusted registry:
+
+```ruby
+topology = O::CompositionGovernance.resolve(
+  target: "support-routing",
+  resolver: ->(digest, _context) { TopologyRegistry.fetch(digest) },
+  authorize: ->(action, request, context) {
+    OrganizationPolicy.allowed?(action, request, context)
+  },
+  context: request_context
+)
+
+HostRouter.call(topology: topology, request: request)
+```
+
+The resolver fails closed when the registry returns a topology with a different
+digest. Since the topology digest covers members, roles, capabilities, model
+profile and tool/skill/policy digests, component drift cannot silently inherit
+the active binding.
+
+Rollback is an explicit reviewed transition and restores the prior binding (or
+removes the first binding):
+
+```ruby
+O::CompositionGovernance.rollback!(
+  approved,
+  actor: "organization-owner",
+  reason: "production guardrail regression",
+  authorize: ->(action, request, context) {
+    OrganizationPolicy.allowed?(action, request, context)
+  },
+  context: owner_context
+)
+```
+
+P4 records required audit evidence for submission, approval, rejection and
+rollback. It does not register implementations, instantiate agents, execute a
+topology or automatically adopt the next candidate.

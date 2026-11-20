@@ -482,6 +482,12 @@ asignación HMAC estable, ejecución mediante `DecisionGate`, stop, resultados
 maduros y revisión final. El piloto no adopta la topología ganadora: una
 aprobación del resultado continúa siendo evidencia, no un cambio de routing.
 
+P4 añade `Organization::CompositionGovernance`: sólo acepta un análisis P3
+aprobado y no revocado, exige que otro actor autorice la adopción, serializa el
+binding contra el incumbent activo y permite rollback. Resolver un binding
+requiere autorización en cada lectura y un `Topology` cuyo digest coincida
+exactamente; el binding nunca registra código ni instancia agentes.
+
 ## Governed Self-Improvement en 1.5.0
 
 `Harness::GovernedStudy` evalúa manifests con probes reales, repetidos y

@@ -291,5 +291,135 @@ RSpec.describe Agentkit::Harness::Organization::CompositionStudy do
       expect(result).to eq(:host_result)
       expect(received).to eq(["treatment", pair])
     end
+
+
+    describe Agentkit::Harness::Organization::CompositionGovernance do
+      before do
+        Agentkit.config.exploration.store = :memory
+        Agentkit::Exploration::Governance.store =
+          Agentkit::Exploration::Governance::Stores::Memory.new
+      end
+
+      def pilot_with_review(version: "1", revoked: false, analysis_status: "eligible_for_human_review")
+        study = build_study
+        recommendation = study.recommend
+        options = pilot_options(study, recommendation).merge(version: version)
+        pilot = Agentkit::Harness::Organization::CompositionPilot.new(**options)
+        analysis = {
+          "status" => analysis_status,
+          "protocol" => pilot.protocol,
+          "counts" => {
+            "control" => { "assigned" => 20, "complete" => 20 },
+            "treatment" => { "assigned" => 20, "complete" => 20 }
+          },
+          "auto_promoted" => false
+        }
+        final_review = {
+          "approved" => true,
+          "actor" => "pilot-reviewer",
+          "report_digest" => Agentkit::Knowledge.digest(analysis),
+          "auto_promoted" => false
+        }
+        records = {
+          "analysis" => analysis,
+          "final_review" => final_review,
+          "revocation" => revoked ? { "reason" => "invalid measurement" } : nil
+        }
+        allow(pilot.experiment).to receive(:fetch) do |type:, **_arguments|
+          records.fetch(type)
+        end
+        pilot
+      end
+
+      it "adopts an independently reviewed pilot as a reversible durable binding" do
+        pilot = pilot_with_review
+        review = described_class.submit!(target: "support", pilot: pilot, context: context)
+
+        expect(review.status).to eq("pending")
+        expect(described_class.binding(target: "support", context: context)).to be_nil
+        expect do
+          described_class.approve!(
+            review, actor: "pilot-reviewer", reason: "self approval",
+            authorize: ->(*) { true }, context: context
+          )
+        end.to raise_error(Agentkit::PolicyDenied, /independent/)
+
+        approved = described_class.approve!(
+          review, actor: "organization-owner", reason: "reviewed P3 evidence",
+          authorize: ->(*) { true }, context: context
+        )
+        binding = described_class.binding(target: "support", context: context)
+        expect(approved.status).to eq("approved")
+        expect(binding.policy_digest).to eq(pair.digest)
+        expect(binding.generation).to eq(1)
+
+        resolved = described_class.resolve(
+          target: "support", resolver: ->(topology_digest, _ctx) {
+            topology_digest == pair.digest ? pair : nil
+          }, authorize: ->(*) { true }, context: context
+        )
+        expect(resolved).to equal(pair)
+
+        rolled_back = described_class.rollback!(
+          approved, actor: "organization-owner", reason: "canary regression",
+          authorize: ->(*) { true }, context: context
+        )
+        expect(rolled_back.status).to eq("rolled_back")
+        expect(described_class.binding(target: "support", context: context)).to be_nil
+      end
+
+      it "rejects revoked or inconclusive pilot evidence" do
+        expect do
+          described_class.submit!(
+            target: "support", pilot: pilot_with_review(revoked: true), context: context
+          )
+        end.to raise_error(Agentkit::PolicyDenied, /approved, unrevoked/)
+
+        expect do
+          described_class.submit!(
+            target: "support",
+            pilot: pilot_with_review(version: "2", analysis_status: "inconclusive"),
+            context: context
+          )
+        end.to raise_error(Agentkit::PolicyDenied, /approved, unrevoked/)
+      end
+
+      it "serializes competing adoptions against the active incumbent" do
+        first = described_class.submit!(
+          target: "support", pilot: pilot_with_review(version: "1"), context: context
+        )
+        second = described_class.submit!(
+          target: "support", pilot: pilot_with_review(version: "2"), context: context
+        )
+        described_class.approve!(
+          first, actor: "owner-one", reason: "first reviewed result",
+          authorize: ->(*) { true }, context: context
+        )
+
+        expect do
+          described_class.approve!(
+            second, actor: "owner-two", reason: "stale reviewed result",
+            authorize: ->(*) { true }, context: context
+          )
+        end.to raise_error(Agentkit::DecisionConflict, /incumbent changed/)
+      end
+
+      it "fails closed when resolution returns anything except the bound topology" do
+        review = described_class.submit!(
+          target: "support", pilot: pilot_with_review, context: context
+        )
+        described_class.approve!(
+          review, actor: "organization-owner", reason: "activate",
+          authorize: ->(*) { true }, context: context
+        )
+
+        expect do
+          described_class.resolve(
+            target: "support", resolver: ->(*) { baseline },
+            authorize: ->(*) { true }, context: context
+          )
+        end.to raise_error(Agentkit::HarnessIntegrityError, /stale topology/)
+      end
+    end
   end
 end

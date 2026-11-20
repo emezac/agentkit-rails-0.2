@@ -432,9 +432,10 @@ module Agentkit
 
         # Checked inside each store's atomic approval transaction.
         def validate_incumbent!(review, binding)
-          return unless review.evidence["level"] == "harness" && binding
+          governed_levels = %w[harness organization]
+          return unless governed_levels.include?(review.evidence["level"]) && binding
           unless binding.policy_digest == review.incumbent_digest
-            raise DecisionConflict, "harness incumbent changed; run a new study before promotion"
+            raise DecisionConflict, "governed incumbent changed; run a new study before promotion"
           end
         end
 
