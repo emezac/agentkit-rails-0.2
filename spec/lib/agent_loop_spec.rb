@@ -111,7 +111,7 @@ RSpec.describe Agentkit::AgentLoop do
     result = run_loop(tools: [lookup])
     expect(result).to be_answered
     expect(hits).to eq(1)
-    expect(last_results[1].dig("error", "code")).to eq("Agentkit::ToolExecutionDenied")
+    expect(last_results[1]).to eq("ok" => false, "error" => { "code" => "Agentkit::ToolExecutionDenied" })
   end
 
   it "applies class deny policies to discovery and rejects explicit overrides" do
@@ -272,6 +272,58 @@ RSpec.describe Agentkit::AgentLoop do
     expect(result).to be_answered
     expect(last_results.to_s).not_to include("PRIVATE FAILURE")
     expect(Agentkit::Audit.entries.map(&:to_h).to_s).not_to include("PRIVATE FAILURE")
+  end
+
+  it "repairs invalid arguments on the next turn using schema diagnostics" do
+    calls = []
+    lookup = tool(input_schema: { type: "object", required: ["account_id"], additionalProperties: false,
+                                   properties: { account_id: { type: "integer" } } }) do |account_id:|
+      calls << account_id
+      { balance: 42 }
+    end
+    fake_llm.respond_with_turns(tool_calls: [call_tool("invalid", "balance",
+      { account_id: "PRIVATE VALUE", "private_unexpected_key" => true })])
+    error = nil
+    allow(Agentkit::LLM.adapter).to receive(:turn).and_wrap_original do |original, **request|
+      message = request.fetch(:messages).last
+      if message["role"] == "tool" && message["tool_call_id"] == "invalid"
+        error = JSON.parse(message.fetch("content")).fetch("error")
+        if error.dig("issues")&.include?({ "path" => "$.account_id", "rule" => "type", "expected_types" => ["integer"] })
+          fake_llm.respond_with_turns({ tool_calls: [call_tool("corrected", "balance", account_id: 42)] },
+                                      { content: "balance found" })
+        end
+      end
+      original.call(**request)
+    end
+
+    result = run_loop(tools: [lookup], eager_tools: ["balance"])
+
+    expect(result.content).to eq("balance found")
+    expect(calls).to eq([42])
+    expect(result.evidence_refs.size).to eq(1)
+    expect(error).to include("code" => "Agentkit::SchemaValidationError", "category" => "invalid_arguments",
+                             "next_action" => /Correct the arguments/)
+    expect(error.fetch("issues")).to include("path" => "$", "rule" => "additional_properties")
+    expect(error.to_s).not_to include("PRIVATE VALUE", "private_unexpected_key")
+  end
+
+  it "does not forward schema violations from a tool adapter as argument diagnostics" do
+    lookup = tool do
+      raise Agentkit::SchemaValidationError.new("PRIVATE FAILURE", violations: ["$.private_adapter_field"])
+    end
+    fake_llm.respond_with_turns({ tool_calls: [call_tool("read", "balance")] }, { content: "unavailable" })
+
+    expect(run_loop(tools: [lookup], eager_tools: ["balance"])).to be_answered
+    expect(last_results.first).to eq("ok" => false, "error" => { "code" => "Agentkit::SchemaValidationError" })
+  end
+
+  it "preserves the original error code when diagnostics exceed the result limit" do
+    Agentkit.config.agent_loop.max_tool_result_bytes = 100
+    fake_llm.respond_with_turns({ tool_calls: [call_tool("bad-search", "search_tools", query: 1)] },
+                               { content: "invalid search" })
+
+    expect(run_loop).to be_answered
+    expect(last_results.first).to eq("ok" => false, "error" => { "code" => "Agentkit::SchemaValidationError" })
   end
 
   it "runs only explicitly parallel-safe reads concurrently and preserves result order" do

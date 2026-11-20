@@ -19,6 +19,17 @@ Existing AgentLoop, Flow and release gates keep their behavior; no unattended jo
 new permission, repository write or automatic deployment is enabled on upgrade.
 See [Supervised Unattended Runs](docs/SUPERVISED_UNATTENDED_RUNS.md).
 
+# Harness verification checkpoints
+
+New Harness checkpoints use schema 3. Existing schema 1 and 2 checkpoints
+remain readable. Upgrade all operators that read checkpoints before writing
+schema 3. No database migration is required.
+
+Applying a rejected review now blocks completion. Apply a new accepted review
+after changing the recorded output or evidence. Set `require_verification: true`
+on goals that must have an accepted review before completion. In those goals,
+supply the content or its digest for each required output.
+
 # Optional operator workflows after 1.12.0
 
 Install migration 027 before enabling the new console pages or the routine

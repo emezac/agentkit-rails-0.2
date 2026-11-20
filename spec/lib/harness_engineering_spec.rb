@@ -58,7 +58,7 @@ RSpec.describe "Harness engineering contracts" do
     restored = Agentkit::Harness::Progress.from_h(payload)
 
     expect(restored.goal.constraints).to be_empty
-    expect(restored.to_h["schema_version"]).to eq(2)
+    expect(restored.to_h["schema_version"]).to eq(3)
   end
 
   it "selects context progressively and attaches freshness and digest evidence" do
@@ -117,6 +117,69 @@ RSpec.describe "Harness engineering contracts" do
     expect(progress.evidence).not_to have_key("no-prod-write")
     review.apply_to(progress)
     expect(progress.evidence.fetch("no-prod-write").source).to start_with("verifier:release-auditor:")
+  end
+
+  def artifact_progress(require_verification: false)
+    goal = Agentkit::Harness.define(id: "verified-artifact", objective: "verify the package",
+      criteria: [{ id: "tests", description: "tests pass" }], required_outputs: ["package"],
+      require_verification: require_verification)
+    Agentkit::Harness.start(goal).tap do |progress|
+      progress.record_output("package", reference: "artifact:release.gem", value: "revision A")
+    end
+  end
+
+  def artifact_review(progress, accepted: true)
+    verifier = Agentkit::Harness::Verifier.new(name: "artifact-auditor", reviewer: lambda { |_request|
+      { accepted: accepted, verdicts: [{ criterion_id: "tests", verdict: "verified" }] }
+    })
+    verifier.verify(progress)
+  end
+
+  it "blocks completion after an explicitly applied rejected verification", incident: "harness.rejected_review" do
+    progress = artifact_progress
+    progress.record_evidence(criterion: "tests", verdict: :verified, source: "ci:17")
+    earlier_acceptance = artifact_review(progress)
+    rejection = artifact_review(progress, accepted: false)
+    rejection.apply_to(progress)
+
+    expect(progress.evidence.fetch("tests").source).to eq("ci:17")
+    expect { progress.complete! }.to raise_error(Agentkit::HarnessIncomplete, /verification=rejected/)
+    expect { earlier_acceptance.apply_to(progress) }.to raise_error(Agentkit::VerificationError, /stale/)
+  end
+
+  it "does not apply a review after the artifact or source evidence changes", incident: "harness.stale_review" do
+    progress = artifact_progress(require_verification: true)
+    review = artifact_review(progress)
+    progress.record_output("package", reference: "artifact:release.gem", value: "revision B")
+
+    expect { review.apply_to(progress) }.to raise_error(Agentkit::VerificationError, /stale/)
+    expect(progress.evidence).to be_empty
+    review = artifact_review(progress)
+    progress.record_evidence(criterion: "tests", verdict: :verified, source: "ci:new")
+    expect { review.apply_to(progress) }.to raise_error(Agentkit::VerificationError, /stale/)
+    expect { progress.complete! }.to raise_error(Agentkit::HarnessIncomplete, /verification=missing/)
+  end
+
+  it "persists accepted verification and blocks completion if the reviewed output is later replaced" do
+    progress = artifact_progress(require_verification: true)
+    artifact_review(progress).apply_to(progress)
+    payload = JSON.parse(JSON.generate(progress.to_h))
+    restored = Agentkit::Harness::Progress.from_h(payload)
+    expect(restored.verification_status).to eq("verified")
+
+    restored.record_output("package", reference: "artifact:release.gem", value: "revision B")
+    expect { restored.complete! }.to raise_error(Agentkit::HarnessIncomplete, /verification=stale/)
+    fresh_review = artifact_review(restored)
+    fresh_review.apply_to(restored)
+    expect(Agentkit::Harness::Receipt.build(restored)).to include(complete: true,
+      verification: { status: "verified", review_digest: fresh_review.review_digest,
+                      subject_digest: fresh_review.subject_digest })
+  end
+
+  it "requires a content digest for required outputs on a verification-gated goal" do
+    progress = artifact_progress(require_verification: true)
+    expect { progress.record_output("package", reference: "artifact:release.gem") }
+      .to raise_error(ArgumentError, /content digest/)
   end
 
   it "rejects verifier agents that expose mutating tools" do

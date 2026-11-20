@@ -106,6 +106,13 @@ module Agentkit
         open_issues: progress.open_issues,
         generated_at: Time.now.utc.iso8601(6)
       }
+      if evaluation.verification_status != "not_required"
+        value[:verification] = {
+          status: evaluation.verification_status,
+          review_digest: progress.verification&.fetch("review_digest"),
+          subject_digest: progress.verification&.fetch("subject_digest")
+        }.compact
+      end
       value[:receipt_digest] = Harness.digest(value)
       Harness.deep_freeze(value)
     end

@@ -293,7 +293,8 @@ module Agentkit
         if ToolCatalog::RESERVED.include?(name)
           control = control_schemas.find { |schema| schema["name"] == name && offered.include?(name) }
           raise ToolExecutionDenied, "tool is unavailable" unless control
-          Schema.validate!(args, control.fetch("input_schema"), label: name)
+          input_schema = control.fetch("input_schema")
+          Schema.validate!(args, input_schema, label: name)
           value = if name == "search_tools"
                     { "tools" => @catalog.search(query: args.fetch("query"),
                       limit: args.fetch("limit", [5, @settings.max_tools].min)) }
@@ -308,6 +309,7 @@ module Agentkit
                   end
         else
           tool = @catalog.fetch_exposed!(name, offered: offered)
+          input_schema = @catalog.entries.fetch(name).fetch(:schema).fetch("input_schema")
           @mutex.synchronize { @tool_attempts[name] += 1 }
           execution = tool.invoke(args, context: @context)
           if execution.attempts > 1
@@ -334,9 +336,27 @@ module Agentkit
         tool_message(call, { "ok" => true, "result" => value })
       rescue BudgetExceeded
         raise
+      rescue SchemaValidationError => error
+        tool_message(call, schema_failure(error, args, input_schema))
       rescue StandardError => error
         tool_message(call, { "ok" => false, "error" => { "code" => error.class.name } })
       end
+    end
+
+    def schema_failure(error, args, input_schema)
+      plain = { "ok" => false, "error" => { "code" => error.class.name } }
+      return plain unless input_schema
+
+      # Recheck the proposed arguments against the authorized snapshot. A
+      # schema exception can also come from the adapter or output validation.
+      issues = Schema.tool_input_issues(args, input_schema)
+      return plain if issues.empty?
+
+      detailed = { "ok" => false, "error" => plain.fetch("error").merge(
+        "category" => "invalid_arguments", "issues" => issues,
+        "next_action" => "Correct the arguments using the tool schema before calling it again."
+      ) }
+      JSON.generate(detailed).bytesize <= @settings.max_tool_result_bytes ? detailed : plain
     end
 
     def tool_message(call, payload)

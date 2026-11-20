@@ -8,33 +8,20 @@ module Agentkit
     class Verifier
       ReviewRequest = Struct.new(
         :review_id, :goal_id, :goal_digest, :objective, :requirements,
-        :outputs, :evidence, :rejection_criteria,
+        :outputs, :evidence, :subject_digest, :rejection_criteria,
         keyword_init: true
       ) do
         def to_h = Harness.deep_freeze(Harness.stringify_keys(super))
       end
 
       Review = Struct.new(
-        :review_id, :goal_id, :goal_digest, :verifier, :accepted, :verdicts,
+        :review_id, :goal_id, :goal_digest, :subject_digest, :verifier, :accepted, :verdicts,
         :reasons, :duration_ms, :review_digest,
         keyword_init: true
       ) do
         def accepted? = !!accepted
 
-        def apply_to(progress)
-          unless progress.goal.id == goal_id && Harness.secure_equal?(progress.goal.digest, goal_digest)
-            raise VerificationError, "review does not match harness goal contract"
-          end
-
-          verdicts.each do |item|
-            progress.record_evidence(
-              criterion: item.fetch("criterion_id"), verdict: item.fetch("verdict"),
-              source: "verifier:#{verifier}:#{review_id}", summary: item["summary"],
-              digest: review_digest
-            )
-          end
-          progress
-        end
+        def apply_to(progress) = progress.apply_review!(self)
 
         def to_h = Harness.deep_freeze(super)
       end
@@ -106,12 +93,13 @@ module Agentkit
           value["kind"] = item.kind if item.respond_to?(:kind)
           value
         end
+        snapshot = Harness.deep_freeze(progress.verification_snapshot)
         ReviewRequest.new(
-          review_id: SecureRandom.uuid, goal_id: progress.goal.id,
+          review_id: SecureRandom.uuid.freeze, goal_id: progress.goal.id,
           goal_digest: progress.goal.digest, objective: progress.goal.objective,
           requirements: Harness.deep_freeze(requirements),
-          outputs: Harness.deep_freeze(Harness.stringify_keys(progress.outputs)),
-          evidence: Harness.deep_freeze(progress.evidence.transform_values(&:to_h)),
+          outputs: snapshot.fetch("outputs"), evidence: snapshot.fetch("evidence"),
+          subject_digest: progress.review_subject_digest(snapshot).freeze,
           rejection_criteria: rejection_criteria
         ).freeze
       end
@@ -169,13 +157,15 @@ module Agentkit
         reasons << "required evidence is not fully verified" if data["accepted"] == true && !all_verified
         digest = Harness.digest(
           "review_id" => request.review_id, "verifier" => name,
+          "goal_digest" => request.goal_digest, "subject_digest" => request.subject_digest,
           "accepted" => accepted, "verdicts" => verdicts, "reasons" => reasons
         )
         Review.new(
           review_id: request.review_id, goal_id: request.goal_id,
-          goal_digest: request.goal_digest, verifier: name, accepted: accepted,
-          verdicts: Harness.deep_freeze(verdicts), reasons: reasons.freeze,
-          duration_ms: duration, review_digest: digest
+          goal_digest: request.goal_digest.freeze, subject_digest: request.subject_digest,
+          verifier: name, accepted: accepted,
+          verdicts: Harness.deep_freeze(verdicts), reasons: Harness.deep_freeze(reasons),
+          duration_ms: duration, review_digest: digest.freeze
         ).freeze
       rescue KeyError, TypeError => e
         raise VerificationError, "invalid verifier response: #{e.message}"

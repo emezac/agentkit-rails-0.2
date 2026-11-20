@@ -65,8 +65,10 @@ La [skill de contribución](skills/agentkit-contributor/SKILL.md) guía cambios
 acotados al kernel. Para revisar el diff local y ejecutar specs de comportamiento
 elegidos para el cambio, usa
 `BASE=HEAD SPEC='spec/lib/agent_loop_spec.rb' bundle exec rake quality:focused`.
-La tarea es optativa y no añade dependencias ni llamadas al modelo; CI conserva
-`bundle exec rake verify` para la suite completa.
+Esta tarea es optativa y no añade dependencias ni llamadas al modelo. CI ejecuta
+`bundle exec rake verify`, que incluye `quality:incidents`; esta puerta ejecuta
+las regresiones críticas tres veces y reporta resultado, latencia y gasto de
+cada intento. [Regresiones de incidentes](docs/INCIDENT_REGRESSIONS.md).
 
 ## Production Operations Evidence & Escalation en 1.12.0
 
@@ -155,6 +157,11 @@ búsqueda por palabras y no añaden llamadas al modelo ni embeddings obligatorio
 turno del modelo. Inicialmente ofrece un catálogo breve de skills y las
 herramientas `load_skill` / `search_tools`; los procedimientos, proveedores de
 contexto y esquemas completos se cargan cuando se solicitan.
+
+Un argumento inválido puede devolver `error.category: "invalid_arguments"`,
+`issues` con la ruta y el tipo esperado y `next_action`. `error.code` sigue
+disponible para integraciones existentes. Las denegaciones y excepciones
+internas conservan el código genérico, sin incluir sus mensajes ni trazas.
 
 ```ruby
 Agentkit::Skill.define(:support_lookup) do |skill|
@@ -690,11 +697,13 @@ goal = Agentkit::Harness.define(
   protected_resources: ["production/database"],
   required_approvals: ["release:publish"],
   required_outputs: %w[changelog package],
+  require_verification: true,
   max_steps: 12
 )
 
 progress = Agentkit::Harness.start(goal)
 progress.record_output("package", reference: "artifact:agentkit-1.3.0.gem", value: gem_bytes)
+progress.record_output("changelog", reference: "artifact:changelog", value: changelog_bytes)
 progress.record_evidence(
   criterion: "tests", verdict: :verified,
   source: "ci:build-918", summary: "1,203 examples, 0 failures",
@@ -709,7 +718,7 @@ progress.context_fragment # bloque acotado para build_context(extra: ...)
 progress.record_approval(
   "release:publish", actor: "principal:42", evidence_ref: "approval:991"
 )
-progress.complete!        # falla cerrado mientras falte evidencia/output/aprobación
+# La revisión independiente de abajo debe aplicarse antes de complete!.
 ```
 
 Las herramientas de Skills y Capabilities comparten `ToolContract`: schema de
@@ -749,6 +758,7 @@ verifier = Agentkit::Harness::Verifier.new(
 )
 review = verifier.verify(progress)
 review.apply_to(progress) # aplicación explícita; verify no muta progress
+progress.complete!
 
 receipt = Agentkit::Harness::Receipt.build(progress, risks: ["rollout latency"])
 Agentkit::Harness::Metrics.summary(goal_id: goal.id, context: Agentkit.context)
@@ -761,10 +771,18 @@ recibo acotado sin prompts, respuestas ni cuerpos privados. La
 [guía de readiness y recibos](docs/EXECUTION_RECEIPTS_AND_READINESS.md) incluye
 el contrato completo y sus límites.
 
+Con `require_verification: true`, `complete!` exige una revisión aceptada.
+Registra el contenido o digest real de cada entregable requerido en
+`record_output`. La revisión queda vinculada a los entregables y su evidencia.
+Si cambian, vuelve a verificar antes de cerrar. Una revisión rechazada aplicada
+bloquea el cierre y conserva la evidencia original. El recibo registra el
+estado y las huellas de la revisión. El host debe registrar cualquier cambio
+del contenido detrás de una referencia mutable.
+
 `RecoveryPolicy` aporta una taxonomía compartida (`timeout`, `rate_limited`,
 `missing_context`, `permission_denied`, `ambiguous_effect`, etc.) y detiene
-errores repetidos sin cambio. Los checkpoints 1.2 se leen y se actualizan al
-schema 2 al volver a persistir; no hay migración de base de datos.
+errores repetidos sin cambio. Los checkpoints de schemas 1 y 2 se leen y se
+actualizan a schema 3 al volver a persistir. No se requiere migración de base de datos.
 
 ## Goal contracts y privilegio mínimo en 1.2
 

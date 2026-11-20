@@ -47,7 +47,7 @@ RSpec.describe Agentkit::LLM do
       expect(llm_calls).to eq(1)
     end
 
-    it "repairs on the same profile and accounts for each provider response once" do
+    it "repairs on the same profile and accounts for each provider response once", incident: "llm.repair_usage" do
       Agentkit::ModelRouter.register(:structured, model: "structured-model", provider: :openai_compatible,
                                                 api_base: "https://example.test/v1", api_key: "test-key",
                                                 price_in: 2.0, price_out: 10.0)
@@ -104,7 +104,8 @@ RSpec.describe Agentkit::LLM do
       expect(charges.map(&:last)).to all(be > 0)
     end
 
-    it "records usage when an invalid response exhausts the budget before repair" do
+    it "records usage when an invalid response exhausts the budget before repair",
+       incident: "llm.exhausted_budget_usage" do
       execution_budget = Agentkit::ExecutionBudget.new(max_tokens: 1)
       fake_llm.respond_with("not json at all")
 

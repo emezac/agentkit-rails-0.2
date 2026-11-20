@@ -235,7 +235,8 @@ RSpec.describe Agentkit::Flow do
       expect(result.run.step(:never)).to be_nil
     end
 
-    it "refuses a resumed step whose stored result no longer matches its acceptance evidence" do
+    it "refuses a resumed step whose stored result no longer matches its acceptance evidence",
+       incident: "flow.stale_acceptance" do
       flow = Class.new(described_class) do
         def self.name = "AcceptanceReplayFlow"
         step(:checked, accept: ->(value, _ctx) { value.even? }) { 2 }
@@ -284,7 +285,7 @@ RSpec.describe Agentkit::Flow do
       expect(result.value).to eq(iterations: 2, converged: true, reason: :condition_met)
     end
 
-    it "fails a verified loop at the limit and stops downstream steps" do
+    it "fails a verified loop at the limit and stops downstream steps", incident: "flow.loop_limit" do
       flow = Class.new(described_class) do
         def self.name = "RunawayFlow"
         loop_until :spin, max: 2, until: ->(_ctx) { false } do
@@ -302,7 +303,7 @@ RSpec.describe Agentkit::Flow do
       expect(flow.resume(result.run.run_id)).to be_err
     end
 
-    it "evaluates a resumed loop against each iteration's own output" do
+    it "evaluates a resumed loop against each iteration's own output", incident: "flow.iteration_replay" do
       flow = Class.new(described_class) do
         def self.name = "ResumedVerificationFlow"
         loop_until :verify, max: 2, until: ->(ctx) { ctx[:tick].value == 2 } do

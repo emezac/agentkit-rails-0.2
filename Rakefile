@@ -19,13 +19,21 @@ end
 load File.expand_path("lib/agentkit/tasks/agentkit.rake", __dir__)
 
 desc "Run the reproducible AgentKit verification suite"
-task verify: :spec do
+task verify: ["quality:incidents", :spec] do
   ruby_files = Dir["{app,lib,spec,db}/**/*.rb"]
   failures = ruby_files.reject { |file| system(RbConfig.ruby, "-c", file, out: File::NULL) }
   abort "Syntax failures: #{failures.join(', ')}" if failures.any?
 end
 
 namespace :quality do
+  desc "Run critical incident regressions three times and report outcomes, latency and provider cost"
+  task :incidents do
+    require_relative "spec/support/incident_regressions"
+    report = IncidentRegressions.run
+    puts JSON.pretty_generate(report)
+    abort "Critical incident regression failed" unless report.fetch(:passed)
+  end
+
   desc "Check the current diff and run explicitly selected behavior specs (BASE=HEAD SPEC='spec/...')"
   task :focused do
     base = ENV.fetch("BASE", "HEAD")

@@ -11,8 +11,8 @@ module Agentkit
   # existing scoped Memory store and supersede non-destructively.
   module Harness
     MEMORY_TYPE = "harness_checkpoint"
-    SCHEMA_VERSION = 2
-    SUPPORTED_SCHEMA_VERSIONS = [1, SCHEMA_VERSION].freeze
+    SCHEMA_VERSION = 3
+    SUPPORTED_SCHEMA_VERSIONS = [1, 2, SCHEMA_VERSION].freeze
     VERDICTS = %w[verified failed unresolved].freeze
     STATUSES = %w[pending running blocked completed failed].freeze
     ACTIVE_MEMORY_STATUSES = %w[raw embedded consolidated].freeze
@@ -64,7 +64,11 @@ module Agentkit
 
       def initialize(objective:, criteria:, constraints: [], scope: {}, protected_resources: [],
                      required_approvals: nil, approvals: nil, required_outputs: [],
-                     id: nil, max_steps: nil, metadata: {})
+                     require_verification: false, id: nil, max_steps: nil, metadata: {})
+        unless [true, false].include?(require_verification)
+          raise ArgumentError, "require_verification must be a boolean"
+        end
+
         @id = (id || SecureRandom.uuid).to_s.strip.freeze
         @objective = objective.to_s.strip.freeze
         @criteria = normalize_criteria(criteria)
@@ -75,6 +79,7 @@ module Agentkit
         @required_approvals = normalize_names(approval_values || [])
         @required_outputs = Array(required_outputs).map { |name| name.to_s.strip.freeze }
                                                    .reject(&:empty?).uniq.freeze
+        @require_verification = require_verification
         @max_steps = Integer(max_steps || Agentkit.config.harness.max_steps)
         @metadata = Harness.deep_freeze(Harness.stringify_keys(metadata || {}))
         validate!
@@ -84,6 +89,7 @@ module Agentkit
       def criterion(id) = criteria.find { |item| item.id == id.to_s }
       def constraint(id) = constraints.find { |item| item.id == id.to_s }
       def requirement(id) = criterion(id) || constraint(id)
+      def verification_required? = @require_verification
 
       def approval_required_for?(name)
         value = name.to_s
@@ -104,7 +110,7 @@ module Agentkit
           "required_outputs" => required_outputs,
           "max_steps" => max_steps,
           "metadata" => metadata
-        }
+        }.tap { |data| data["require_verification"] = true if verification_required? }
       end
 
       def digest = Harness.digest(to_h)
@@ -117,6 +123,7 @@ module Agentkit
           constraints: data["constraints"] || [], scope: data["scope"] || {},
           protected_resources: data["protected_resources"] || [],
           required_approvals: data["required_approvals"] || [],
+          require_verification: data.fetch("require_verification", false),
           max_steps: data.fetch("max_steps"), metadata: data["metadata"] || {}
         )
       end
@@ -238,7 +245,7 @@ module Agentkit
     Evaluation = Struct.new(
       :complete, :status, :missing_criteria, :failed_criteria, :unresolved_criteria,
       :missing_constraints, :failed_constraints, :unresolved_constraints,
-      :missing_outputs, :missing_approvals, :step_count, :max_steps,
+      :missing_outputs, :missing_approvals, :step_count, :max_steps, :verification_status,
       keyword_init: true
     ) do
       def complete? = !!complete
@@ -250,24 +257,25 @@ module Agentkit
           missing_constraints: missing_constraints, failed_constraints: failed_constraints,
           unresolved_constraints: unresolved_constraints,
           missing_outputs: missing_outputs, missing_approvals: missing_approvals,
-          step_count: step_count, max_steps: max_steps
+          step_count: step_count, max_steps: max_steps, verification_status: verification_status
         }
       end
     end
 
     class Progress
       attr_reader :goal, :status, :step_count, :outputs, :evidence, :approvals, :decisions,
-                  :lessons, :open_issues, :next_action, :created_at, :updated_at
+                  :lessons, :open_issues, :next_action, :created_at, :updated_at, :verification
 
       def initialize(goal:, status: "pending", step_count: 0, outputs: {}, evidence: {},
                      approvals: {}, decisions: [], lessons: [], open_issues: [], next_action: nil,
-                     created_at: Time.now.utc, updated_at: Time.now.utc, telemetry_context: nil)
+                     verification: nil, created_at: Time.now.utc, updated_at: Time.now.utc, telemetry_context: nil)
         @goal = goal.is_a?(Goal) ? goal : Goal.from_h(goal)
         @status = status.to_s
         @step_count = Integer(step_count)
         @outputs = Harness.stringify_keys(outputs || {})
         @evidence = normalize_evidence(evidence)
         @approvals = normalize_approvals(approvals)
+        @verification = normalize_verification(verification)
         @decisions = normalize_log(decisions)
         @lessons = normalize_log(lessons)
         @open_issues = normalize_log(open_issues)
@@ -307,6 +315,9 @@ module Agentkit
         ensure_mutable!
         key = required_text(name, "output name")
         ref = required_text(reference, "output reference")
+        if goal.verification_required? && goal.required_outputs.include?(key) && value.nil? && digest.nil?
+          raise ArgumentError, "verified output #{key.inspect} requires its contents or content digest"
+        end
         @outputs[key] = {
           "reference" => ref,
           "digest" => Harness.valid_digest!(digest || Harness.digest(value.nil? ? ref : value)),
@@ -328,6 +339,48 @@ module Agentkit
           summary: summary, value: value, digest: digest
         )
         @evidence[criterion_id] = item
+        @status = "running" if @status == "pending"
+        touch!
+      end
+
+      def verification_snapshot
+        { "outputs" => Harness.stringify_keys(outputs), "evidence" => evidence.transform_values(&:to_h) }
+      end
+
+      def review_subject_digest(snapshot)
+        Harness.digest(snapshot.merge("previous_review" => verification&.fetch("review_digest")))
+      end
+
+      def verification_status
+        return goal.verification_required? ? "missing" : "not_required" unless verification
+        return "rejected" unless verification.fetch("accepted")
+
+        current = Harness.digest(verification_snapshot)
+        Harness.secure_equal?(verification.fetch("applied_digest"), current) ? "verified" : "stale"
+      end
+
+      def apply_review!(review)
+        ensure_mutable!
+        unless review.is_a?(Verifier::Review) && goal.id == review.goal_id &&
+               Harness.secure_equal?(goal.digest, review.goal_digest)
+          raise VerificationError, "review does not match harness goal contract"
+        end
+        return self if verification&.fetch("review_digest") == review.review_digest &&
+                       verification_status == "verified"
+
+        snapshot = verification_snapshot
+        unless Harness.secure_equal?(review_subject_digest(snapshot), review.subject_digest)
+          raise VerificationError, "review is stale: outputs, evidence or review state changed"
+        end
+
+        items = review.accepted? ? reviewed_evidence(review) : {}
+        snapshot.fetch("evidence").merge!(items.transform_values(&:to_h))
+        record = normalize_verification(
+          "accepted" => review.accepted?, "review_digest" => review.review_digest,
+          "subject_digest" => review.subject_digest, "applied_digest" => Harness.digest(snapshot)
+        )
+        @evidence.merge!(items)
+        @verification = record
         @status = "running" if @status == "pending"
         touch!
       end
@@ -411,7 +464,9 @@ module Agentkit
         end.map(&:id)
         missing_outputs = goal.required_outputs.reject { |name| outputs.key?(name) }
         missing_approvals = goal.required_approvals.reject { |name| approval_satisfied?(name) }
-        gates_satisfied = unverified.empty? && missing_outputs.empty? && missing_approvals.empty?
+        review_status = verification_status
+        gates_satisfied = unverified.empty? && missing_outputs.empty? && missing_approvals.empty? &&
+                          verification_satisfied?(review_status)
         complete = gates_satisfied && status != "failed"
 
         Evaluation.new(
@@ -421,7 +476,7 @@ module Agentkit
           failed_constraints: failed_constraints,
           unresolved_constraints: unresolved_constraints,
           missing_outputs: missing_outputs, missing_approvals: missing_approvals,
-          step_count: step_count, max_steps: goal.max_steps
+          step_count: step_count, max_steps: goal.max_steps, verification_status: review_status
         )
       end
 
@@ -463,7 +518,8 @@ module Agentkit
               "failed constraints=#{report.failed_constraints.inspect}, " \
               "unresolved constraints=#{report.unresolved_constraints.inspect}, " \
               "missing outputs=#{report.missing_outputs.inspect}, " \
-              "missing approvals=#{report.missing_approvals.inspect}"
+              "missing approvals=#{report.missing_approvals.inspect}, " \
+              "verification=#{report.verification_status}"
       end
 
       def complete? = status == "completed"
@@ -494,6 +550,7 @@ module Agentkit
         lines << "Recorded approvals: #{approvals.keys.join(', ')}" if approvals.any?
         lines << "Required outputs: #{goal.required_outputs.join(', ')}" if goal.required_outputs.any?
         lines << "Recorded outputs: #{outputs.keys.join(', ')}" if outputs.any?
+        lines << "Verification: #{verification_status}" if goal.verification_required? || verification
         lines << "Open issues: #{open_issues.map { |item| item['summary'] }.join(' | ')}" if open_issues.any?
         lines << "Lessons: #{lessons.map { |item| item['summary'] }.join(' | ')}" if lessons.any?
         lines << "Next action: #{next_action}" unless next_action.to_s.empty?
@@ -516,7 +573,7 @@ module Agentkit
           "next_action" => next_action,
           "created_at" => created_at.iso8601(6),
           "updated_at" => updated_at.iso8601(6)
-        }
+        }.tap { |data| data["verification"] = verification if verification }
       end
 
       def self.from_h(value, context: nil)
@@ -537,12 +594,39 @@ module Agentkit
           approvals: data["approvals"] || {},
           decisions: data["decisions"] || [], lessons: data["lessons"] || [],
           open_issues: data["open_issues"] || [],
-          next_action: data["next_action"], created_at: data.fetch("created_at"),
+          next_action: data["next_action"], verification: data["verification"], created_at: data.fetch("created_at"),
           updated_at: data.fetch("updated_at"), telemetry_context: context
         )
       end
 
       private
+
+      def reviewed_evidence(review)
+        review.verdicts.to_h do |item|
+          id = item.fetch("criterion_id")
+          raise VerificationError, "unknown reviewed requirement #{id.inspect}" unless goal.requirement(id)
+
+          [id, Evidence.new(criterion_id: id, verdict: item.fetch("verdict"),
+                            source: "verifier:#{review.verifier}:#{review.review_id}",
+                            summary: item["summary"], digest: review.review_digest)]
+        end
+      end
+
+      def normalize_verification(value)
+        return nil if value.nil?
+
+        data = Harness.stringify_keys(value)
+        unless data.is_a?(Hash) && [true, false].include?(data["accepted"])
+          raise HarnessIntegrityError, "invalid verification record"
+        end
+        keys = %w[review_digest subject_digest applied_digest]
+        unless keys.all? { |key| data[key] }
+          raise HarnessIntegrityError, "verification record is missing a digest"
+        end
+
+        record = keys.to_h { |key| [key, Harness.valid_digest!(data.fetch(key))] }
+        Harness.deep_freeze(record.merge("accepted" => data["accepted"]))
+      end
 
       def normalize_evidence(items)
         Harness.stringify_keys(items || {}).to_h do |criterion_id, value|
@@ -617,8 +701,11 @@ module Agentkit
           evidence[requirement.id]&.verified?
         end &&
           goal.required_outputs.all? { |name| outputs.key?(name) } &&
-          goal.required_approvals.all? { |name| approval_satisfied?(name) }
+          goal.required_approvals.all? { |name| approval_satisfied?(name) } &&
+          verification_satisfied?(verification_status)
       end
+
+      def verification_satisfied?(review_status) = %w[verified not_required].include?(review_status)
 
       def approval_satisfied?(requirement)
         approvals.any? do |name, value|
