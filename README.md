@@ -469,6 +469,21 @@ que el host conozca. La cobertura comprueba casos de evaluación declarados;
 el grader comprueba que cada caso cumpla realmente su procedimiento.
 Los diagnósticos son hipótesis para ensayar, no decisiones automáticas.
 
+### Diseño declarativo de equipos
+
+`Organization::TeamBlueprint` convierte cinco respuestas de onboarding en un
+contrato inmutable y verificable: caso de uso seleccionado, baseline obligatorio
+de un agente, candidato opcional, responsabilidades, referencias de prompts y
+tools, handoffs, workflow, calidad, presupuesto y un plan revisable de siete
+días. Rechaza campos desconocidos, capacidades incompletas, gates ausentes,
+workflows cíclicos y presupuestos fuera del `WorkloadContract`.
+
+El blueprint no crea agentes, ejecuta tools, registra un `Flow`, concede
+permisos ni activa una topología. Siempre declara `authorizes: false`,
+`auto_activates: false` y `requires_review: true`. Un candidato queda listo
+sólo para evaluación y debe recorrer los estudios, piloto y gobierno descritos
+abajo. Ver [Declarative team blueprints](docs/TEAM_BLUEPRINT.md).
+
 ### Telemetría y perfiles organizacionales
 
 AgentKit puede medir una composición aprobada sin crear agentes ni cambiar su

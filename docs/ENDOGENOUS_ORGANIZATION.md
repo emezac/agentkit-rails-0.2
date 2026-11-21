@@ -13,10 +13,26 @@ instead of assuming that adding agents helps.
   by trusted host code.
 - A verifier must retain an independent-context or permission boundary.
 - Raw request IDs, prompts, results and context bodies are not stored.
+- Team blueprints store only bounded identifiers, safe references and digests
+  for onboarding, prompts and tool contracts; never callables or credentials.
 - Reports contain bounded identifiers, numeric measurements and evidence
   digests. They do not grant execution authority.
 - Coordination is reported as observable deltas and Pareto relationships. The
   API does not claim to estimate an economic phase-transition parameter.
+
+## P-1: declarative team blueprint
+
+`Organization::TeamBlueprint` captures exactly five bounded intake answers,
+an explicitly selected use case, a mandatory one-agent baseline and an optional
+team candidate. It validates agent responsibilities, tool gates, exact handoff
+contracts, an acyclic workflow, independent quality review, resource budgets
+and a seven-day launch plan before any runtime object exists.
+
+The candidate is a design to evaluate, not a recommendation. The blueprint and
+its optional declarative manifest always expose `authorizes: false`,
+`auto_activates: false` and `requires_review: true`; neither surface registers
+or invokes agents and tools. See [Declarative team
+blueprints](TEAM_BLUEPRINT.md) for the complete contract and example.
 
 ## P0: organizational telemetry
 
@@ -358,8 +374,9 @@ topology or automatically adopt the next candidate.
 
 ## Completion boundary
 
-P0 through P4 complete the safe kernel lifecycle:
+P-1 through P4 complete the safe kernel lifecycle:
 
+0. declare a bounded, review-only blueprint and one-agent baseline;
 1. observe organizational work without extra model calls;
 2. build evidence-bound capability and coordination profiles;
 3. compare approved compositions on disjoint training and holdout evidence;

@@ -4,6 +4,10 @@
 
 ### Added
 
+- Opt-in `Organization::TeamBlueprint` for immutable, digest-addressed team
+  onboarding with a mandatory single-agent baseline, bounded agent, tool,
+  handoff, workflow, quality, budget and seven-day launch contracts, and no
+  execution or activation authority.
 - Opt-in `CompositionalGeneralizationEvaluation` for paired short-to-long and
   cross-domain transfer, local subtask accuracy, family regressions, resource
   exhaustion and an observed no-delegation baseline inside `GovernedStudy`.

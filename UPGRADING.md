@@ -1,5 +1,18 @@
 # Unreleased: compositional evaluation and execution metrics
 
+## Declarative team blueprints
+
+`Organization::TeamBlueprint` is opt-in and requires no migration or backfill.
+It does not change `AgentLoop`, `Flow`, `AgentTool`, routing, permissions or
+runtime registration. Existing applications keep their current behavior.
+
+The host remains responsible for resolving prompt/tool references, registering
+runtime implementations, enforcing the declared budget and deciding whether a
+manifest enters evaluation. A candidate blueprint is not a recommendation or
+activation: it must still pass `CompositionStudy`, `CompositionPilot` and
+`CompositionGovernance` before production routing changes. See
+[Declarative team blueprints](docs/TEAM_BLUEPRINT.md).
+
 No migration is required. `CompositionalGeneralizationEvaluation` is opt-in via
 `GovernedStudy#compositional_evaluation`. Studies that omit it retain their
 legacy digest, probe payload, selection evidence and dossier shape.
