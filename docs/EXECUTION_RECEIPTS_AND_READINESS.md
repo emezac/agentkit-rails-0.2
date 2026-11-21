@@ -38,8 +38,11 @@ the supplied verifier or tools.
 
 `AgentLoop::Outcome` records the selected model route, loaded skill names,
 context-source digests, executed tool-contract digests and attempts, measured
-budget/usage, evidence references, and verifier rejection count. Raw data stays
-inside the run.
+budget/usage, evidence references, verifier rejection count and redacted
+`execution_metrics`. The latter distinguishes direct loop calls from full-subtree
+usage and reports role/depth, tools/subagents, context bytes, compactations,
+duration and limit exhaustion. Raw data stays inside the run. The execution
+receipt remains separately allowlisted and does not copy arbitrary telemetry.
 
 ```ruby
 receipt = Agentkit::Receipt.execution(

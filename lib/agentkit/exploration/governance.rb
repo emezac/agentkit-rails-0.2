@@ -469,6 +469,16 @@ module Agentkit
               raise ConfigurationError, "harness architecture evaluation did not pass"
             end
           end
+          if recommendation.level == "harness"
+            compositional = recommendation.holdout["compositional_evaluation"]
+            compositional_expected = Array(recommendation.holdout_evaluations).any? do |evaluation|
+              evaluation.respond_to?(:compositional_outcomes) && !evaluation.compositional_outcomes.nil?
+            end
+            if (compositional_expected || compositional) &&
+               (!compositional.is_a?(Hash) || compositional["allowed"] != true)
+              raise ConfigurationError, "harness compositional generalization evaluation did not pass"
+            end
+          end
           if incumbent.policy_digest == candidate.policy_digest
             raise ConfigurationError, "exploration review candidate must differ from the incumbent"
           end

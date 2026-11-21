@@ -8,9 +8,13 @@ module Agentkit
                          :exposed_tools, :evidence_refs, :transcript_digest,
                          :budget, :error_code, :parsed, :model_route,
                          :context_sources, :tool_contracts, :verifier_rejections,
+                         :execution_metrics,
                          keyword_init: true) do
       def answered? = stop_reason == "answered"
-      def to_h = members.to_h { |key| [key, key == :usage ? usage.to_h : public_send(key)] }
+      def to_h
+        members.to_h { |key| [key, key == :usage ? usage.to_h : public_send(key)] }
+          .reject { |key, value| key == :execution_metrics && value.nil? }
+      end
     end
     CONTROL_SCHEMAS = [
       { "name" => "search_tools", "description" => "Find and activate authorized tools for the next turn.",
@@ -94,6 +98,10 @@ module Agentkit
       end
       @messages, @evidence, @seen_calls, @turns, @rejections = [], [], [], 0, 0
       @tool_attempts = Hash.new(0)
+      @tool_calls = @agent_tool_calls = @context_total_bytes = @context_peak_bytes = 0
+      @context_call_count = @compactions = @compacted_messages = 0
+      @direct_usage = Usage.zero
+      @run_started_at = monotonic
       @prompt = prompt.to_s
       Agentkit.with_context(@context) do
         @task_summary ||= @prompt.each_char.take(200).join if @task_id
@@ -107,15 +115,23 @@ module Agentkit
             @budget.check!
             schemas = control_schemas + @catalog.schemas
             offered = schemas.map { |schema| schema.fetch("name") }.freeze
-            if context_bytes(schemas) > @settings.max_context_bytes && !compact_context!(schemas)
+            request_bytes = context_bytes(schemas)
+            if request_bytes > @settings.max_context_bytes && !compact_context!(schemas)
               return finish("context_limit")
             end
+            request_bytes = context_bytes(schemas)
+            record_context_size(request_bytes)
             request = Harness.deep_freeze(Harness::DeclarativeData.normalize(@messages, label: "loop messages"))
             @turns += 1
-            turn = LLM.turn(messages: request, tools: Harness.deep_freeze(schemas),
-              model: @profile, max_tokens: [@settings.max_output_tokens,
-                @profile.max_tokens || @settings.max_output_tokens, @budget.remaining_tokens].min,
-              agent: @agent.class.name)
+            usage_before = @budget.usage
+            begin
+              turn = LLM.turn(messages: request, tools: Harness.deep_freeze(schemas),
+                model: @profile, max_tokens: [@settings.max_output_tokens,
+                  @profile.max_tokens || @settings.max_output_tokens, @budget.remaining_tokens].min,
+                agent: @agent.class.name)
+            ensure
+              record_direct_usage_since(usage_before)
+            end
             @messages << turn.message
             return finish(turn.stop_reason) unless %w[answered tool_calls].include?(turn.stop_reason)
             if turn.stop_reason == "answered"
@@ -149,6 +165,7 @@ module Agentkit
             end
             calls = turn.message.fetch("tool_calls")
             return finish("batch_limit") if calls.size > @settings.max_batch
+            @mutex.synchronize { @tool_calls += calls.size }
             ids = calls.map { |call| call.fetch("id") }
             raise AgentLoopProtocolError, "tool call id reused" unless (ids & @seen_calls).empty?
             @seen_calls.concat(ids)
@@ -217,6 +234,8 @@ module Agentkit
       return false if JSON.generate(messages: candidate, tools: schemas).bytesize > @settings.max_context_bytes
 
       @messages = candidate
+      @compactions += 1
+      @compacted_messages += removed.size
       Telemetry.emit("agent_loop.context_compacted", dims: { agent: @agent.class.name },
         measures: { removed_messages: removed.size })
       true
@@ -310,7 +329,10 @@ module Agentkit
         else
           tool = @catalog.fetch_exposed!(name, offered: offered)
           input_schema = @catalog.entries.fetch(name).fetch(:schema).fetch("input_schema")
-          @mutex.synchronize { @tool_attempts[name] += 1 }
+          @mutex.synchronize do
+            @tool_attempts[name] += 1
+            @agent_tool_calls += 1 if tool.metadata["agent_tool"] == true
+          end
           execution = tool.invoke(args, context: @context)
           if execution.attempts > 1
             @mutex.synchronize { @tool_attempts[name] += execution.attempts - 1 }
@@ -376,27 +398,106 @@ module Agentkit
       tool_contracts = @catalog.contract_receipts(@tool_attempts.keys).map do |contract|
         contract.merge("attempts" => @tool_attempts.fetch(contract.fetch("name"))).freeze
       end.freeze
-      outcome = Outcome.new(content: content, stop_reason: reason, usage: @budget.usage,
+      usage = @budget.usage
+      execution_metrics = Harness.deep_freeze(
+        "schema_version" => 1, "loop_role" => loop_role, "delegation_depth" => delegation_depth,
+        "model_turns" => @turns, "direct_model_calls" => @direct_usage.calls,
+        "nested_model_calls" => [usage.calls - @direct_usage.calls, 0].max,
+        "direct_input_tokens" => @direct_usage.input_tokens,
+        "direct_output_tokens" => @direct_usage.output_tokens,
+        "direct_cost_usd" => @direct_usage.cost_usd,
+        "direct_duration_ms" => @direct_usage.duration_ms,
+        "subtree_model_calls" => usage.calls,
+        "subtree_input_tokens" => usage.input_tokens,
+        "subtree_output_tokens" => usage.output_tokens,
+        "subtree_cost_usd" => usage.cost_usd,
+        "tool_calls" => @tool_calls, "subagent_calls" => @agent_tool_calls,
+        "context_call_count" => @context_call_count, "context_total_bytes" => @context_total_bytes,
+        "context_peak_bytes" => @context_peak_bytes, "compactions" => @compactions,
+        "compacted_messages" => @compacted_messages, "duration_ms" => elapsed_ms(@run_started_at),
+        "limit_exhausted" => !limit_resource(reason, error_code).nil?,
+        "limit_resource" => limit_resource(reason, error_code)
+      )
+      outcome = Outcome.new(content: content, stop_reason: reason, usage: usage,
         turns: @turns, loaded_skills: @skills.loaded_names, exposed_tools: @catalog.exposed_names.freeze,
         evidence_refs: @evidence.dup.sort.freeze, transcript_digest: Harness.digest(@messages),
         budget: @budget.snapshot, error_code: error_code,
         parsed: parsed && Harness.deep_freeze(parsed), model_route: @model_route,
         context_sources: @skills.source_receipts, tool_contracts: tool_contracts,
-        verifier_rejections: @rejections).freeze
+        verifier_rejections: @rejections, execution_metrics: execution_metrics).freeze
       Audit.record(event_type: "agent_loop.completed", agent_name: @agent.class.name, status: reason,
                    usage: outcome.usage, context: @context,
                    payload: { transcript_digest: outcome.transcript_digest, stop_reason: reason,
-                              turns: @turns, error_code: error_code })
+                              turns: @turns, error_code: error_code,
+                              execution_metrics: execution_metrics })
       if @task_id
         checkpoint_task!("finished: #{reason}")
         Memory::Continuity.record_episode(task_id: @task_id, summary: @task_summary,
           outcome: outcome, context: @context)
       end
-      Telemetry.emit("agent_loop.completed", dims: { agent: @agent.class.name, stop_reason: reason },
+      Telemetry.emit("agent_loop.completed",
+                     dims: { agent: @agent.class.name, stop_reason: reason,
+                             loop_role: loop_role, delegation_depth: delegation_depth,
+                             limit_resource: execution_metrics["limit_resource"] },
                      measures: { turns: @turns, input_tokens: outcome.usage.input_tokens,
-                                 output_tokens: outcome.usage.output_tokens, cost_usd: outcome.usage.cost_usd })
+                                 output_tokens: outcome.usage.output_tokens, cost_usd: outcome.usage.cost_usd,
+                                 duration_ms: execution_metrics["duration_ms"],
+                                 tool_calls: @tool_calls, subagent_calls: @agent_tool_calls,
+                                 direct_model_calls: execution_metrics["direct_model_calls"],
+                                 nested_model_calls: execution_metrics["nested_model_calls"],
+                                 direct_input_tokens: execution_metrics["direct_input_tokens"],
+                                 direct_output_tokens: execution_metrics["direct_output_tokens"],
+                                 direct_cost_usd: execution_metrics["direct_cost_usd"],
+                                 subtree_model_calls: execution_metrics["subtree_model_calls"],
+                                 subtree_input_tokens: execution_metrics["subtree_input_tokens"],
+                                 subtree_output_tokens: execution_metrics["subtree_output_tokens"],
+                                 subtree_cost_usd: execution_metrics["subtree_cost_usd"],
+                                 context_call_count: @context_call_count,
+                                 context_total_bytes: @context_total_bytes,
+                                 context_peak_bytes: @context_peak_bytes,
+                                 compactions: @compactions, compacted_messages: @compacted_messages,
+                                 limit_exhausted: execution_metrics["limit_exhausted"] })
       outcome
     end
+
+    def record_context_size(bytes)
+      @context_call_count += 1
+      @context_total_bytes += bytes
+      @context_peak_bytes = [@context_peak_bytes, bytes].max
+    end
+
+    # The budget view contains this loop and every descendant. Taking the
+    # delta around the provider call yields exclusive usage even when LLM.turn
+    # charges a response and subsequently rejects its shape or size.
+    def record_direct_usage_since(before)
+      after = @budget.usage
+      delta = Usage.new(
+        input_tokens: [after.input_tokens - before.input_tokens, 0].max,
+        output_tokens: [after.output_tokens - before.output_tokens, 0].max,
+        cost_usd: [after.cost_usd - before.cost_usd, 0.0].max,
+        duration_ms: [after.duration_ms - before.duration_ms, 0].max,
+        calls: [after.calls - before.calls, 0].max
+      )
+      @direct_usage += delta
+    end
+
+    def delegation_depth = Integer(@context.loop_state&.fetch(:depth, 0) || 0)
+    def loop_role = delegation_depth.zero? ? "root" : "delegate"
+
+    def limit_resource(reason, error_code)
+      return error_code.to_s unless error_code.to_s.empty? || reason != "budget_exhausted"
+
+      { "turn_limit" => "turns", "context_limit" => "context", "batch_limit" => "batch",
+        "max_tokens" => "model_output_tokens" }[reason]
+    end
+
+    def elapsed_ms(started)
+      return 0 unless started
+
+      ((monotonic - started) * 1_000).round
+    end
+
+    def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
     def route_name(selected)
       return selected.to_s if selected.is_a?(Symbol)

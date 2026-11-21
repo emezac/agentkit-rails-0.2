@@ -32,6 +32,12 @@ RSpec.describe Agentkit::AgentTool do
     expect(result).to be_answered
     expect(result.usage.calls).to eq(5)
     expect(result.usage.total_tokens).to eq(75)
+    expect(result.execution_metrics).to include(
+      "direct_model_calls" => 2, "nested_model_calls" => 3,
+      "direct_input_tokens" => 20, "direct_output_tokens" => 10,
+      "subtree_model_calls" => 5, "subtree_input_tokens" => 50,
+      "subtree_output_tokens" => 25
+    )
     expect(captured.first.tenant_key).to eq("acme")
     expect(captured.first.principal).to eq("human:1")
     expect(captured.first.to_h).not_to have_key(:loop_state)
@@ -40,6 +46,20 @@ RSpec.describe Agentkit::AgentTool do
     expect(child_result["usage"]["calls"]).to eq(3)
     expect(child_result["status"]).to eq("answered")
     expect(child_result["answer"]).to eq("No balance access")
+
+    turns = emitted("llm.turn")
+    expect(turns.count { |event| event.dims[:loop_role] == "root" }).to eq(2)
+    expect(turns.count { |event| event.dims[:loop_role] == "delegate" }).to eq(3)
+    expect(turns.select { |event| event.dims[:loop_role] == "delegate" }
+                .map { |event| event.dims[:delegation_depth] }).to all(eq(1))
+    delegation = emitted("agent_tool.completed").last
+    expect(delegation.dims).to include(tool: "delegate", status: "answered", delegation_depth: 1)
+    expect(delegation.measures).to include(turns: 3, input_tokens: 30, output_tokens: 15,
+                                            direct_model_calls: 3, nested_model_calls: 0,
+                                            direct_input_tokens: 30, subtree_input_tokens: 30,
+                                            limit_exhausted: false)
+    expect(delegation.measures[:context_peak_bytes]).to be > 0
+    expect(delegation.to_h.to_s).not_to include("inspect", "No balance access")
   end
 
   it "stops recursive delegation at the configured depth" do

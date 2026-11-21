@@ -8,8 +8,14 @@ module Agentkit
       Evaluation = Struct.new(:policy_name, :policy_version, :policy_digest,
                               :history_digest, :world_count, :mean_quality,
                               :mean_cost, :mean_latency, :task_scores, :world_digests, :task_outcomes,
+                              :compositional_outcomes,
                               keyword_init: true) do
-        def to_h = members.to_h { |key| [key, public_send(key)] }.reject { |key, value| key == :task_outcomes && value.nil? }
+        OPTIONAL_OUTCOMES = %i[task_outcomes compositional_outcomes].freeze
+
+        def to_h
+          members.to_h { |key| [key, public_send(key)] }
+            .reject { |key, value| OPTIONAL_OUTCOMES.include?(key) && value.nil? }
+        end
       end
       Selection = Struct.new(:study_digest, :selected, :training_world_ids,
                              :evidence_digest, keyword_init: true)
@@ -17,19 +23,26 @@ module Agentkit
                             :min_holdout_worlds, :min_training_worlds, :pareto_epsilon,
                             keyword_init: true)
       attr_reader :id, :digest, :base, :manifests, :context, :repetitions, :settings,
-                  :architecture_evaluation, :delegation_diagnostics
+                  :architecture_evaluation, :compositional_evaluation, :delegation_diagnostics
 
       def initialize(id:, base:, revisions:, training_tasks:, holdout_tasks:,
                      executor:, executor_digest:, repetitions: 2, context: Context.resolve, goal: nil,
-                     architecture_evaluation: nil, delegation_diagnostics: nil)
+                     architecture_evaluation: nil, compositional_evaluation: nil,
+                     delegation_diagnostics: nil)
         @id = id.to_s.freeze
         raise HarnessExperimentError, "study id is required" if @id.empty?
         @base, @context, @executor = base, context, executor
         @scope = Scope.resolve(context: context)
         @architecture_evaluation = architecture_evaluation
+        @compositional_evaluation = compositional_evaluation
         @delegation_diagnostics = delegation_diagnostics
         if architecture_evaluation && !architecture_evaluation.is_a?(ArchitectureEvaluation)
           raise HarnessExperimentError, "architecture_evaluation must be an ArchitectureEvaluation contract"
+        end
+        if compositional_evaluation &&
+           !compositional_evaluation.is_a?(CompositionalGeneralizationEvaluation)
+          raise HarnessExperimentError,
+                "compositional_evaluation must be a CompositionalGeneralizationEvaluation contract"
         end
         if delegation_diagnostics &&
            (!delegation_diagnostics.is_a?(DelegationDiagnostics::Report) ||
@@ -61,6 +74,7 @@ module Agentkit
           goal_digest: goal&.digest
         }
         identity[:architecture_evaluation] = architecture_evaluation.to_h if architecture_evaluation
+        identity[:compositional_evaluation] = compositional_evaluation.to_h if compositional_evaluation
         identity[:delegation_diagnostics_digest] = delegation_diagnostics.digest if delegation_diagnostics
         @digest = Harness.digest(identity).freeze
       end
@@ -96,9 +110,7 @@ module Agentkit
         evaluations = evaluate_worlds(training_worlds, "training", manifests.keys)
         incumbent = evaluations.first
         eligible = evaluations.select do |evaluation|
-          evaluation.equal?(incumbent) || !architecture_evaluation ||
-            architecture_evaluation.compare(incumbent: incumbent, candidate: evaluation,
-                                             tasks: @tasks.fetch("training")).fetch("allowed")
+          evaluation.equal?(incumbent) || training_candidate_allowed?(incumbent, evaluation)
         end
         frontier = pareto(eligible)
         best = frontier.sort_by { |e| [-e.mean_quality, e.mean_cost, e.mean_latency, e.policy_name] }.first
@@ -141,9 +153,12 @@ module Agentkit
         architecture = architecture_report(training, holdout, selection.selected)
         architecture_allowed = !architecture ||
                                (architecture["training"]["allowed"] && architecture["holdout"]["allowed"])
-        eligible &&= architecture_allowed
+        compositional = compositional_report(training, holdout, selection.selected)
+        compositional_allowed = !compositional || compositional["allowed"] == true
+        eligible &&= architecture_allowed && compositional_allowed
         holdout_details = {}
         holdout_details["architecture_evaluation"] = architecture if architecture
+        holdout_details["compositional_evaluation"] = compositional if compositional
         holdout_details["delegation_diagnostics"] = delegation_diagnostics.to_h if delegation_diagnostics
         recommendation = Exploration::Recommendation.new(
           status: eligible ? "recommend_review" : "retain", level: "harness",
@@ -162,7 +177,7 @@ module Agentkit
           }.merge(holdout_details),
           comparison: comparison, requires_review: true, auto_promoted: false,
           reason: eligible ? "statistically_significant_holdout_improvement" :
-                  (architecture_allowed ? "holdout_gate_failed" : "architecture_gate_failed")
+                  gate_failure_reason(architecture_allowed, compositional_allowed)
         )
         recommendation.each_pair { |_, value| Harness.deep_freeze(value) }
         recommendation.freeze
@@ -204,6 +219,27 @@ module Agentkit
 
       private
 
+      def training_candidate_allowed?(incumbent, candidate)
+        architecture_allowed = !architecture_evaluation ||
+                               architecture_evaluation.compare(
+                                 incumbent: incumbent, candidate: candidate,
+                                 tasks: @tasks.fetch("training")
+                               ).fetch("allowed") == true
+        compositional_allowed = !compositional_evaluation ||
+                                compositional_evaluation.training_compare(
+                                  incumbent: incumbent, candidate: candidate,
+                                  tasks: @tasks.fetch("training")
+                                ).fetch("allowed") == true
+        architecture_allowed && compositional_allowed
+      end
+
+      def gate_failure_reason(architecture_allowed, compositional_allowed)
+        return "architecture_gate_failed" unless architecture_allowed
+        return "compositional_generalization_gate_failed" unless compositional_allowed
+
+        "holdout_gate_failed"
+      end
+
       def architecture_report(training, holdout, selected)
         return unless architecture_evaluation
         {
@@ -218,6 +254,17 @@ module Agentkit
         }
       end
 
+      def compositional_report(training, holdout, selected)
+        return unless compositional_evaluation
+
+        compositional_evaluation.compare(
+          training_incumbent: training.first,
+          training_candidate: training.find { |evaluation| evaluation.policy_name == selected },
+          holdout_incumbent: holdout.first, holdout_candidate: holdout.last,
+          training_tasks: @tasks.fetch("training"), holdout_tasks: @tasks.fetch("holdout")
+        )
+      end
+
       def scope_data
         { "tenant_key" => @scope.tenant_key || "__global__", "account_id" => @scope.account_id }
       end
@@ -229,6 +276,12 @@ module Agentkit
         end
         all = @tasks.values.flatten
         all.each { |task| architecture_evaluation.task_spec(task) } if architecture_evaluation
+        if compositional_evaluation
+          all.each { |task| compositional_evaluation.task_spec(task) }
+          compositional_evaluation.validate_task_sets!(
+            training_tasks: @tasks.fetch("training"), holdout_tasks: @tasks.fetch("holdout")
+          )
+        end
         if all.size > context.config.harness.max_study_tasks
           raise HarnessExperimentError, "study exceeds task limit"
         end
@@ -307,6 +360,11 @@ module Agentkit
         if architecture_evaluation
           probe["evaluation"] = architecture_evaluation.normalize_outcome(data.fetch("evaluation"), task: task)
         end
+        if compositional_evaluation
+          probe["compositional_evaluation"] = compositional_evaluation.normalize_outcome(
+            data.fetch("compositional_evaluation"), task: task
+          )
+        end
         # No raw output, observations, error text or user supplied references.
         Harness.deep_freeze(probe)
       end
@@ -359,6 +417,14 @@ module Agentkit
               end
             end
             Harness.valid_digest!(probe["output_digest"])
+            if compositional_evaluation
+              normalized = compositional_evaluation.normalize_outcome(
+                probe.fetch("compositional_evaluation"), task: task
+              )
+              unless normalized == probe["compositional_evaluation"]
+                raise HarnessIntegrityError, "invalid stored compositional outcome"
+              end
+            end
             rows << probe
           end
         end
@@ -373,6 +439,14 @@ module Agentkit
                          )]
                        end
                      end
+          compositional_outcomes = if compositional_evaluation
+                                     tasks.to_h do |task|
+                                       [task.digest, compositional_evaluation.summarize(
+                                         samples.select { |probe| probe["task_digest"] == task.digest },
+                                         task: task
+                                       )]
+                                     end
+                                   end
           Evaluation.new(
             policy_name: key, policy_version: manifests.fetch(key).version,
             policy_digest: manifests.fetch(key).digest, history_digest: history,
@@ -380,7 +454,8 @@ module Agentkit
             mean_cost: mean(samples.map { |r| r["cost"] }),
             mean_latency: mean(samples.map { |r| r["latency"] }),
             task_scores: scores.freeze, world_digests: worlds.to_h { |w| [w.id, w.digest] }.freeze,
-            task_outcomes: outcomes && Harness.deep_freeze(outcomes)
+            task_outcomes: outcomes && Harness.deep_freeze(outcomes),
+            compositional_outcomes: compositional_outcomes && Harness.deep_freeze(compositional_outcomes)
           ).freeze
         end.freeze
       end

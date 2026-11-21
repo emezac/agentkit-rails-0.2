@@ -175,6 +175,58 @@ RSpec.describe Agentkit::AgentLoop do
     expect(result.stop_reason).to eq("budget_exhausted")
     expect(result.usage.total_tokens).to eq(21)
     expect(hits).to eq(0)
+    metrics = result.execution_metrics
+    expect(metrics).to include("limit_exhausted" => true, "limit_resource" => "tokens",
+                               "loop_role" => "root", "delegation_depth" => 0)
+    event = emitted("agent_loop.completed").last
+    expect(event.dims).to include(loop_role: "root", delegation_depth: 0, limit_resource: "tokens")
+    expect(event.measures[:limit_exhausted]).to be(true)
+  end
+
+  it "emits privacy-safe context and execution metrics for every model turn" do
+    lookup = tool { "PRIVATE TOOL RESULT" }
+    fake_llm.respond_with_turns(
+      { input_tokens: 17, output_tokens: 5, tool_calls: [call_tool("read", "balance")] },
+      { input_tokens: 23, output_tokens: 4, content: "done" }
+    )
+
+    result = run_loop(tools: [lookup], eager_tools: ["balance"])
+
+    expect(result.execution_metrics).to include(
+      "schema_version" => 1, "loop_role" => "root", "delegation_depth" => 0,
+      "model_turns" => 2, "direct_model_calls" => 2, "nested_model_calls" => 0,
+      "direct_input_tokens" => 40, "direct_output_tokens" => 9,
+      "subtree_model_calls" => 2, "subtree_input_tokens" => 40,
+      "subtree_output_tokens" => 9, "tool_calls" => 1,
+      "subagent_calls" => 0, "context_call_count" => 2,
+      "limit_exhausted" => false, "limit_resource" => nil
+    )
+    expect(result.execution_metrics["context_total_bytes"]).to be >= result.execution_metrics["context_peak_bytes"]
+    expect(result.execution_metrics["context_peak_bytes"]).to be > 0
+    expect(result.execution_metrics).to be_frozen
+
+    turns = emitted("llm.turn")
+    expect(turns.size).to eq(2)
+    expect(turns.map { |event| event.dims.slice(:loop_role, :delegation_depth) }).to all(
+      eq(loop_role: "root", delegation_depth: 0)
+    )
+    expect(turns.map { |event| event.measures[:context_bytes] }).to all(be > 0)
+    expect(turns.map { |event| event.measures[:message_count] }).to eq([2, 4])
+    expect(turns.map { |event| event.measures[:tool_schema_count] }).to eq([2, 2])
+
+    completed = emitted("agent_loop.completed").last
+    expect(completed.measures).to include(turns: 2, tool_calls: 1, subagent_calls: 0,
+                                          direct_model_calls: 2, nested_model_calls: 0,
+                                          direct_input_tokens: 40, subtree_input_tokens: 40,
+                                          context_call_count: 2, limit_exhausted: false)
+    telemetry = (turns.map(&:to_h) + [completed.to_h]).to_s
+    expect(telemetry).not_to include("private user request", "PRIVATE TOOL RESULT")
+  end
+
+  it "keeps manually constructed legacy outcome hashes unchanged when metrics are absent" do
+    outcome = described_class::Outcome.new(usage: Agentkit::Usage.zero)
+
+    expect(outcome.to_h).not_to have_key(:execution_metrics)
   end
 
   it "stops at the shared model-call budget without another paid request" do

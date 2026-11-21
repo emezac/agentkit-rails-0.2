@@ -13,6 +13,12 @@ module Agentkit
         unless max_tokens.is_a?(Integer) && max_tokens.positive?
           raise ConfigurationError, "turn max_tokens must be a positive integer"
         end
+        loop_state = Context.current&.loop_state || {}
+        delegation_depth = Integer(loop_state.fetch(:depth, 0))
+        loop_role = delegation_depth.zero? ? "root" : "delegate"
+        context_bytes = JSON.generate(messages: messages, tools: tools).bytesize
+        message_count = Array(messages).size
+        tool_schema_count = Array(tools).size
         profile = ModelRouter.profile_for(model)
         budget = Context.current&.budget
         budget&.admit_model!(profile) if budget.respond_to?(:admit_model!)
@@ -48,11 +54,17 @@ module Agentkit
         if started
           Audit.record(event_type: "llm.turn", agent_name: agent, status: status,
                        model: profile.model, usage: usage,
-                       payload: { model: profile.model, status: status })
-          Telemetry.emit("llm.turn", dims: { model: profile.model, agent: agent, status: status },
+                       payload: { model: profile.model, status: status, loop_role: loop_role,
+                                  delegation_depth: delegation_depth, context_bytes: context_bytes,
+                                  message_count: message_count, tool_schema_count: tool_schema_count })
+          Telemetry.emit("llm.turn",
+                         dims: { model: profile.model, agent: agent, status: status,
+                                 loop_role: loop_role, delegation_depth: delegation_depth },
                          measures: { input_tokens: usage&.input_tokens || 0,
                                      output_tokens: usage&.output_tokens || 0, cost_usd: usage&.cost_usd || 0,
-                                     duration_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round })
+                                     duration_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1000).round,
+                                     context_bytes: context_bytes, message_count: message_count,
+                                     tool_schema_count: tool_schema_count })
         end
       end
 

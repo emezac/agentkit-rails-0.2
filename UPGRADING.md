@@ -1,3 +1,27 @@
+# Unreleased: compositional evaluation and execution metrics
+
+No migration is required. `CompositionalGeneralizationEvaluation` is opt-in via
+`GovernedStudy#compositional_evaluation`. Studies that omit it retain their
+legacy digest, probe payload, selection evidence and dossier shape.
+`Evaluation#compositional_outcomes` appears only when enabled and remains
+separate from ArchitectureEvaluation's `task_outcomes`.
+
+`AgentLoop::Outcome#execution_metrics` is additive; manually constructed legacy
+outcomes omit it from `to_h` when nil. `llm.turn` and `agent_loop.completed` gain
+redacted dimensions/measures, and `agent_tool.completed` is new. None contain
+prompts, arguments, results, answers or raw exception text. `direct_*` is
+exclusive to one loop, while `subtree_*` and the existing `usage` include its
+descendants. `context_*_bytes` measures serialized JSON bytes, not tokenizer
+tokens.
+
+Compositional source tasks belong to training and matched target tasks belong to
+holdout. Invalid/missing pairs now fail at study construction. A valid
+no-delegation baseline must explicitly report `delegation_enabled: false`,
+`subcalls: 0` and zero subagent activity. In distributed execution, deploy the
+same evaluator, metadata, thresholds and executor to every worker; the contract
+is part of the study digest. See
+[Compositional Generalization Evaluation](docs/COMPOSITIONAL_GENERALIZATION.md).
+
 # Upgrading 1.13.0 → 1.14.0
 
 Unattended runs are opt-in. Install migration 031; migrations 024 (Journal) and

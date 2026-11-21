@@ -35,11 +35,42 @@ module Agentkit
           end
           child_context = context.derive(budget: budget.child, loop_state: child_state)
           child = agent.new(context: child_context)
-          result = child.run_loop(prompt, system: system, model: model)
-          { "answer" => result.answered? ? result.content : nil,
-            "status" => result.stop_reason, "evidence_refs" => result.evidence_refs,
-            "unresolved" => result.answered? ? [] : [result.stop_reason],
-            "usage" => result.usage.to_h }
+          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          result = nil
+          begin
+            result = child.run_loop(prompt, system: system, model: model)
+            { "answer" => result.answered? ? result.content : nil,
+              "status" => result.stop_reason, "evidence_refs" => result.evidence_refs,
+              "unresolved" => result.answered? ? [] : [result.stop_reason],
+              "usage" => result.usage.to_h }
+          ensure
+            metrics = result&.execution_metrics || {}
+            usage = result&.usage || Usage.zero
+            Telemetry.emit(
+              "agent_tool.completed",
+              dims: { tool: name.to_s, child_agent: agent.name, status: result&.stop_reason || "error",
+                      delegation_depth: child_state[:depth], limit_resource: metrics["limit_resource"] },
+              measures: {
+                duration_ms: ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1_000).round,
+                turns: result&.turns || 0, input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens, cost_usd: usage.cost_usd,
+                direct_model_calls: metrics.fetch("direct_model_calls", 0),
+                nested_model_calls: metrics.fetch("nested_model_calls", 0),
+                direct_input_tokens: metrics.fetch("direct_input_tokens", 0),
+                direct_output_tokens: metrics.fetch("direct_output_tokens", 0),
+                direct_cost_usd: metrics.fetch("direct_cost_usd", 0),
+                subtree_model_calls: metrics.fetch("subtree_model_calls", usage.calls),
+                subtree_input_tokens: metrics.fetch("subtree_input_tokens", usage.input_tokens),
+                subtree_output_tokens: metrics.fetch("subtree_output_tokens", usage.output_tokens),
+                subtree_cost_usd: metrics.fetch("subtree_cost_usd", usage.cost_usd),
+                tool_calls: metrics.fetch("tool_calls", 0),
+                subagent_calls: metrics.fetch("subagent_calls", 0),
+                context_total_bytes: metrics.fetch("context_total_bytes", 0),
+                context_peak_bytes: metrics.fetch("context_peak_bytes", 0),
+                limit_exhausted: metrics.fetch("limit_exhausted", false)
+              }
+            )
+          end
         })
     end
   end

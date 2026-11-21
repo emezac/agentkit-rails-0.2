@@ -195,6 +195,7 @@ else
 end
 outcome.usage.to_h
 outcome.budget
+outcome.execution_metrics # uso directo/subárbol, contexto, delegación y límites
 ```
 
 Las skills declaradas se fotografían por ejecución y sus proveedores se evalúan
@@ -319,11 +320,45 @@ Agentkit::LLM::Adapters::Fake.respond_with_turns(
 Este API es opt-in: `chat`, `complete` y Flow siguen disponibles. Cada AgentLoop
 es de un solo uso; el transcript y el presupuesto compartido viven en el proceso
 durante la tarea. No se guardan automáticamente ni se trasladan a Active Job.
-Los eventos llm.turn, agent_loop.skill_loaded, tools_discovered y completed
-permiten medir selección, uso y finalización; el Audit propio del loop almacena
-digests y métricas, no prompts, argumentos, outputs o bloques privados.
-GovernedStudy y ArchitectureEvaluation pueden evaluar este runtime mediante su
-executor, manteniendo holdout, revisión humana y rollback de bindings.
+Los eventos `llm.turn`, `agent_loop.skill_loaded`, `tools_discovered`,
+`agent_loop.completed` y `agent_tool.completed` permiten medir selección, uso,
+delegación y finalización. `llm.turn` distingue raíz/delegado y profundidad;
+los resúmenes separan uso directo del loop y consumo de todo su subárbol. El
+Audit almacena digests y métricas, no prompts, argumentos, outputs o bloques
+privados. GovernedStudy puede evaluar este runtime mediante su executor,
+manteniendo holdout, revisión humana y rollback de bindings.
+
+## Compositional Generalization Evaluation
+
+`Harness::CompositionalGeneralizationEvaluation` añade una compuerta opt-in
+para comprobar que una misma estrategia se transfiera de entradas cortas a
+largas y entre dominios. Mide éxito end-to-end, exactitud de subtareas, uso de
+raíz/subagentes, turnos, subcalls, costo, latencia, límites y regresiones por
+familia contra una base observada sin delegación.
+
+```ruby
+compositional = Agentkit::Harness::CompositionalGeneralizationEvaluation.new(
+  minimum_local_accuracy: 0.85,
+  max_transfer_drop: 0.15
+)
+
+# training_tasks usan stage: "source"; holdout_tasks usan stage: "target".
+# Cada par comparte pair_id, family, axis y strategy.
+study = Agentkit::Harness::GovernedStudy.new(
+  id: "support-compositional-v1", base: manifest,
+  revisions: candidate_revisions,
+  training_tasks: source_tasks, holdout_tasks: target_tasks,
+  executor: run_measured_probe,
+  executor_digest: Agentkit::Harness.digest("runner-grader-v1"),
+  compositional_evaluation: compositional
+)
+```
+
+La selección filtra con source/training; el reporte final empareja esos casos
+con target/holdout y `Exploration::Governance` vuelve a exigir
+`allowed == true`. No se guardan prompts, respuestas ni trazas y no se activa
+ningún candidato sin revisión. Consulta el
+[contrato completo y las tres fases](docs/COMPOSITIONAL_GENERALIZATION.md).
 
 ## Architecture Evaluation en 1.5.1
 
@@ -413,8 +448,10 @@ diagnostics.required_chains
 Importa spans medidos de invocaciones de agentes pares; los tiempos se expresan
 en milisegundos desde el inicio de cada request. No incluyas el span envolvente
 del coordinador como si fuera un par, ni interpretes llamadas al modelo como
-invocaciones distintas del mismo agente. El host exporta estos datos desde sus
-trazas; esta versión no instrumenta automáticamente el ciclo del proveedor.
+invocaciones distintas del mismo agente. El host arma el `TraceSet` desde su
+backend de trazas. El loop y `AgentTool` emiten ahora telemetría redacted por
+llamada, pero no convierten esos eventos automáticamente en un diagnóstico ni
+deciden qué requests pertenecen a la misma cohorte.
 
 El diagnóstico propone `fold_candidate`, `merge_candidate`, `keep_as_tool`,
 `inspect` o `insufficient_evidence`. Para sugerir merge exige frecuencia,

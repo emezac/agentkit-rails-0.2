@@ -4,6 +4,11 @@
 
 ### Added
 
+- Opt-in `CompositionalGeneralizationEvaluation` for paired short-to-long and
+  cross-domain transfer, local subtask accuracy, family regressions, resource
+  exhaustion and an observed no-delegation baseline inside `GovernedStudy`.
+- Privacy-safe per-turn and delegation telemetry separating direct loop usage
+  from full-subtree usage, with context bytes, turns, subcalls and limit status.
 - Opt-in organizational telemetry that propagates redacted team, topology,
   capability, handoff and component-digest dimensions through the execution
   context while aggregating measured LLM usage without storing request bodies.
@@ -27,6 +32,8 @@
 
 ### Changed
 
+- Governed studies can gate selection and holdout recommendations on independent
+  compositional outcomes while preserving legacy identities when disabled.
 - `Harness::Progress#evaluate` and harness receipt generation are non-mutating; explicit `evaluate!`/`complete!` calls retain state-transition behavior.
 - Progressive-loop outcomes expose redacted context-source and tool-contract provenance plus verifier rejection counts.
 
