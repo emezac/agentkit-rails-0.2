@@ -23,19 +23,21 @@ module Agentkit
                             :min_holdout_worlds, :min_training_worlds, :pareto_epsilon,
                             keyword_init: true)
       attr_reader :id, :digest, :base, :manifests, :context, :repetitions, :settings,
-                  :architecture_evaluation, :compositional_evaluation, :delegation_diagnostics
+                  :architecture_evaluation, :compositional_evaluation, :delegation_diagnostics,
+                  :ablation_evaluation
 
       def initialize(id:, base:, revisions:, training_tasks:, holdout_tasks:,
                      executor:, executor_digest:, repetitions: 2, context: Context.resolve, goal: nil,
                      architecture_evaluation: nil, compositional_evaluation: nil,
-                     delegation_diagnostics: nil)
+                     delegation_diagnostics: nil, ablation_evaluation: nil)
         @id = id.to_s.freeze
         raise HarnessExperimentError, "study id is required" if @id.empty?
-        @base, @context, @executor = base, context, executor
+        @base, @context, @executor, @goal = base, context, executor, goal
         @scope = Scope.resolve(context: context)
         @architecture_evaluation = architecture_evaluation
         @compositional_evaluation = compositional_evaluation
         @delegation_diagnostics = delegation_diagnostics
+        @ablation_evaluation = ablation_evaluation
         if architecture_evaluation && !architecture_evaluation.is_a?(ArchitectureEvaluation)
           raise HarnessExperimentError, "architecture_evaluation must be an ArchitectureEvaluation contract"
         end
@@ -43,6 +45,9 @@ module Agentkit
            !compositional_evaluation.is_a?(CompositionalGeneralizationEvaluation)
           raise HarnessExperimentError,
                 "compositional_evaluation must be a CompositionalGeneralizationEvaluation contract"
+        end
+        if ablation_evaluation && !ablation_evaluation.is_a?(AblationEvaluation)
+          raise HarnessExperimentError, "ablation_evaluation must be an AblationEvaluation contract"
         end
         if delegation_diagnostics &&
            (!delegation_diagnostics.is_a?(DelegationDiagnostics::Report) ||
@@ -59,8 +64,9 @@ module Agentkit
           raise HarnessExperimentError, "study requires unique bounded candidates"
         end
         @manifests = { "baseline" => base }
+        validator = CandidateValidator.new(allow_removals: !ablation_evaluation.nil?)
         revisions.each do |revision|
-          report = CandidateValidator.new.validate(base: base, revision: revision, goal: goal)
+          report = validator.validate(base: base, revision: revision, goal: goal)
           raise HarnessCandidateInvalid, "study candidate failed validation: #{revision.id}" unless report.valid?
           @manifests[revision.id] = report.candidate_manifest
         end
@@ -75,6 +81,7 @@ module Agentkit
         }
         identity[:architecture_evaluation] = architecture_evaluation.to_h if architecture_evaluation
         identity[:compositional_evaluation] = compositional_evaluation.to_h if compositional_evaluation
+        identity[:ablation_evaluation] = ablation_evaluation.to_h if ablation_evaluation
         identity[:delegation_diagnostics_digest] = delegation_diagnostics.digest if delegation_diagnostics
         @digest = Harness.digest(identity).freeze
       end
@@ -112,9 +119,24 @@ module Agentkit
         eligible = evaluations.select do |evaluation|
           evaluation.equal?(incumbent) || training_candidate_allowed?(incumbent, evaluation)
         end
-        frontier = pareto(eligible)
-        best = frontier.sort_by { |e| [-e.mean_quality, e.mean_cost, e.mean_latency, e.policy_name] }.first
-        selected = best.mean_quality > incumbent.mean_quality + settings.min_score_improvement ? best.policy_name : "baseline"
+        if ablation_evaluation
+          ablation_candidates = eligible.reject { |e| e.equal?(incumbent) }.select do |evaluation|
+            ablation_evaluation.compare(
+              incumbent: incumbent, candidate: evaluation,
+              base_manifest: base, candidate_manifest: manifests.fetch(evaluation.policy_name),
+              tasks: @tasks.fetch("training"), goal: @goal
+            ).fetch("allowed")
+          end
+          best = ablation_candidates.sort_by do |e|
+            [-e.mean_quality, e.mean_cost, e.mean_latency,
+             manifests.fetch(e.policy_name).components.size, e.policy_name]
+          end.first
+          selected = best ? best.policy_name : "baseline"
+        else
+          frontier = pareto(eligible)
+          best = frontier.sort_by { |e| [-e.mean_quality, e.mean_cost, e.mean_latency, e.policy_name] }.first
+          selected = best.mean_quality > incumbent.mean_quality + settings.min_score_improvement ? best.policy_name : "baseline"
+        end
         Selection.new(study_digest: digest, selected: selected,
                       training_world_ids: world_ids(training_worlds).freeze,
                       evidence_digest: Harness.digest(evaluations.map(&:to_h))).freeze
@@ -149,7 +171,18 @@ module Agentkit
           candidate_digest: candidate.policy_digest, metric: "harness_quality_per_task",
           settings: settings
         )
-        eligible = pareto(holdout).include?(candidate) && comparison.significant
+        ablation = if ablation_evaluation
+                     ablation_evaluation.compare(
+                       incumbent: incumbent, candidate: candidate,
+                       base_manifest: base, candidate_manifest: manifests.fetch(selection.selected),
+                       tasks: @tasks.fetch("holdout"), goal: @goal
+                     )
+                   end
+        eligible = if ablation
+                     ablation["allowed"] == true && comparison.ci_lower >= -ablation_evaluation.max_quality_drop
+                   else
+                     pareto(holdout).include?(candidate) && comparison.significant
+                   end
         architecture = architecture_report(training, holdout, selection.selected)
         architecture_allowed = !architecture ||
                                (architecture["training"]["allowed"] && architecture["holdout"]["allowed"])
@@ -159,6 +192,7 @@ module Agentkit
         holdout_details = {}
         holdout_details["architecture_evaluation"] = architecture if architecture
         holdout_details["compositional_evaluation"] = compositional if compositional
+        holdout_details["ablation_evaluation"] = ablation if ablation
         holdout_details["delegation_diagnostics"] = delegation_diagnostics.to_h if delegation_diagnostics
         recommendation = Exploration::Recommendation.new(
           status: eligible ? "recommend_review" : "retain", level: "harness",
@@ -176,8 +210,12 @@ module Agentkit
             "objectives" => { "quality" => "maximize", "cost" => "minimize", "latency" => "minimize" }
           }.merge(holdout_details),
           comparison: comparison, requires_review: true, auto_promoted: false,
-          reason: eligible ? "statistically_significant_holdout_improvement" :
-                  gate_failure_reason(architecture_allowed, compositional_allowed)
+          reason: if eligible
+                    ablation ? "non_inferior_harness_ablation" : "statistically_significant_holdout_improvement"
+                  else
+                    ablation && ablation["allowed"] == false ? "ablation_regression" :
+                      gate_failure_reason(architecture_allowed, compositional_allowed)
+                  end
         )
         recommendation.each_pair { |_, value| Harness.deep_freeze(value) }
         recommendation.freeze

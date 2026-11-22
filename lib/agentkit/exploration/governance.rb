@@ -455,10 +455,21 @@ module Agentkit
         end
 
         def validate_recommendation!(recommendation)
+          ablation_review = recommendation.respond_to?(:level) && recommendation.level == "harness" &&
+                            recommendation.respond_to?(:reason) && recommendation.reason == "non_inferior_harness_ablation"
+          valid_evidence = if ablation_review
+                             ablation = recommendation.holdout["ablation_evaluation"]
+                             ablation.is_a?(Hash) && ablation["allowed"] == true &&
+                               Array(ablation["components_removed"]).any? &&
+                               !recommendation.comparison.nil?
+                           else
+                             recommendation.respond_to?(:reason) &&
+                               recommendation.reason == "statistically_significant_holdout_improvement" &&
+                               recommendation.comparison&.significant
+                           end
           unless recommendation.respond_to?(:status) && recommendation.status == "recommend_review" &&
                  recommendation.requires_review && !recommendation.auto_promoted &&
-                 recommendation.reason == "statistically_significant_holdout_improvement" &&
-                 recommendation.comparison&.significant &&
+                 valid_evidence &&
                  Array(recommendation.holdout_evaluations).size == 2
             raise ConfigurationError,
                   "only a significant holdout recommendation can enter exploration review"
