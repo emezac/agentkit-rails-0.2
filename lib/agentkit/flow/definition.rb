@@ -103,9 +103,10 @@ module Agentkit
       end
 
       class LoopNode < Base
-        def max        = opts[:max] || 3
-        def until_fn   = opts[:until]
-        def body       = opts[:body] || []
+        def max         = opts[:max] || 3
+        def until_fn    = opts[:until]
+        def body        = opts[:body] || []
+        def stall_limit = opts[:stall_limit]
       end
 
       class RaceNode < Base

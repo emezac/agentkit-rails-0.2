@@ -573,15 +573,19 @@ module Agentkit
     setting :max_response_bytes, default: 64 * 1024
     setting :max_delegation_depth, default: 3
     setting :max_verifier_rejections, default: 2
+    setting :stall_limit, default: nil
 
     def validate
       problems = super
-      (self.class.settings_schema.keys - [:max_cost_usd]).each do |name|
+      (self.class.settings_schema.keys - [:max_cost_usd, :stall_limit]).each do |name|
         value = public_send(name)
         problems << "#{self.class.name}##{name} must be a positive integer" unless value.is_a?(Integer) && value.positive?
       end
       if max_cost_usd && (!max_cost_usd.is_a?(Numeric) || !max_cost_usd.finite? || max_cost_usd <= 0)
         problems << "#{self.class.name}#max_cost_usd must be positive and finite or nil"
+      end
+      if stall_limit && (!stall_limit.is_a?(Integer) || stall_limit <= 0)
+        problems << "#{self.class.name}#stall_limit must be a positive integer or nil"
       end
       problems
     end

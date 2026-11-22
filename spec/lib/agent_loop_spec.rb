@@ -492,4 +492,34 @@ RSpec.describe Agentkit::AgentLoop do
     expect(result.execution_metrics["tainted"]).to be(true)
     expect(result.execution_metrics["taint_sources"]).to include("agent_tool:research")
   end
+
+  it "stops with stalled when repeated tool turns make no progress" do
+    lookup = tool(:lookup) { { status: "unchanged" } }
+    fake_llm.respond_with_turns(
+      { tool_calls: [call_tool("c1", "lookup")] },
+      { tool_calls: [call_tool("c2", "lookup")] },
+      { tool_calls: [call_tool("c3", "lookup")] },
+      { content: "never reached" }
+    )
+
+    result = run_loop(tools: [lookup], eager_tools: ["lookup"], stall_limit: 2)
+    expect(result.stop_reason).to eq("stalled")
+    expect(result.turns).to eq(3)
+    expect(result.execution_metrics).to include("limit_exhausted" => true, "limit_resource" => "stall")
+  end
+
+  it "resets the stall streak when tool outputs progress" do
+    counter = 0
+    lookup = tool(:lookup) { counter += 1; { step: counter } }
+    fake_llm.respond_with_turns(
+      { tool_calls: [call_tool("c1", "lookup")] },
+      { tool_calls: [call_tool("c2", "lookup")] },
+      { tool_calls: [call_tool("c3", "lookup")] },
+      { content: "progressed" }
+    )
+
+    result = run_loop(tools: [lookup], eager_tools: ["lookup"], stall_limit: 1)
+    expect(result).to be_answered
+    expect(result.content).to eq("progressed")
+  end
 end

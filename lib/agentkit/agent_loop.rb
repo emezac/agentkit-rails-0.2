@@ -27,7 +27,7 @@ module Agentkit
 
     def initialize(agent:, model: nil, system: nil, tools: [], skills: nil, eager_tools: [],
                    budget: nil, authorize: nil, authorize_skill: nil, verifier: nil, schema: nil,
-                   task_id: nil, task_summary: nil)
+                   task_id: nil, task_summary: nil, stall_limit: nil)
       raise ConfigurationError, "loop requires an Agent instance" unless agent.is_a?(Agent)
       @agent = agent
       @task_id = task_id && Memory::Continuity.identifier!(task_id)
@@ -38,6 +38,10 @@ module Agentkit
       @settings = base.config.agent_loop.with
       raise ConfigurationError, @settings.validate.join(", ") unless @settings.validate.empty?
       @settings.freeze
+      @stall_limit = stall_limit.nil? ? @settings.stall_limit : stall_limit
+      if @stall_limit && (!@stall_limit.is_a?(Integer) || @stall_limit <= 0)
+        raise ConfigurationError, "stall_limit must be a positive integer or nil"
+      end
       if base.budget.is_a?(ExecutionBudget) && budget && !budget.equal?(base.budget)
         raise ConfigurationError, "an inherited execution budget cannot be replaced"
       end
@@ -103,6 +107,7 @@ module Agentkit
         @used = true
       end
       @messages, @evidence, @seen_calls, @turns, @rejections = [], [], [], 0, 0
+      @last_turn_signature, @stall_streak = nil, 0
       @tool_attempts = Hash.new(0)
       @tool_calls = @agent_tool_calls = @context_total_bytes = @context_peak_bytes = 0
       @context_call_count = @compactions = @compacted_messages = 0
@@ -175,8 +180,12 @@ module Agentkit
             ids = calls.map { |call| call.fetch("id") }
             raise AgentLoopProtocolError, "tool call id reused" unless (ids & @seen_calls).empty?
             @seen_calls.concat(ids)
-            run_batch(calls, offered: offered).each { |message| @messages << message }
+            batch_messages = run_batch(calls, offered: offered)
+            batch_messages.each { |message| @messages << message }
             checkpoint_task!("turn #{@turns} completed") if @task_id
+            if @stall_limit && stalled_turn?(calls, batch_messages)
+              return finish("stalled")
+            end
           end
           finish("turn_limit")
         rescue BudgetExceeded => error
@@ -529,11 +538,26 @@ module Agentkit
     def delegation_depth = Integer(@context.loop_state&.fetch(:depth, 0) || 0)
     def loop_role = delegation_depth.zero? ? "root" : "delegate"
 
+    def stalled_turn?(calls, batch_messages)
+      signature = Harness.digest(
+        "calls" => calls.map { |c| [c["name"], c["arguments"]] },
+        "results" => batch_messages.map { |m| m["content"] },
+        "evidence_count" => @evidence.size
+      )
+      if @last_turn_signature == signature
+        @stall_streak += 1
+      else
+        @last_turn_signature = signature
+        @stall_streak = 0
+      end
+      @stall_streak >= @stall_limit
+    end
+
     def limit_resource(reason, error_code)
       return error_code.to_s unless error_code.to_s.empty? || reason != "budget_exhausted"
 
       { "turn_limit" => "turns", "context_limit" => "context", "batch_limit" => "batch",
-        "max_tokens" => "model_output_tokens" }[reason]
+        "max_tokens" => "model_output_tokens", "stalled" => "stall" }[reason]
     end
 
     def elapsed_ms(started)

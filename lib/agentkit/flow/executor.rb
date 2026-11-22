@@ -421,19 +421,51 @@ module Agentkit
       # ─── loop ────────────────────────────────────────────────────────────────
 
       def run_loop(node)
+        stall_limit = node.stall_limit
+        if stall_limit && (!stall_limit.is_a?(Integer) || stall_limit <= 0)
+          raise FlowDefinitionError, "loop `#{node.name}` stall_limit must be a positive integer"
+        end
         iterations = 0
         converged = false
+        stalled = false
+        last_digest = nil
+        stall_streak = 0
+        body_names = node.body.map(&:name)
         node.max.times do |i|
           iterations = i + 1
           execute_nodes(node.body, iteration: iterations)
           check_run!
           converged = node.until_fn && truthy?(node.until_fn.call(flow_ctx))
           break if converged
+          if stall_limit
+            digest = Harness.digest(body_names.map { |name| [name.to_s, Coder.dump(flow_ctx[name], store: store)] })
+            if digest == last_digest
+              stall_streak += 1
+            else
+              last_digest = digest
+              stall_streak = 0
+            end
+            if stall_streak >= stall_limit
+              stalled = true
+              break
+            end
+          end
         end
-        reason = converged ? :condition_met : :max_iterations
+        reason = if converged
+                   :condition_met
+                 elsif stalled
+                   :stalled
+                 else
+                   :max_iterations
+                 end
         summary = { iterations: iterations, converged: !!converged, reason: reason }
         Telemetry.emit("flow.loop", dims: { flow: run.flow_name, step: node.name, reason: reason },
                                     measures: { iterations: iterations })
+        if stalled
+          error = LoopStalled.new("loop `#{node.name}` stalled after #{iterations} iterations without state change", step: node.name)
+          flow_ctx.set(node.name, Result.err(error, value: summary, **summary))
+          raise error
+        end
         if node.until_fn && !converged
           error = LoopLimitReached.new("loop `#{node.name}` did not converge after #{iterations} iterations", step: node.name)
           flow_ctx.set(node.name, Result.err(error, value: summary, **summary))

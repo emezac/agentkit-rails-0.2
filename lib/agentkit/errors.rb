@@ -85,6 +85,7 @@ module Agentkit
     end
   end
   class LoopLimitReached < StepFailed; end
+  class LoopStalled < LoopLimitReached; end
   class RunCancelled < FlowError; end
   class RunTimedOut  < FlowError; end
   # Raised by the sync executor when it reaches a human_gate and no auto-decision

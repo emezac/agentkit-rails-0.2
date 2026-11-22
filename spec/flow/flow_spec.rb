@@ -303,6 +303,38 @@ RSpec.describe Agentkit::Flow do
       expect(flow.resume(result.run.run_id)).to be_err
     end
 
+    it "stops a flow loop early with LoopStalled when state stops changing" do
+      flow = Class.new(described_class) do
+        def self.name = "StalledFlow"
+        loop_until :spin, max: 5, stall_limit: 1, until: ->(_ctx) { false } do
+          step(:tick) { { value: 1 } }
+        end
+        step(:publish) { raise "must not execute" }
+      end
+
+      result = flow.call
+
+      expect(result.error).to be_a(Agentkit::LoopStalled)
+      expect(result.error).to be_a(Agentkit::LoopLimitReached)
+      expect(result.run.status).to eq("failed")
+      expect(result.run.steps.map(&:step_key)).to eq(%w[tick:1 tick:2])
+      expect(emitted("flow.loop").last.dims[:reason]).to eq(:stalled)
+    end
+
+    it "does not stall a flow loop when body outputs progress each iteration" do
+      flow = Class.new(described_class) do
+        def self.name = "ProgressingFlow"
+        loop_until :refine, max: 4, stall_limit: 1, until: ->(ctx) { ctx[:tick].value == 3 } do
+          step(:tick) { |ctx| (ctx[:tick]&.value || 0) + 1 }
+        end
+      end
+
+      result = flow.call
+
+      expect(result).to be_ok
+      expect(result.value).to eq(iterations: 3, converged: true, reason: :condition_met)
+    end
+
     it "evaluates a resumed loop against each iteration's own output", incident: "flow.iteration_replay" do
       flow = Class.new(described_class) do
         def self.name = "ResumedVerificationFlow"
