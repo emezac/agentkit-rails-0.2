@@ -28,6 +28,7 @@ require_relative "agentkit/skill"
 
 require_relative "agentkit/memory"
 require_relative "agentkit/memory/continuity"
+require_relative "agentkit/memory/knowledge_gaps"
 require_relative "agentkit/memory/consolidation"
 require_relative "agentkit/memory/evaluation"
 require_relative "agentkit/harness"
