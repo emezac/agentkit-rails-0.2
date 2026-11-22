@@ -38,6 +38,16 @@ module Agentkit
         def accept    = opts[:accept]
         def repair    = opts[:repair]
         def max_repairs = opts.fetch(:max_repairs, 0)
+        def input_schema  = opts[:input_schema]
+        def output_schema = opts[:output_schema]
+
+        def normalized_input_schema
+          @normalized_input_schema ||= normalize_contract_schema(input_schema, label: "step #{name} input_schema")
+        end
+
+        def normalized_output_schema
+          @normalized_output_schema ||= normalize_contract_schema(output_schema, label: "step #{name} output_schema")
+        end
 
         # `on_error: :continue` lets a non-essential step fail without taking
         # the run down. The failure is still recorded on the step and in
@@ -46,6 +56,25 @@ module Agentkit
         def tolerant?  = on_error.to_s == "continue"
 
         def executable? = !(agent || cognition || block).nil?
+
+        private
+
+        def normalize_contract_schema(raw, label:)
+          return nil if raw.nil?
+          unless raw.is_a?(Hash) || raw.respond_to?(:to_json_schema) || raw.respond_to?(:json_schema) || raw.respond_to?(:schema)
+            raise ArgumentError, "#{label} must be a schema hash"
+          end
+
+          source = raw.respond_to?(:to_json_schema) ? raw.to_json_schema : raw
+          normalized = Harness::DeclarativeData.normalize(Schema.normalize(source), label: label)
+          raise ArgumentError, "#{label} must normalize to a hash" unless normalized.is_a?(Hash)
+          if normalized.key?("type")
+            types = Array(normalized["type"]).map(&:to_s)
+            unknown = types - Schema::TYPE_CLASSES.keys
+            raise ArgumentError, "#{label} has unknown type #{unknown.join(', ')}" if unknown.any?
+          end
+          Harness.deep_freeze(normalized)
+        end
       end
 
       # Fan-out. `over` is a list of agents/roles or a lambda returning a
@@ -204,6 +233,20 @@ module Agentkit
           case n
           when Nodes::StepNode
             problems << "step `#{n.name}` has no agent, cognition or block" unless n.executable?
+            if n.input_schema
+              begin
+                n.normalized_input_schema
+              rescue StandardError => error
+                problems << "step `#{n.name}` has an invalid input_schema: #{error.message}"
+              end
+            end
+            if n.output_schema
+              begin
+                n.normalized_output_schema
+              rescue StandardError => error
+                problems << "step `#{n.name}` has an invalid output_schema: #{error.message}"
+              end
+            end
             if n.accept || n.repair || n.max_repairs != 0
               problems << "step `#{n.name}` needs a callable accept: check" unless n.accept.respond_to?(:call)
               problems << "step `#{n.name}` acceptance requires effect: :read_only" unless n.effect == :read_only

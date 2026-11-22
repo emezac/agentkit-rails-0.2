@@ -110,6 +110,9 @@ module Agentkit
             return mark_skipped(node, step) unless passes_guard?(node)
 
             input = resolve_input(node.input_fn)
+            if node.input_schema
+              Schema.validate!(input, node.normalized_input_schema, label: "step #{node.name} input")
+            end
             with_retries(node, step) { invoke(node, input) }
           rescue StepFailed => e
             raise unless node.respond_to?(:tolerant?) && node.tolerant?
@@ -127,6 +130,14 @@ module Agentkit
         return tolerate(node, step, result) if result.err? && node.respond_to?(:tolerant?) && node.tolerant?
 
         result, acceptance = accept_result(node, step, result) if result.ok? && node.accept
+        if result.ok? && node.output_schema
+          begin
+            Schema.validate!(result.value, node.normalized_output_schema, label: "step #{node.name} output")
+          rescue SchemaValidationError => e
+            result = Result.err(e)
+            return tolerate(node, step, result) if node.respond_to?(:tolerant?) && node.tolerant?
+          end
+        end
         complete_step(node, step, result, acceptance: acceptance)
       end
 

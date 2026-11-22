@@ -522,6 +522,88 @@ RSpec.describe Agentkit::Flow do
       expect(result.run.steps_completed).to eq(1)
     end
   end
+
+  describe "typed node contracts" do
+    let(:order_schema) do
+      {
+        type: "object",
+        required: %w[order_id total],
+        additionalProperties: false,
+        properties: {
+          order_id: { type: "integer" },
+          total: { type: "number" }
+        }
+      }
+    end
+
+    it "rejects a malformed step input_schema or output_schema on validate!" do
+      bad_input = Class.new(described_class) do
+        def self.name = "BadInputSchemaFlow"
+        step(:bad, input_schema: { type: "bogus" }) { |x| x }
+      end
+      expect { bad_input.validate! }.to raise_error(Agentkit::FlowDefinitionError, /invalid input_schema/)
+
+      bad_output = Class.new(described_class) do
+        def self.name = "BadOutputSchemaFlow"
+        step(:bad, output_schema: "not-a-schema") { |x| x }
+      end
+      expect { bad_output.validate! }.to raise_error(Agentkit::FlowDefinitionError, /invalid output_schema/)
+    end
+
+    it "validates input_schema and output_schema across connected steps" do
+      schema = order_schema
+      flow = Class.new(described_class) do
+        def self.name = "TypedHandoffFlow"
+        step(:extract, output_schema: schema) do |ctx|
+          { order_id: ctx.input[:id], total: 99.5 }
+        end
+        step(:invoice,
+             input: ->(ctx) { ctx[:extract].value },
+             input_schema: schema,
+             output_schema: { type: "object", required: ["status"], properties: { status: { type: "string" } } }) do |payload|
+          { status: "invoiced:#{payload[:order_id]}" }
+        end
+      end
+
+      result = flow.call(id: 7)
+      expect(result).to be_ok
+      expect(result.value).to eq(status: "invoiced:7")
+    end
+
+    it "fails before invoking a step when input_schema is violated" do
+      invoked = 0
+      schema = order_schema
+      flow = Class.new(described_class) do
+        def self.name = "InvalidInputContractFlow"
+        step(:charge, input_schema: schema) do |_input|
+          invoked += 1
+          { ok: true }
+        end
+      end
+
+      result = flow.call(order_id: "wrong-type")
+      expect(result).to be_err
+      expect(invoked).to eq(0)
+      expect(result.error).to be_a(Agentkit::StepFailed)
+      expect(result.error.cause_error).to be_a(Agentkit::SchemaValidationError)
+    end
+
+    it "fails a step and stops downstream nodes when output_schema is violated" do
+      downstream = 0
+      schema = order_schema
+      flow = Class.new(described_class) do
+        def self.name = "InvalidOutputContractFlow"
+        step(:extract, output_schema: schema) { { order_id: 1 } }
+        step(:publish) { downstream += 1 }
+      end
+
+      result = flow.call
+      expect(result).to be_err
+      expect(downstream).to eq(0)
+      expect(result.error).to be_a(Agentkit::StepFailed)
+      expect(result.error.cause_error).to be_a(Agentkit::SchemaValidationError)
+    end
+  end
 end
 
 RSpec.describe "Agentkit::Flow tolerant steps" do
