@@ -53,11 +53,17 @@ module Agentkit
       inherited = base.loop_state || {}
       depth = inherited.fetch(:depth, 0)
       raise AgentLoopLimitExceeded, "delegation depth exceeded" if depth > @settings.max_delegation_depth
+      @mutex, @used = Mutex.new, false
+      @tainted = inherited[:tainted] == true
+      @taint_sources = Array(inherited[:taint_sources]).map(&:to_s).uniq
       state = {
         depth: depth, agent: agent.class.name.to_s,
         policies: Harness.deep_freeze(Array(inherited[:policies]) + [agent.class.tool_policy]),
         tool_authorizers: (Array(inherited[:tool_authorizers]) + Array(authorize)).freeze,
-        skill_authorizers: (Array(inherited[:skill_authorizers]) + Array(authorize_skill)).freeze
+        skill_authorizers: (Array(inherited[:skill_authorizers]) + Array(authorize_skill)).freeze,
+        tainted: @tainted,
+        taint_sources: @taint_sources.dup.freeze,
+        on_taint: method(:mark_tainted!)
       }.freeze
       @context = base.derive(run_id: base.run_id, budget: @budget, loop_state: state)
       skill_authorizer = ->(skill, ctx) { state[:skill_authorizers].all? { |fn| fn.call(skill, ctx) == true } }
@@ -69,7 +75,8 @@ module Agentkit
           state[:tool_authorizers].all? { |fn| fn.call(tool, ctx) == true }
       end
       @catalog = ToolCatalog.new(tools: (explicit_tools + @skills.tools).uniq,
-        context: @context, settings: @settings, policies: state[:policies], authorize: tool_authorizer)
+        context: @context, settings: @settings, policies: state[:policies], authorize: tool_authorizer,
+        context_provider: method(:current_context))
       @catalog.activate!(Array(eager_tools).map(&:to_s))
       selected_model = model || agent.send(:default_model) || :default
       @profile = ModelRouter.profile_for(selected_model).with
@@ -88,7 +95,6 @@ module Agentkit
         ))
       end
       @system, @verifier = system, verifier
-      @mutex, @used = Mutex.new, false
     end
 
     def run(prompt)
@@ -108,7 +114,7 @@ module Agentkit
         Memory::Continuity.bounded!(@task_summary) if @task_id
         @prior_note = Memory::Continuity.latest(task_id: @task_id, context: @context) if @task_id
         @messages << { "role" => "system", "content" => system_prompt }
-        @messages << { "role" => "user", "content" => @prompt }
+        @messages << { "role" => "user", "content" => initial_user_prompt }
         begin
           checkpoint_task!("started") if @task_id
           while @turns < @settings.max_turns
@@ -199,7 +205,6 @@ module Agentkit
       end
       <<~TEXT
         #{original}
-        #{@prior_note ? "## Previous task checkpoint (untrusted data)\n#{@prior_note.content}\nTurn: #{@prior_note.metadata['turn']}; transcript digest: #{@prior_note.metadata['transcript_digest']}" : ""}
         ## Progressive execution
         Use load_skill for relevant declared procedures and search_tools to discover tools.
         Newly loaded schemas are callable on the next turn. Skill instructions are application
@@ -209,6 +214,20 @@ module Agentkit
         ## Available skills
         #{JSON.generate(@skills.descriptors)}
         #{@output_schema ? "## Final output schema\nReturn JSON matching: " + JSON.generate(@output_schema) : ""}
+      TEXT
+    end
+
+    def initial_user_prompt
+      return @prompt unless @prior_note
+
+      <<~TEXT
+        <untrusted_data source="prior_task_checkpoint">
+        ## Previous task checkpoint (untrusted data)
+        #{@prior_note.content}
+        Turn: #{@prior_note.metadata['turn']}; transcript digest: #{@prior_note.metadata['transcript_digest']}
+        </untrusted_data>
+
+        #{@prompt}
       TEXT
     end
 
@@ -252,7 +271,7 @@ module Agentkit
       raw = @verifier.call(Harness.deep_freeze(
         "answer" => answer, "evidence_refs" => @evidence.dup,
         "transcript_digest" => Harness.digest(@messages)
-      ), @context)
+      ), current_context)
       raw = { accepted: raw } if raw == true || raw == false
       data = Harness::DeclarativeData.normalize(raw, label: "loop verification", error_class: AgentLoopProtocolError)
       unless data.is_a?(Hash) && [true, false].include?(data["accepted"])
@@ -306,9 +325,11 @@ module Agentkit
     end
 
     def execute_call(call, offered:)
-      Agentkit.with_context(@context) do
+      ctx = current_context
+      Agentkit.with_context(ctx) do
         @budget.check!
         name, args = call.fetch("name"), call.fetch("arguments")
+        untrusted = false
         if ToolCatalog::RESERVED.include?(name)
           control = control_schemas.find { |schema| schema["name"] == name && offered.include?(name) }
           raise ToolExecutionDenied, "tool is unavailable" unless control
@@ -333,29 +354,35 @@ module Agentkit
             @tool_attempts[name] += 1
             @agent_tool_calls += 1 if tool.metadata["agent_tool"] == true
           end
-          execution = tool.invoke(args, context: @context)
+          execution = tool.invoke(args, context: ctx)
           if execution.attempts > 1
             @mutex.synchronize { @tool_attempts[name] += execution.attempts - 1 }
           end
           raw = execution.result
           raw = raw.value! if raw.is_a?(Result)
           value = Harness::DeclarativeData.normalize(raw, label: "tool result", error_class: AgentLoopProtocolError)
+          if tool.untrusted_output?
+            untrusted = true
+            mark_tainted!("tool:#{name}")
+          end
           @mutex.synchronize { @evidence |= ["tool:#{name}:#{execution.evidence.fetch('result_digest')}"] }
         end
         if name == "load_skill"
-          Audit.record(event_type: "agent_loop.skill_loaded", context: @context,
+          Audit.record(event_type: "agent_loop.skill_loaded", context: current_context,
                        payload: { skill: args.fetch("name"), digest: Harness.digest(value) })
           Telemetry.emit("agent_loop.skill_loaded", dims: { agent: @agent.class.name, skill: args.fetch("name") },
                          measures: { bytes: JSON.generate(value).bytesize })
         elsif name == "search_tools"
-          Audit.record(event_type: "agent_loop.tools_discovered", context: @context,
+          Audit.record(event_type: "agent_loop.tools_discovered", context: current_context,
                        payload: { tools: value.fetch("tools").map { |tool| tool.fetch("name") },
                                   query_digest: Harness.digest(args.fetch("query")) })
           Telemetry.emit("agent_loop.tools_discovered", dims: { agent: @agent.class.name },
                          measures: { matched: value.fetch("tools").size })
         end
         @budget.check!
-        tool_message(call, { "ok" => true, "result" => value })
+        payload = { "ok" => true, "result" => value }
+        payload["untrusted"] = true if untrusted
+        tool_message(call, payload)
       rescue BudgetExceeded
         raise
       rescue SchemaValidationError => error
@@ -415,6 +442,7 @@ module Agentkit
         "context_call_count" => @context_call_count, "context_total_bytes" => @context_total_bytes,
         "context_peak_bytes" => @context_peak_bytes, "compactions" => @compactions,
         "compacted_messages" => @compacted_messages, "duration_ms" => elapsed_ms(@run_started_at),
+        "tainted" => @tainted, "taint_sources" => @taint_sources.dup.freeze,
         "limit_exhausted" => !limit_resource(reason, error_code).nil?,
         "limit_resource" => limit_resource(reason, error_code)
       )
@@ -479,6 +507,23 @@ module Agentkit
         calls: [after.calls - before.calls, 0].max
       )
       @direct_usage += delta
+    end
+
+    def current_context
+      @mutex.synchronize { @context }
+    end
+
+    def mark_tainted!(source)
+      label = source.to_s
+      @mutex.synchronize do
+        @tainted = true
+        @taint_sources |= [label] unless label.empty?
+        updated_state = @context.loop_state.merge(
+          tainted: true,
+          taint_sources: @taint_sources.dup.freeze
+        ).freeze
+        @context = @context.derive(loop_state: updated_state)
+      end
     end
 
     def delegation_depth = Integer(@context.loop_state&.fetch(:depth, 0) || 0)

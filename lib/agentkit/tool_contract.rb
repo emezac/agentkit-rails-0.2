@@ -45,6 +45,7 @@ module Agentkit
 
     def executable? = !callable.nil?
     def read_only? = effect == :read_only
+    def untrusted_output? = metadata["untrusted_output"] == true
 
     # Compatibility with RubyLLM and the former Skill::Tool. Callers needing
     # execution evidence use #invoke; provider SDKs receive the plain result.

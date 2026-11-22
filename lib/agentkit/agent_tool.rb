@@ -39,6 +39,9 @@ module Agentkit
           result = nil
           begin
             result = child.run_loop(prompt, system: system, model: model)
+            if result.execution_metrics && result.execution_metrics["tainted"] == true
+              state[:on_taint]&.call("agent_tool:#{name}")
+            end
             { "answer" => result.answered? ? result.content : nil,
               "status" => result.stop_reason, "evidence_refs" => result.evidence_refs,
               "unresolved" => result.answered? ? [] : [result.stop_reason],

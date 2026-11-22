@@ -6,8 +6,9 @@ module Agentkit
     RESERVED = %w[load_skill search_tools].freeze
     attr_reader :entries
 
-    def initialize(tools:, context:, settings:, policies: [], authorize: nil)
+    def initialize(tools:, context:, settings:, policies: [], authorize: nil, context_provider: nil)
       @context, @settings, @policies, @authorize = context, settings, policies, authorize
+      @context_provider = context_provider
       @entries, @exposed = {}, {}
       raise ConfigurationError, "too many catalog tools" if tools.size > settings.max_catalog_tools
       tools.each do |tool|
@@ -33,8 +34,9 @@ module Agentkit
         deny = policy[:deny] || policy["deny"] || []
         (allow.nil? || allow.map(&:to_s).include?(name)) && !deny.map(&:to_s).include?(name)
       end
-      policy_allows && TaskMandate.guard_tool!(@context, name) &&
-        (!@authorize || @authorize.call(tool, @context) == true)
+      ctx = @context_provider ? @context_provider.call : @context
+      policy_allows && TaskMandate.guard_tool!(ctx, name) &&
+        (!@authorize || @authorize.call(tool, ctx) == true)
     rescue StandardError
       false
     end
