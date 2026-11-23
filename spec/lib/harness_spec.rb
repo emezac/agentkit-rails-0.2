@@ -55,6 +55,24 @@ RSpec.describe Agentkit::Harness do
     expect(report.missing_outputs).to eq(["package"])
   end
 
+  it "supports optional counter_metrics on Goal without altering legacy digests when omitted" do
+    without_cm = described_class::Goal.new(
+      id: "g-1", objective: "Increase recovery rate",
+      criteria: [{ id: "recovery", description: "Recovery rate improves" }]
+    )
+    expect(without_cm.to_h).not_to have_key("counter_metrics")
+
+    with_cm = described_class::Goal.new(
+      id: "g-1", objective: "Increase recovery rate",
+      criteria: [{ id: "recovery", description: "Recovery rate improves" }],
+      counter_metrics: [{ id: "false_denials", description: "False denial rate stays under 1%" }]
+    )
+    expect(with_cm.counter_metrics.size).to eq(1)
+    expect(with_cm.counter_metric("false_denials").kind).to eq("must_not")
+    expect(with_cm.requirement("false_denials")).to eq(with_cm.counter_metric("false_denials"))
+    expect(described_class::Goal.from_h(with_cm.to_h).digest).to eq(with_cm.digest)
+  end
+
   it "enforces the bounded step budget" do
     progress = described_class.start(goal)
     2.times { progress.advance! }

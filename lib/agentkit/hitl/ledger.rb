@@ -171,6 +171,84 @@ module Agentkit
         }
       end
 
+      # Diagnostics for the human review surface itself (e.g., rubber-stamping
+      # or uncoded rejections). High clean acceptance paired with near-instant
+      # decisions indicates review fatigue rather than true agent quality.
+      def review_health(agent: nil, type: nil, since: nil, scope: nil,
+                        min_samples: 5, rubber_stamp_rate: 0.95, max_rubber_stamp_seconds: 5)
+        judged = human_entries(agent: agent, type: type, since: since, scope: scope)
+        total = judged.size
+        if total.zero?
+          return {
+            human_reviews: 0,
+            clean_acceptance_rate: nil,
+            edit_rate: nil,
+            rejection_rate: nil,
+            coded_rejection_rate: nil,
+            median_decision_seconds: nil,
+            rubber_stamp_suspected: false
+          }
+        end
+
+        clean = judged.count { |e| e.decision == "accepted" && e.edit_distance.to_f.zero? }
+        edited = judged.count { |e| e.decision == "edited" }
+        rejected = judged.select { |e| e.decision == "rejected" }
+        coded = rejected.count { |e| !e.rejection_code.to_s.strip.empty? }
+        clean_rate = (clean.to_f / total).round(4)
+        median_s = Telemetry::Stats.from(judged.map(&:time_to_decision_s)).p50
+        rubber_stamp = total >= Integer(min_samples) &&
+                       clean_rate >= Float(rubber_stamp_rate) &&
+                       !median_s.nil? && median_s <= Float(max_rubber_stamp_seconds)
+
+        {
+          human_reviews: total,
+          clean_acceptance_rate: clean_rate,
+          edit_rate: (edited.to_f / total).round(4),
+          rejection_rate: (rejected.size.to_f / total).round(4),
+          coded_rejection_rate: rejected.empty? ? nil : (coded.to_f / rejected.size).round(4),
+          median_decision_seconds: median_s,
+          rubber_stamp_suspected: rubber_stamp
+        }
+      end
+
+      # Converts repeated human rejection patterns into untrusted KnowledgeGaps
+      # under the Imagination Firewall. Never mutates prompts, skills, or rules
+      # automatically; an independent reviewer decides whether to codify a rule.
+      def flag_repeated_rejections!(agent: nil, type: nil, since: nil, min_occurrences: 2,
+                                    context: Context.resolve)
+        threshold = Integer(min_occurrences)
+        raise ArgumentError, "min_occurrences must be a positive integer" unless threshold.positive?
+
+        resolved = Scope.resolve(context: context)
+        rejected = human_entries(agent: agent, type: type, since: since, scope: resolved)
+                   .select { |e| e.decision == "rejected" && !e.rejection_code.to_s.strip.empty? }
+
+        flagged = []
+        rejected.group_by { |e| [e.agent_name.to_s, e.suggestion_type.to_s, e.rejection_code.to_s] }.each do |(ag, st, code), list|
+          next if list.size < threshold
+
+          subject = safe_gap_subject("hitl/#{ag}/#{st}/#{code}")
+          next if Memory::KnowledgeGaps.list(status: "open", subject: subject, limit: 1, context: context).any?
+
+          notes = list.filter_map { |e| e.rejection_note.to_s.strip unless e.rejection_note.to_s.strip.empty? }.uniq.first(3)
+          summary = "Repeated human rejection (#{list.size}x) for #{ag}/#{st} with code '#{code}'."
+          summary = "#{summary} Notes: #{notes.join(' | ')}" if notes.any?
+          summary = summary.byteslice(0, Memory::KnowledgeGaps::MAX_TEXT_BYTES)
+          refs = list.map { |e| "hitl:suggestion:#{e.suggestion_id}" }.uniq
+
+          flagged << Memory::KnowledgeGaps.flag(
+            kind: "missing",
+            subject: subject,
+            summary: summary,
+            suggested_update: "Review repeated '#{code}' rejections and consider codifying a deterministic check or skill rule.",
+            evidence_refs: refs,
+            source_agent: "Agentkit::HITL::Ledger",
+            context: context
+          )
+        end
+        flagged
+      end
+
       def clear = @entries = []
       def size  = @entries.size
 
@@ -201,6 +279,10 @@ module Agentkit
         return payload.transform_keys(&:to_s) if payload.is_a?(Hash)
 
         { "value" => payload.to_s }
+      end
+
+      def safe_gap_subject(raw)
+        raw.to_s.gsub(/[^a-zA-Z0-9:._\/-]/, "_").byteslice(0, Memory::KnowledgeGaps::MAX_SUBJECT_BYTES)
       end
     end
   end

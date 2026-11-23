@@ -154,6 +154,40 @@ RSpec.describe Agentkit::HITL::Ledger do
 
     expect(ledger.cost_per_accepted).to be_a(Float)
   end
+
+  it "detects suspected rubber-stamping when clean approvals are near-instant" do
+    5.times { decide(:accept) }
+
+    health = ledger.review_health(agent: "SalesAgent", min_samples: 5, rubber_stamp_rate: 0.95, max_rubber_stamp_seconds: 5)
+    expect(health[:human_reviews]).to eq(5)
+    expect(health[:clean_acceptance_rate]).to eq(1.0)
+    expect(health[:rubber_stamp_suspected]).to be(true)
+
+    decide(:edit)
+    updated = ledger.review_health(agent: "SalesAgent", min_samples: 5, rubber_stamp_rate: 0.95, max_rubber_stamp_seconds: 5)
+    expect(updated[:rubber_stamp_suspected]).to be(false)
+    expect(updated[:edit_rate]).to be > 0
+  end
+
+  it "flags repeated human rejections as untrusted KnowledgeGaps without duplicating open gaps" do
+    ctx = Agentkit::Context.new(principal: "curator:job")
+    2.times { decide(:reject, code: :wrong_tone) }
+    1.times { decide(:reject, code: :bad_timing) }
+
+    first_pass = ledger.flag_repeated_rejections!(agent: "SalesAgent", min_occurrences: 2, context: ctx)
+    expect(first_pass.size).to eq(1)
+    expect(first_pass.first).to include(
+      "subject" => "hitl/SalesAgent/follow_up/wrong_tone",
+      "status" => "open",
+      "untrusted_claim" => true,
+      "authorizes" => false
+    )
+
+    # Idempotent: running again while the gap is still open does not create duplicates
+    second_pass = ledger.flag_repeated_rejections!(agent: "SalesAgent", min_occurrences: 2, context: ctx)
+    expect(second_pass).to be_empty
+    expect(Agentkit::Memory::KnowledgeGaps.list(status: "open", context: ctx).size).to eq(1)
+  end
 end
 
 RSpec.describe Agentkit::Factory do

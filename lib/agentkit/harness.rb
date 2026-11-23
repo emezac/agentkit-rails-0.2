@@ -58,11 +58,11 @@ module Agentkit
     end
 
     class Goal
-      attr_reader :id, :objective, :criteria, :constraints, :scope,
+      attr_reader :id, :objective, :criteria, :constraints, :counter_metrics, :scope,
                   :protected_resources, :required_approvals, :required_outputs,
                   :max_steps, :metadata
 
-      def initialize(objective:, criteria:, constraints: [], scope: {}, protected_resources: [],
+      def initialize(objective:, criteria:, constraints: [], counter_metrics: [], scope: {}, protected_resources: [],
                      required_approvals: nil, approvals: nil, required_outputs: [],
                      require_verification: false, id: nil, max_steps: nil, metadata: {})
         unless [true, false].include?(require_verification)
@@ -73,6 +73,7 @@ module Agentkit
         @objective = objective.to_s.strip.freeze
         @criteria = normalize_criteria(criteria)
         @constraints = normalize_constraints(constraints)
+        @counter_metrics = normalize_counter_metrics(counter_metrics)
         @scope = normalize_scope(scope)
         @protected_resources = normalize_names(protected_resources)
         approval_values = required_approvals.nil? ? approvals : required_approvals
@@ -88,7 +89,8 @@ module Agentkit
 
       def criterion(id) = criteria.find { |item| item.id == id.to_s }
       def constraint(id) = constraints.find { |item| item.id == id.to_s }
-      def requirement(id) = criterion(id) || constraint(id)
+      def counter_metric(id) = counter_metrics.find { |item| item.id == id.to_s }
+      def requirement(id) = criterion(id) || constraint(id) || counter_metric(id)
       def verification_required? = @require_verification
 
       def approval_required_for?(name)
@@ -110,7 +112,10 @@ module Agentkit
           "required_outputs" => required_outputs,
           "max_steps" => max_steps,
           "metadata" => metadata
-        }.tap { |data| data["require_verification"] = true if verification_required? }
+        }.tap do |data|
+          data["counter_metrics"] = counter_metrics.map(&:to_h) if counter_metrics.any?
+          data["require_verification"] = true if verification_required?
+        end
       end
 
       def digest = Harness.digest(to_h)
@@ -120,7 +125,8 @@ module Agentkit
         new(
           id: data.fetch("id"), objective: data.fetch("objective"),
           criteria: data.fetch("criteria"), required_outputs: data["required_outputs"] || [],
-          constraints: data["constraints"] || [], scope: data["scope"] || {},
+          constraints: data["constraints"] || [], counter_metrics: data["counter_metrics"] || [],
+          scope: data["scope"] || {},
           protected_resources: data["protected_resources"] || [],
           required_approvals: data["required_approvals"] || [],
           require_verification: data.fetch("require_verification", false),
@@ -164,6 +170,23 @@ module Agentkit
         end.freeze
       end
 
+      def normalize_counter_metrics(items)
+        Array(items).map.with_index do |item, index|
+          if item.is_a?(Constraint)
+            item
+          elsif item.respond_to?(:to_h)
+            data = Harness.stringify_keys(item.to_h)
+            Constraint.new(
+              id: data["id"] || "counter_metric_#{index + 1}",
+              description: data["description"] || data["text"],
+              required: data.fetch("required", true), kind: data.fetch("kind", "must_not")
+            )
+          else
+            Constraint.new(id: "counter_metric_#{index + 1}", description: item, kind: "must_not")
+          end
+        end.freeze
+      end
+
       def normalize_scope(value)
         data = Harness.stringify_keys(value || {})
         normalized = {
@@ -184,7 +207,7 @@ module Agentkit
         if criteria.empty? && constraints.empty? && required_outputs.empty?
           raise ArgumentError, "goal requires at least one criterion, constraint or required output"
         end
-        duplicates = (criteria + constraints).group_by(&:id).select { |_, values| values.size > 1 }.keys
+        duplicates = (criteria + constraints + counter_metrics).group_by(&:id).select { |_, values| values.size > 1 }.keys
         raise ArgumentError, "duplicate requirement ids: #{duplicates.join(', ')}" if duplicates.any?
         overlap = scope["include"] & scope["exclude"]
         raise ArgumentError, "scope entries cannot be both included and excluded: #{overlap.join(', ')}" if overlap.any?
