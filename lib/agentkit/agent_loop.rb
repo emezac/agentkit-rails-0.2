@@ -418,16 +418,45 @@ module Agentkit
     end
 
     def tool_message(call, payload)
-      content = JSON.generate(payload)
+      sanitized = payload.key?("result") ? payload.merge("result" => redact_tool_value(payload["result"])) : payload
+      content = JSON.generate(sanitized)
       if content.bytesize > @settings.max_tool_result_bytes
-        content = JSON.generate("ok" => payload["ok"], "truncated" => true,
-          "result_digest" => Harness.digest(payload),
+        content = JSON.generate("ok" => sanitized["ok"], "truncated" => true,
+          "result_digest" => Harness.digest(sanitized),
           "preview" => Harness.truncate(content, [@settings.max_tool_result_bytes / 4, 1].max))
       end
       if content.bytesize > @settings.max_tool_result_bytes
         raise AgentLoopLimitExceeded, "tool envelope exceeds byte limit"
       end
       { "role" => "tool", "tool_call_id" => call.fetch("id"), "content" => content }
+    end
+
+    def redact_tool_value(value, key: nil)
+      audit_cfg = @context.config.audit
+      if key && sensitive_tool_key?(key, audit_cfg.redact_keys)
+        return "[REDACTED]"
+      end
+
+      case value
+      when Hash
+        value.each_with_object({}) do |(nested_key, nested_value), acc|
+          acc[nested_key] = redact_tool_value(nested_value, key: nested_key)
+        end
+      when Array
+        value.map { |item| redact_tool_value(item) }
+      when String
+        Array(audit_cfg.redact).reduce(value) { |acc, pattern| acc.gsub(pattern, "[REDACTED]") }
+      else
+        value
+      end
+    end
+
+    def sensitive_tool_key?(key, redact_keys)
+      normalized = key.to_s.downcase.tr("-", "_")
+      Array(redact_keys).any? do |candidate|
+        token = candidate.to_s.downcase.tr("-", "_")
+        normalized == token || normalized.end_with?("_#{token}")
+      end
     end
 
     def finish(reason, content: nil, error_code: nil, parsed: nil)

@@ -522,4 +522,25 @@ RSpec.describe Agentkit::AgentLoop do
     expect(result).to be_answered
     expect(result.content).to eq("progressed")
   end
+
+  it "redacts sensitive keys and configured secret patterns from tool results before model context" do
+    Agentkit.config.audit.redact = [/sk-[a-zA-Z0-9]+/]
+    leaky = tool(:read_env) do
+      { "api_key" => "super-secret-value", "note" => "found token sk-live12345 in log", "ok_field" => "safe" }
+    end
+    fake_llm.respond_with_turns(
+      { tool_calls: [call_tool("env-1", "read_env")] },
+      { content: "checked safely" }
+    )
+
+    result = run_loop(tools: [leaky], eager_tools: ["read_env"])
+    expect(result).to be_answered
+    tool_msg = JSON.parse(fake_llm.turn_calls.last.messages.last["content"])
+    expect(tool_msg["result"]).to eq(
+      "api_key" => "[REDACTED]",
+      "note" => "found token [REDACTED] in log",
+      "ok_field" => "safe"
+    )
+    expect(fake_llm.turn_calls.last.messages.to_s).not_to include("super-secret-value", "sk-live12345")
+  end
 end
