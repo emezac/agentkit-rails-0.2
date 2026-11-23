@@ -14,6 +14,21 @@ rails db:migrate
 rails agentkit:doctor
 ```
 
+## Arquitectura: Meaning → Traversal → Reasoning → Action (nativo en PostgreSQL)
+
+`agentkit-rails` no es un wrapper de prompts ni un RAG vectorial plano: implementa las cuatro capas de un **Control Plane agéntico gobernable** dentro de Rails y PostgreSQL, compartiendo transacciones ACID, ACLs y aislamiento multi-tenant (`Scope`):
+
+| Capa | Primitivas en `agentkit-rails` | Garantía |
+| :--- | :--- | :--- |
+| **Meaning** *(semántica)* | `Agentkit::Knowledge` (`Ontology`, `Assertion`, `Rule`), `Memory::Consolidation`, `TeamMemory::Wiki`, `Memory::KnowledgeGaps` | Reglas versionadas, citas literales verificables, *Imagination Firewall* y detección de vacíos sin mutar conocimiento aprobado. |
+| **Traversal** *(context graphs)* | `TeamMemory::Graph`, `TeamMemory::SpreadingActivation` (Personalized PageRank), `TeamMemory::CodeGraph`, `RAG` híbrido (BM25 + `pgvector`) | Snapshots inmutables autorizados por tenant con `supporting_paths` y `ActivationTrace`, sin operar una BD de grafos externa. |
+| **Reasoning** *(inferencia verificable)* | `Knowledge::Engine`, `Knowledge::Abstractions` (conexiones de Galois / exportación a Lean 4), `AgentLoop` | Derivaciones comprobables (`entailed` / `not_entailed` / `incomplete`), presupuesto durable, detección de *stall* y aislamiento con *taint tracking* + redacción de secretos en resultados de herramientas. |
+| **Action** *(ejecución gobernada)* | `Knowledge::DecisionGate`, `ActiveRecordSource`, `Flow` (`input_schema:` / `output_schema:` y sagas), `Actions` (outbox), `HITL::Ledger`, `Audit` firmado | Compuertas transaccionales bajo row-lock, contratos tipados entre nodos, salud de revisión (`review_health` / *rubber-stamp*), `AblationEvaluation` en `GovernedStudy` y separación estricta entre proponer y autorizar. |
+
+Ejemplos de referencia adicionales:
+* [Adaptador de sandbox aislado para `UnattendedRun`](examples/rails_unattended_sandbox.rb)
+* [Knowledge Factory gobernada (`AgentLoop` + `KnowledgeGaps` + cuarentena + revisión humana)](examples/governed_knowledge_factory.rb)
+
 ## Goal revisions and release candidates
 
 `Harness::GoalRevision` permite cambiar un contrato de trabajo sin mutar el
