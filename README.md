@@ -29,6 +29,7 @@ Ejemplos de referencia adicionales:
 * [Adaptador de sandbox aislado para `UnattendedRun`](examples/rails_unattended_sandbox.rb)
 * [Knowledge Factory gobernada (`AgentLoop` + `KnowledgeGaps` + cuarentena + revisión humana)](examples/governed_knowledge_factory.rb)
 * [Patrones de host y despliegue (Webhook Gate + vLLM privado + Skill bundles inmutables)](docs/HOST_DEPLOYMENT_PATTERNS.md) y [ejemplo ejecutable](examples/rails_webhook_vllm_host.rb)
+* [Guía de evals offline para un SaaS sobre `agentkit-rails`](docs/OFFLINE_SAAS_EVALS.md)
 
 ## Goal revisions and release candidates
 
