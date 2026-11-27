@@ -178,6 +178,55 @@ RSpec.describe Agentkit::Memory::Consolidation, :integration do
     expect(library.compile_index(topics: ["returns"], context: context)[:compilation].evidence).to be_empty
   end
 
+  it "consumes a source lifecycle event once and invalidates reviewed memory durably" do
+    library.propose(**proposal)
+    publish
+    lifecycle = Agentkit::Memory::EvidenceLifecycle.new(journal: journal, consolidation: library,
+      authorize: ->(*) { true })
+    event = { id: "policy-change-42", reference: "policy/returns",
+      source_digest: k.digest("new policy"), change: "changed",
+      reason: "source_replaced", context: context }
+    lifecycle.record(**event)
+    expect(journal.pending_event_ids(context: context)).to include("source_lifecycle:policy-change-42")
+    result = lifecycle.consume(id: event.fetch(:id), context: context)
+    expect(result.dig("delivery", "processed")).to eq(true)
+    expect(library.head(topic: "returns", context: context).fetch("status")).to eq("stale")
+    expect(lifecycle.consume(id: event.fetch(:id), context: context)).to eq(result)
+    expect(journal.pending_event_ids(context: context)).not_to include("source_lifecycle:policy-change-42")
+    expect { lifecycle.record(**event.merge(reference: "other")) }.to raise_error(k::IntegrityError)
+  end
+
+  it "leaves the lifecycle event pending when memory invalidation is denied" do
+    library.propose(**proposal)
+    publish
+    actions = { invalidate: false }
+    guarded = described_class.new(**options.merge(authorize: ->(action, _ctx) {
+      action != "invalidate" || actions[:invalidate]
+    }))
+    lifecycle = Agentkit::Memory::EvidenceLifecycle.new(journal: journal, consolidation: guarded,
+      authorize: ->(*) { true })
+    lifecycle.record(id: "delete-1", reference: "policy/returns",
+      source_digest: k.digest("deleted policy"), change: "deleted",
+      reason: "source_deleted", context: context)
+    expect { lifecycle.consume(id: "delete-1", context: context) }.to raise_error(k::AccessDenied)
+    expect(journal.pending_event_ids(context: context)).to include("source_lifecycle:delete-1")
+    expect(library.head(topic: "returns", context: context).fetch("status")).to eq("active")
+    actions[:invalidate] = true
+    lifecycle.consume(id: "delete-1", context: context)
+    expect(library.head(topic: "returns", context: context).fetch("status")).to eq("stale")
+  end
+
+  it "prevents a foreign tenant or revoked producer from recording lifecycle events" do
+    lifecycle = Agentkit::Memory::EvidenceLifecycle.new(journal: journal, consolidation: library,
+      authorize: ->(action, _request, ctx) { action != "record" || ctx.principal == "agent" })
+    payload = { id: "change", reference: "policy/returns", source_digest: k.digest("changed"),
+      change: "changed", reason: "review", context: reviewer }
+    expect { lifecycle.record(**payload) }.to raise_error(k::AccessDenied)
+    other = Agentkit::Context.new(account: Account.create!(name: "Other"), principal: "agent")
+    lifecycle.record(**payload.merge(context: other))
+    expect { lifecycle.consume(id: "change", context: context) }.to raise_error(k::InvalidContract)
+  end
+
   it "serializes two workers publishing to the same expected revision", :real_concurrency do
     library.propose(**proposal)
     library.propose(**proposal.merge(id: "draft-2"))

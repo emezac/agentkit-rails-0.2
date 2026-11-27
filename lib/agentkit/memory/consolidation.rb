@@ -8,6 +8,7 @@ module Agentkit
       K = Knowledge
       B = K::Boundary
       SOURCE_KINDS = %w[record tool_result document user_statement model_output].freeze
+      attr_reader :journal
 
       def initialize(journal:, authorize:, loader:, verifier:, verifier_version:, clock: -> { Time.now.utc })
         raise K::InvalidContract, "trusted callbacks required" unless [authorize, loader, verifier, clock].all? { |v| v.respond_to?(:call) }

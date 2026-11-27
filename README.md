@@ -1,5 +1,10 @@
 # AgentKit Rails v1.14.0
 
+Empieza con las [rutas de adopción](docs/ADOPTION_PATHS.md): agente con
+herramientas, decisiones verificadas, aprendizaje de negocio, memoria revisada
+u operación en producción. Cada ruta identifica qué aporta AgentKit y qué debe
+implementar la aplicación Rails.
+
 La [evaluación pareada del valor de negocio](docs/BUSINESS_VALUE_EVALUATION.md)
 compara proceso actual y candidato en casos versionados de entrenamiento y
 holdout, incluyendo coste por resultado verificado, tiempo humano, latencia y

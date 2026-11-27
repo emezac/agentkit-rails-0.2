@@ -1,3 +1,12 @@
+# Unreleased — evidence lifecycle and adoption
+
+`Memory::EvidenceLifecycle` is opt-in and uses existing Journal (024) and
+consolidated-memory head (030) migrations. Give its worker scoped `record` and
+`consume` policies and route pending `source_lifecycle:` events from the host's
+source-change outbox. Historical quotes remain retained until the host applies
+its approved deletion policy. See [lifecycle](docs/EVIDENCE_LIFECYCLE.md) and
+[adoption paths](docs/ADOPTION_PATHS.md).
+
 # Unreleased — business value evaluation
 
 `Harness::BusinessValueEvaluation` is opt-in, pure Ruby and requires no

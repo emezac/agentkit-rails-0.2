@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Evidence lifecycle and adoption
+
+- Durable, tenant-scoped source lifecycle events bridge host source changes to
+  reviewed-memory invalidation with atomic delivery markers and safe retries.
+- Adoption paths map kernel capabilities to Rails responsibilities and clarify
+  the current unreleased API boundary.
+
 ### Business value evaluation
 
 - Deterministic paired baseline/candidate report over versioned training and
