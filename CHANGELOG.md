@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Business value evaluation
+
+- Deterministic paired baseline/candidate report over versioned training and
+  holdout cases, with complete cost, latency, token, human-time and safety
+  measures and per-case regression flags.
+- Fail-closed input/evidence identities and explicit descriptive, non-causal,
+  non-promoting output.
+
 ### Operational visibility
 
 - Read-only authorized projection of supervised run status, goal/gates,

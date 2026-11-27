@@ -1,3 +1,10 @@
+# Unreleased — business value evaluation
+
+`Harness::BusinessValueEvaluation` is opt-in, pure Ruby and requires no
+migration. The host supplies versioned paired cases and independently measured
+receipts for both arms. Existing governed studies and controlled experiments
+keep their contracts. See [business value evaluation](docs/BUSINESS_VALUE_EVALUATION.md).
+
 # Unreleased — operational projection
 
 `Harness::OperationalProjection` is opt-in and adds no migration. It reads

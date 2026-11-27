@@ -1,5 +1,10 @@
 # AgentKit Rails v1.14.0
 
+La [evaluación pareada del valor de negocio](docs/BUSINESS_VALUE_EVALUATION.md)
+compara proceso actual y candidato en casos versionados de entrenamiento y
+holdout, incluyendo coste por resultado verificado, tiempo humano, latencia y
+regresiones de seguridad. No promueve cambios por sí sola.
+
 La [proyección operativa](docs/OPERATIONAL_PROJECTION.md) reúne estado, goal,
 evidencia, presupuesto compartido y escalamiento de un run supervisado mediante
 lecturas autorizadas; sirve como fuente para un dashboard Rails.
