@@ -30,6 +30,7 @@ Ejemplos de referencia adicionales:
 * [Knowledge Factory gobernada (`AgentLoop` + `KnowledgeGaps` + cuarentena + revisión humana)](examples/governed_knowledge_factory.rb)
 * [Patrones de host y despliegue (Webhook Gate + vLLM privado + Skill bundles inmutables)](docs/HOST_DEPLOYMENT_PATTERNS.md) y [ejemplo ejecutable](examples/rails_webhook_vllm_host.rb)
 * [Guía de evals offline para un SaaS sobre `agentkit-rails`](docs/OFFLINE_SAAS_EVALS.md)
+* [Escenarios comerciales de procesamiento largo con modelos económicos](docs/LOW_COST_LONG_RUNNING_SAAS.md)
 
 ## Goal revisions and release candidates
 
