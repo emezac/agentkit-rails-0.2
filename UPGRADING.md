@@ -1,3 +1,12 @@
+# Unreleased — shared budgets
+
+Shared budgets are opt-in. Install migration 033 and the existing Journal
+migration 024 before enabling `Agentkit::SharedBudget`. The host must authorize
+budget definition, admission, settlement, reconciliation and Journal kind
+`budget`. Existing `ExecutionBudget`, Exploration quotas and unattended-run
+limits keep their behavior unless the host explicitly wraps work with the new
+port. See [shared budget responsibilities](docs/SHARED_BUDGETS.md).
+
 # Unreleased: compositional evaluation and execution metrics
 
 ## Declarative team blueprints

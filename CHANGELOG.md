@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Opt-in shared hierarchical budgets with durable PostgreSQL admission,
+  cumulative cost/token accounting, concurrency slots, immutable windows and
+  owner-bound idempotent reservations (migration 033).
+- Conservative unknown-usage reconciliation and a measured AgentLoop adapter;
+  actual overspend remains recorded and blocks further admission.
+
 ### Rails reference application
 
 - Runnable headless returns application with independent approval, exact-amount

@@ -1,5 +1,10 @@
 # AgentKit Rails v1.14.0
 
+Para límites compartidos entre ejecuciones y agentes, consulta
+[presupuestos jerárquicos](docs/SHARED_BUDGETS.md). La migración 033 añade
+reservas durables; el host conserva los límites efectivos del proveedor y la
+conciliación del consumo incierto.
+
 **Kernel de agentes para aplicaciones Rails** — orquestación real, RAG nativo, Team Memory Hub (TencentDB Agent Memory), memoria on-demand, HITL con ledger de decisiones y una fábrica de mejora continua desde el día 0.
 
 ```ruby
