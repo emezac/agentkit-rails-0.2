@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Operational visibility
+
+- Read-only authorized projection of supervised run status, goal/gates,
+  evidence references, shared budget headroom and escalation blockers.
+- Explicit sequential-read semantics and no lease tokens, raw diagnostics or
+  execution authority in the projection payload.
+- Optional read-only Rails console page with host-resolved run/budget binding,
+  behind the existing disabled-by-default console guard.
+
 ### Added
 
 - Opt-in shared hierarchical budgets with durable PostgreSQL admission,

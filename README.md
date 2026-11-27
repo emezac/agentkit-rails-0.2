@@ -1,5 +1,9 @@
 # AgentKit Rails v1.14.0
 
+La [proyección operativa](docs/OPERATIONAL_PROJECTION.md) reúne estado, goal,
+evidencia, presupuesto compartido y escalamiento de un run supervisado mediante
+lecturas autorizadas; sirve como fuente para un dashboard Rails.
+
 Para límites compartidos entre ejecuciones y agentes, consulta
 [presupuestos jerárquicos](docs/SHARED_BUDGETS.md). La migración 033 añade
 reservas durables; el host conserva los límites efectivos del proveedor y la

@@ -350,6 +350,7 @@ module Agentkit
     setting :guard                         # -> { current_user&.admin? }
     setting :principal_resolver            # -> { current_user }
     setting :payload_guard                 # ->(principal) { principal.security_admin? }
+    setting :operational_view              # ->(run_id, context) { OperationalProjection#fetch(...) }
   end
 
   # ─── Governed actions ──────────────────────────────────────────────────────

@@ -1,0 +1,29 @@
+<div class="card">
+  <h2>Operación supervisada <span class="pill"><%= @report.fetch("status") %></span></h2>
+  <p class="mono"><%= @report.fetch("run_id") %></p>
+  <p>Goal: <%= @report.fetch("goal").fetch("id") %></p>
+  <p>Gates: <%= @report.fetch("goal").fetch("required_gates").join(", ") %></p>
+  <p class="dim">Lecturas secuenciales; actualizado <%= @report.fetch("observed_at") %>.</p>
+</div>
+<div class="row">
+  <div class="card"><div class="label">Commit</div><div class="mono"><%= @report.fetch("evidence").fetch("commit_sha") %></div></div>
+  <div class="card"><div class="label">Verificación</div><div class="metric"><%= @report.fetch("evidence").fetch("completed_calls") %> comprobantes</div></div>
+  <div class="card"><div class="label">Consumo medido</div><div class="metric"><%= @report.fetch("evidence").fetch("usage_complete") ? "completo" : "pendiente" %></div></div>
+</div>
+<div class="card">
+  <h3>Presupuesto disponible</h3>
+  <% @report.fetch("budget").fetch("remaining").each do |resource, amount| %>
+    <p><%= resource %>: <strong><%= amount %></strong></p>
+  <% end %>
+</div>
+<div class="card">
+  <h3>Bloqueos</h3>
+  <% if @report.fetch("blockers").empty? %>
+    <p>Sin bloqueos reportados.</p>
+  <% else %>
+    <ul><% @report.fetch("blockers").each do |blocker| %><li><%= blocker %></li><% end %></ul>
+  <% end %>
+  <% if (escalation = @report["escalation"]) %>
+    <p>Escalamiento: <%= escalation.fetch("status") %>; intento <%= escalation.fetch("attempts") %>.</p>
+  <% end %>
+</div>

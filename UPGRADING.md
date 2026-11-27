@@ -1,3 +1,10 @@
+# Unreleased — operational projection
+
+`Harness::OperationalProjection` is opt-in and adds no migration. It reads
+existing unattended run, shared budget and escalation services under their
+current policies. The Rails host must authorize the combined run/budget link
+and dashboard users. See [operational projection](docs/OPERATIONAL_PROJECTION.md).
+
 # Unreleased — shared budgets
 
 Shared budgets are opt-in. Install migration 033 and the existing Journal

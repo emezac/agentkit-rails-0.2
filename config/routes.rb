@@ -31,6 +31,7 @@ Agentkit::Engine.routes.draw do
   resources :runs, only: %i[index show] do
     member { post :retry }
   end
+  get "operations/:id", to: "operational_runs#show", as: :operational_run
 
   # ─── Adaptive exploration operations and governed promotion ───────────────
   get "exploration", to: "exploration#index", as: :exploration
