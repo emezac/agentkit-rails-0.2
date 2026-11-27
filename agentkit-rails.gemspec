@@ -32,7 +32,8 @@ Gem::Specification.new do |spec|
   spec.files = Dir[
     "lib/**/*", "app/**/*", "db/migrate/**/*", "config/**/*",
     "agentkit-rails.gemspec", "README.md", "CHANGELOG.md", "UPGRADING.md", "LICENSE",
-    "docs/**/*.md", "examples/knowledge_returns.rb", "examples/rails_evidence.rb"
+    "docs/**/*.md", "examples/knowledge_returns.rb", "examples/rails_evidence.rb",
+    "examples/returns_app/{Gemfile,Rakefile,README.md,config/*.{rb,yml},lib/*.rb,db/migrate/*.rb}"
   ].reject { |path| path == "lib/agentkit/mcp.rb" || path.start_with?("lib/agentkit/mcp/") }
   spec.require_paths = ["lib"]
 

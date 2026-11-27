@@ -1,0 +1,16 @@
+require_relative "config/application"
+Rails.application.load_tasks
+
+namespace :reference do
+  desc "Apply engine and example migrations to the dedicated reference database"
+  task prepare: :environment do
+    paths = [Agentkit::Engine.root.join("db/migrate").to_s, File.expand_path("db/migrate", __dir__)]
+    ActiveRecord::MigrationContext.new(paths).migrate
+  end
+
+  desc "Run an isolated simulated refund with lease recovery and a virtual observation clock"
+  task demo: :environment do
+    require_relative "lib/demo"
+    ReturnsReference.demo
+  end
+end

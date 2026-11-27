@@ -79,6 +79,10 @@ Consulta la [guía y responsabilidades Rails](docs/EVIDENCE_GROUNDED_MEMORY_CONS
 
 ## Contribuir a AgentKit
 
+La [aplicación Rails de referencia de devoluciones](examples/returns_app/README.md)
+conecta aprobación, evidencia, outbox, proveedor simulado, recuperación y resultados
+observados. Incluye un piloto controlado de enrutamiento, sin pagos reales ni LLM.
+
 Para los cambios de telemetría en `Unreleased` (migración 032), consulta
 [entrega, diagnóstico por tenant y límites de fiabilidad](docs/TELEMETRY_RELIABILITY.md).
 La cola es local al proceso; la evidencia autoritativa continúa en Journal/outbox.

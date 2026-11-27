@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Rails reference application
+
+- Runnable headless returns application with independent approval, exact-amount
+  evidence, transactional intent creation, provider idempotency, expired-lease
+  reconciliation, mature business outcomes and controlled routing pilot.
+- PostgreSQL integration scenarios exercise committed provider responses with
+  lost acknowledgements, stale approval, tenant boundaries and uncertain effects.
+- Engine startup permits a missing database only during explicit db:create or
+  db:prepare tasks, so a new Rails host can provision its database normally.
+
 ### Fixed
 
 - `agentkit:doctor` filters telemetry by the selected tenant and account rather

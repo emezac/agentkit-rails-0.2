@@ -44,14 +44,22 @@ module Agentkit
           Agentkit::HITL.store  = Agentkit::HITL::Stores::ActiveRecordStore.new
           Agentkit::HITL.ledger = Agentkit::HITL::Stores::ActiveRecordLedger.new
         end
-        if defined?(Agentkit::A2aTaskRecord) && Agentkit::A2aTaskRecord.table_exists?
-          Agentkit::A2A::V1.task_store = Agentkit::A2A::V1::ActiveRecordTaskStore.new
-        end
-        if defined?(Agentkit::ActionProposalRecord) && Agentkit::ActionProposalRecord.table_exists?
-          Agentkit::Actions.store = Agentkit::Actions::Stores::ActiveRecord.new
-          Agentkit::Actions.dispatcher = lambda do |proposal_id, scope|
-            Agentkit::ExecuteActionJob.perform_later(proposal_id, scope)
+        begin
+          if defined?(Agentkit::A2aTaskRecord) && Agentkit::A2aTaskRecord.table_exists?
+            Agentkit::A2A::V1.task_store = Agentkit::A2A::V1::ActiveRecordTaskStore.new
           end
+          if defined?(Agentkit::ActionProposalRecord) && Agentkit::ActionProposalRecord.table_exists?
+            Agentkit::Actions.store = Agentkit::Actions::Stores::ActiveRecord.new
+            Agentkit::Actions.dispatcher = lambda do |proposal_id, scope|
+              Agentkit::ExecuteActionJob.perform_later(proposal_id, scope)
+            end
+          end
+        rescue ActiveRecord::NoDatabaseError
+          # db:create loads ActiveRecord before the database exists. Only this
+          # bootstrap condition is tolerated; connection/authentication errors
+          # still propagate. Restart the host after database provisioning.
+          provisioning = defined?(Rake) && (Rake.application.top_level_tasks & %w[db:create db:prepare]).any?
+          raise unless provisioning
         end
       end
     end
