@@ -35,6 +35,20 @@ same evaluator, metadata, thresholds and executor to every worker; the contract
 is part of the study digest. See
 [Compositional Generalization Evaluation](docs/COMPOSITIONAL_GENERALIZATION.md).
 
+# Unreleased — telemetry reliability
+
+Before deploying this code with the database telemetry backend, install migration
+032 using `rails agentkit:install:migrations` and `rails db:migrate`. It adds a
+nullable unique event identity; historical rows remain unchanged. New emitted
+events carry UUID identities and retried inserts are deduplicated.
+
+`Telemetry.buffer` now returns a snapshot, not a mutable queue. Use `emit` to
+record events. Custom sinks may declare `idempotent? == true` only if repeated
+`write(batch)` calls deduplicate by event identity. Other sinks are not retried
+after ambiguous failures. Schedule `Telemetry.flush!` in each emitting process;
+no new scheduler is installed. Read [delivery guarantees](docs/TELEMETRY_RELIABILITY.md)
+before using these measurements for operational decisions.
+
 # Upgrading 1.13.0 → 1.14.0
 
 Unattended runs are opt-in. Install migration 031; migrations 024 (Journal) and

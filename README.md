@@ -79,6 +79,10 @@ Consulta la [guía y responsabilidades Rails](docs/EVIDENCE_GROUNDED_MEMORY_CONS
 
 ## Contribuir a AgentKit
 
+Para los cambios de telemetría en `Unreleased` (migración 032), consulta
+[entrega, diagnóstico por tenant y límites de fiabilidad](docs/TELEMETRY_RELIABILITY.md).
+La cola es local al proceso; la evidencia autoritativa continúa en Journal/outbox.
+
 La [skill de contribución](skills/agentkit-contributor/SKILL.md) guía cambios
 acotados al kernel. Para revisar el diff local y ejecutar specs de comportamiento
 elegidos para el cambio, usa

@@ -27,6 +27,7 @@ module Agentkit
       # answer queries without a database, which keeps the kernel unit-testable.
       class MemoryBackend
         LIMIT = 50_000
+        def idempotent? = true
 
         def self.instance
           @instance ||= new
@@ -34,13 +35,21 @@ module Agentkit
 
         def initialize
           @events = []
+          @event_ids = {}
           @mutex  = Mutex.new
         end
 
         def write(batch)
           @mutex.synchronize do
-            @events.concat(batch)
-            @events.shift(@events.size - LIMIT) if @events.size > LIMIT
+            batch.each do |event|
+              next if event.event_id && @event_ids[event.event_id]
+
+              @events << event
+              @event_ids[event.event_id] = true if event.event_id
+            end
+            if @events.size > LIMIT
+              @events.shift(@events.size - LIMIT).each { |event| @event_ids.delete(event.event_id) }
+            end
           end
         end
 
@@ -53,7 +62,7 @@ module Agentkit
         end
 
         def clear
-          @mutex.synchronize { @events = [] }
+          @mutex.synchronize { @events = []; @event_ids = {} }
         end
 
         def size = @events.size
@@ -62,20 +71,21 @@ module Agentkit
       # Persists to agentkit_events. Falls back to a no-op when the engine is
       # not loaded, so the pure-Ruby core never blows up.
       class ActiveRecordBackend
+        def idempotent? = true
         def available?
           defined?(Agentkit::EventRecord) && Agentkit::EventRecord.respond_to?(:insert_all)
         end
 
         def write(batch)
-          return unless available?
+          return false unless available?
           return if batch.empty?
 
           rows = batch.map do |e|
-            { name: e.name, dims: e.dims, measures: e.measures, run_id: e.run_id,
+            { event_id: e.event_id, name: e.name, dims: e.dims, measures: e.measures, run_id: e.run_id,
               trace_id: e.trace_id, occurred_at: e.occurred_at,
               created_at: e.occurred_at, updated_at: e.occurred_at }
           end
-          Agentkit::EventRecord.insert_all(rows)
+          Agentkit::EventRecord.insert_all(rows, unique_by: :event_id)
         end
 
         def events(name: nil, since: nil, dims: {})
@@ -94,7 +104,7 @@ module Agentkit
           scope = scope.where(occurred_at: since..) if since
           scope = scope.where("dims @> ?", dims.to_json) if dims.any?
           scope.map do |r|
-            Event.new(name: r.name, dims: symbolize(r.dims), measures: symbolize(r.measures),
+            Event.new(event_id: r.event_id, name: r.name, dims: symbolize(r.dims), measures: symbolize(r.measures),
                       occurred_at: r.occurred_at, run_id: r.run_id, trace_id: r.trace_id)
           end
         end
@@ -120,7 +130,7 @@ module Agentkit
       # a config change, not a code change.
       class OtelBackend
         def write(batch)
-          return unless defined?(::OpenTelemetry)
+          return false unless defined?(::OpenTelemetry)
 
           tracer = ::OpenTelemetry.tracer_provider.tracer("agentkit", Agentkit::VERSION)
           batch.each do |e|
@@ -132,7 +142,7 @@ module Agentkit
       class StatsdBackend
         def write(batch)
           client = Agentkit.config.telemetry[:statsd_client]
-          return unless client
+          return false unless client
 
           batch.each do |e|
             tags = e.dims.map { |k, v| "#{k}:#{v}" }

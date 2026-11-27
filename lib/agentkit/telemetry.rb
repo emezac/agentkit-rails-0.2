@@ -2,6 +2,7 @@
 
 require_relative "telemetry/stats"
 require_relative "telemetry/backends"
+require_relative "telemetry/delivery"
 
 module Agentkit
   # Event bus wired into the kernel's own seams. The point of putting this in
@@ -16,10 +17,10 @@ module Agentkit
   # INSERT per `chat`, which is exactly why `tres` overrode `agent_log` to a
   # no-op and lost its telemetry entirely.
   module Telemetry
-    Event = Struct.new(:name, :dims, :measures, :occurred_at, :run_id, :trace_id, keyword_init: true) do
+    Event = Struct.new(:name, :dims, :measures, :occurred_at, :run_id, :trace_id, :event_id, keyword_init: true) do
       def to_h
         { name: name, dims: dims, measures: measures,
-          occurred_at: occurred_at, run_id: run_id, trace_id: trace_id }
+          occurred_at: occurred_at, run_id: run_id, trace_id: trace_id, event_id: event_id }
       end
     end
 
@@ -32,6 +33,7 @@ module Agentkit
 
         ctx   = Context.current
         event = Event.new(
+          event_id:    SecureRandom.uuid,
           name:        name.to_s,
           dims:        normalize(dims).merge(ctx ? ctx.telemetry_dims : {}),
           measures:    normalize_measures(measures),
@@ -41,8 +43,8 @@ module Agentkit
         )
 
         subscribers.each { |s| safely { s.call(event) } }
-        buffer << event
-        flush! if buffer.size >= Agentkit.config.telemetry.flush_size
+        size = delivery.enqueue(event)
+        flush! if size >= Agentkit.config.telemetry.flush_size
         event
       end
 
@@ -75,17 +77,16 @@ module Agentkit
       # ─── Buffer / backends ─────────────────────────────────────────────────
 
       def buffer
-        @buffer ||= []
+        delivery.buffer
       end
 
       def flush!
-        return [] if buffer.empty?
-
-        batch = buffer.dup
-        @buffer = []
-        backends.each { |b| safely { b.write(batch) } }
-        batch
+        delivery.flush(backends)
       end
+
+      def delivery_health = delivery.health
+
+      def delivery = (@delivery ||= Delivery.new)
 
       def backends
         @backends ||= Array(Agentkit.config.telemetry.backends).map { |b| Backends.build(b) }
@@ -139,7 +140,7 @@ module Agentkit
       end
 
       def reset!
-        @buffer      = []
+        @delivery    = Delivery.new
         @backends    = nil
         @subscribers = []
         Backends.reset!

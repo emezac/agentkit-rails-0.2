@@ -39,10 +39,16 @@ namespace :agentkit do
     end
 
     if scoped_data
-      events = Agentkit::Telemetry.events(since: Time.now - (7 * 86_400))
+      dims = { tenant: doctor_scope.tenant_key, account_id: doctor_scope.account_id }.compact
+      # ACCOUNT_ID arrives from ENV as text; telemetry retains numeric IDs.
+      dims[:account_id] = dims[:account_id].to_i if dims[:account_id].to_s.match?(/\A\d+\z/)
+      events = Agentkit::Telemetry.events(since: Time.now - (7 * 86_400), dims: dims)
       events.any? ? ok.call("Telemetry active (#{events.size} events / 7d)")
                   : bad.call("No telemetry in the last 7 days — the factory will have nothing to read")
     end
+
+    health = Agentkit::Telemetry.delivery_health
+    warn_.call("Process-wide telemetry delivery incomplete: #{health}") unless health[:complete]
 
     decisions = scoped_data ? Agentkit::HITL.ledger.entries(scope: doctor_scope) : []
     coded = decisions.count { |d| d.rejection_code }

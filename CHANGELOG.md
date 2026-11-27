@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- `agentkit:doctor` filters telemetry by the selected tenant and account rather
+  than treating another tenant's activity as a health signal.
+- Telemetry atomically drains a bounded process-local buffer, serializes flushes,
+  and retries only failed idempotent sinks. PostgreSQL event identities prevent
+  duplicate inserts after ambiguous acknowledgements (migration 032).
+- Process-local delivery health exposes pending deliveries, write failures and
+  overflow/ambiguous losses without recording backend exception payloads.
+
 ### Added
 
 - Opt-in `Organization::TeamBlueprint` for immutable, digest-addressed team
