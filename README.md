@@ -1,5 +1,12 @@
 # AgentKit Rails v1.14.0
 
+El [ejemplo de investigación verificable](docs/RESEARCH_EVIDENCE_EXAMPLE.md)
+compara un investigador con ramas de investigación sobre las mismas fuentes,
+valida citas y preguntas sin resolver, y produce una evaluación pareada
+reproducible sin llamadas a modelos.
+El [piloto opcional con OpenAI](docs/RESEARCH_LIVE_PILOT.md) muestra una
+comparación real y sus límites de interpretación.
+
 Empieza con las [rutas de adopción](docs/ADOPTION_PATHS.md): agente con
 herramientas, decisiones verificadas, aprendizaje de negocio, memoria revisada
 u operación en producción. Cada ruta identifica qué aporta AgentKit y qué debe

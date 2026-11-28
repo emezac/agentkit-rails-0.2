@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Verifiable research example
+
+- Offline single-versus-split research Flow example with tenant-scoped source
+  verification, explicit unresolved questions and paired training/holdout
+  evaluation. It performs no model call or architecture promotion.
+- Opt-in live OpenAI comparison script and documented pilot measurements;
+  network calls remain outside the automated test suite.
+
 ### Evidence lifecycle and adoption
 
 - Durable, tenant-scoped source lifecycle events bridge host source changes to
