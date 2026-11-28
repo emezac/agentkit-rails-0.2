@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Deterministic research evidence
+
+- Opt-in `Harness::ResearchEvidence` extracts and independently rechecks
+  bounded literal claims from scoped, versioned primary sources. Missing or
+  conflicting source text stays unresolved; the gate never authorizes actions.
+
 ### Verifiable research example
 
 - Offline single-versus-split research Flow example with tenant-scoped source

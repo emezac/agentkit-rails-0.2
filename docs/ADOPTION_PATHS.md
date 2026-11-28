@@ -8,6 +8,7 @@ external effects.
 | Path | Kernel surfaces | Rails host owns | Read first |
 | --- | --- | --- | --- |
 | Agent with tools | AgentLoop, ToolContract, ExecutionBudget | Tool permissions, provider keys, current domain data | [README](../README.md) |
+| Literal research evidence | ResearchEvidence, Flow, BusinessValueEvaluation | Scoped source loader, versioned content, independent verifier identity, semantic review | [Research gate](RESEARCH_EVIDENCE_GATES.md) |
 | Verified decisions | Ontology, ActiveRecordSource, DecisionGate, Journal | Approved rules, source locking, authorization, action/outbox | [Rails evidence](RAILS_EVIDENCE_AND_DECISION_GATES.md) |
 | Learning from business outcomes | BusinessLearning, BusinessExperiment, BusinessValueEvaluation | Final metrics, cohorts, customer harm, human review | [Business loop](BUSINESS_LEARNING_LOOP.md), [value evaluation](BUSINESS_VALUE_EVALUATION.md) |
 | Reviewed memory | Consolidation, EvidenceLifecycle | Source archive, versioning, retention, deletion and lifecycle events | [Consolidation](EVIDENCE_GROUNDED_MEMORY_CONSOLIDATION.md), [lifecycle](EVIDENCE_LIFECYCLE.md) |

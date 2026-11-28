@@ -1,3 +1,10 @@
+# Unreleased — deterministic research evidence
+
+`Harness::ResearchEvidence` is opt-in and requires no migration or model call.
+Rails supplies the authorized source loader, current version/digest manifest,
+separate build/verify principals and semantic review for nonliteral claims.
+See [research evidence gate](docs/RESEARCH_EVIDENCE_GATES.md).
+
 # Unreleased — evidence lifecycle and adoption
 
 `Memory::EvidenceLifecycle` is opt-in and uses existing Journal (024) and

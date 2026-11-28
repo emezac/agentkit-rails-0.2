@@ -1,5 +1,9 @@
 # AgentKit Rails v1.14.0
 
+La [compuerta determinista de evidencia para investigación](docs/RESEARCH_EVIDENCE_GATES.md)
+extrae citas literales de fuentes versionadas y permite verificarlas con una
+identidad independiente antes de cualquier síntesis del modelo.
+
 El [ejemplo de investigación verificable](docs/RESEARCH_EVIDENCE_EXAMPLE.md)
 compara un investigador con ramas de investigación sobre las mismas fuentes,
 valida citas y preguntas sin resolver, y produce una evaluación pareada

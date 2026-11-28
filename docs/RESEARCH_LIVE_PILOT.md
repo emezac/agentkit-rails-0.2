@@ -96,3 +96,8 @@ value of parallel research on harder tasks. Before changing a production
 topology, evaluate independent real tasks with the same source snapshots,
 provider usage, reviewer time and an async Rails deployment. The paired
 `BusinessValueEvaluation` report has `causal: false` and never promotes an arm.
+
+For tasks that require literal substring evidence, the optional
+[deterministic research gate](RESEARCH_EVIDENCE_GATES.md) now prepares quoted
+claims from trusted sources before model synthesis. It passes all twelve
+synthetic fixtures without a model call; inferred prose remains unverified.
