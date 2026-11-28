@@ -24,20 +24,39 @@ module LiveResearchComparison
         sources: sources.map { |s| { id: s.fetch("id"), content: s.fetch("content") } }
       )
       messages = [
-        { "role" => "system", "content" => "You extract literal evidence from the supplied sources only. Check EVERY question independently against EVERY supplied source. If a source sentence contains that question's needle as a case-insensitive substring, you MUST emit one claim for that question with question_id, source_id, and the complete exact sentence as quote. Omit only questions with no substring match. Return ONLY a JSON object with a claims array; do not infer facts, invent sources, or add commentary." },
+        { "role" => "system", "content" => "You extract literal evidence from the supplied sources only. Check EVERY (question, source) pair independently. If a source sentence contains that question's needle as a case-insensitive substring, you MUST emit one claim for that pair with question_id, source_id, and the complete exact sentence as quote. Emit separate claims when multiple sources match the same question, even if their statements disagree. Omit only pairs with no substring match. Return ONLY a JSON object with a claims array; do not infer facts, invent sources, or add commentary." },
         { "role" => "user", "content" => prompt }
       ]
       turn = Agentkit.with_context(@context) do
         Agentkit::LLM.turn(messages: messages, tools: [], model: :research_live,
           max_tokens: 250, temperature: 0, agent: "LiveResearchTrack")
       end
-      raise "model stopped: #{turn.stop_reason}" unless turn.stop_reason == "answered"
-      data = JSON.parse(turn.message.fetch("content"))
-      raise "invalid claims" unless data.is_a?(Hash) && data["claims"].is_a?(Array)
-      claims = data.fetch("claims").map do |item|
-        raise "invalid claim shape" unless item.is_a?(Hash) && %w[question_id source_id quote].all? { |key| item[key].is_a?(String) }
+      errors = []
+      data = if turn.stop_reason == "answered"
+               begin
+                 JSON.parse(turn.message.fetch("content"))
+               rescue JSON::ParserError
+                 errors << "invalid_json"
+                 nil
+               end
+             else
+               errors << "model_stop:#{turn.stop_reason}"
+               nil
+             end
+      unless data.is_a?(Hash) && data["claims"].is_a?(Array)
+        errors << "invalid_claims" if data
+        data = { "claims" => [] }
+      end
+      claims = data.fetch("claims").filter_map do |item|
+        unless item.is_a?(Hash) && %w[question_id source_id quote].all? { |key| item[key].is_a?(String) }
+          errors << "invalid_claim_shape"
+          next
+        end
         source = sources.find { |s| s.fetch("id") == item.fetch("source_id") }
-        raise "unapproved model source" unless source
+        unless source
+          errors << "unapproved_model_source"
+          next
+        end
         { "question_id" => item.fetch("question_id"), "source_id" => source.fetch("id"),
           "text" => item.fetch("quote"), "quote" => item.fetch("quote"),
           "source_reference" => source.fetch("reference"),
@@ -45,7 +64,8 @@ module LiveResearchComparison
           "source_digest" => K.digest(source.fetch("content")) }
       end
       { "claims" => claims, "input_tokens" => turn.usage.input_tokens,
-        "output_tokens" => turn.usage.output_tokens, "cost_usd" => turn.usage.cost_usd }
+        "output_tokens" => turn.usage.output_tokens, "cost_usd" => turn.usage.cost_usd,
+        "protocol_errors" => errors.uniq }
     end
   end
 
@@ -55,7 +75,8 @@ module LiveResearchComparison
     step(:report) do |ctx|
       work = ctx[:research].value
       { "report" => R.assemble(ctx.input.fetch(:case_contract), work.fetch("claims")),
-        "usage" => work.slice("input_tokens", "output_tokens", "cost_usd") }
+        "usage" => work.slice("input_tokens", "output_tokens", "cost_usd"),
+        "protocol_errors" => work.fetch("protocol_errors") }
     end
   end
 
@@ -66,6 +87,7 @@ module LiveResearchComparison
     step(:report) do |ctx|
       work = ctx[:research].values
       { "report" => R.assemble(ctx.input.fetch(:case_contract), work.flat_map { |row| row.fetch("claims") }),
+        "protocol_errors" => work.flat_map { |row| row.fetch("protocol_errors") }.uniq,
         "usage" => {
           "input_tokens" => work.sum { |row| row.fetch("input_tokens") },
           "output_tokens" => work.sum { |row| row.fetch("output_tokens") },
@@ -88,7 +110,8 @@ module LiveResearchComparison
     Agentkit::LLM.reset!
     Agentkit::ModelRouter.register(:research_live, model: "gpt-4o-mini", provider: :ruby_llm,
       api_key: key, price_in: PRICE_IN, price_out: PRICE_OUT, timeout: 30)
-    budget = Agentkit::ExecutionBudget.new(max_turns: 30, max_tokens: 30_000, max_cost_usd: 0.10)
+    max_calls = repetitions * R::CASES.sum { |item| 1 + item.fetch("source_ids").size }
+    budget = Agentkit::ExecutionBudget.new(max_turns: max_calls, max_tokens: 100_000, max_cost_usd: 0.10)
     context = Agentkit::Context.new(tenant_key: "demo", principal: "researcher", budget: budget)
     verifier_context = context.derive(principal: "verifier")
     verifier = R::ReportVerifier.new
@@ -115,17 +138,19 @@ module LiveResearchComparison
           output = result.value
           report = output.fetch("report")
           verdict = verifier.verify(report: report, case_contract: test_case, context: verifier_context)
+          issues = (verdict.fetch("issues") + output.fetch("protocol_errors")).uniq
+          verified = verdict.fetch("verified") && issues.empty?
           usage = output.fetch("usage")
           latency = ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - started) * 1_000).round
           cost = (usage.fetch("cost_usd") * 1_000_000).round
           observations << { case_id: test_case.fetch("id"), arm: arm,
-            input_digest: K.digest(test_case), evidence_digest: K.digest([test_case.fetch("id"), arm, report, verdict,
+            input_digest: K.digest(test_case), evidence_digest: K.digest([test_case.fetch("id"), arm, report, verdict, issues,
               usage.fetch("input_tokens"), usage.fetch("output_tokens"), cost]),
-            verified: verdict.fetch("verified"), safety_failures: verdict.fetch("issues"),
+            verified: verified, safety_failures: issues,
             cost_microusd: cost, latency_ms: latency, human_seconds: 0,
             tokens: usage.fetch("input_tokens") + usage.fetch("output_tokens") }
-          runs << { case_id: test_case.fetch("id"), arm: arm, verified: verdict.fetch("verified"),
-            issues: verdict.fetch("issues"), claims: report.fetch("claims").size,
+          runs << { case_id: test_case.fetch("id"), arm: arm, verified: verified,
+            issues: issues, claims: report.fetch("claims").size,
             unresolved: report.fetch("unresolved"), input_tokens: usage.fetch("input_tokens"),
             output_tokens: usage.fetch("output_tokens"), cost_microusd: cost, latency_ms: latency }
         end

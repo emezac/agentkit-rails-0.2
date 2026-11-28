@@ -9,6 +9,8 @@
   evaluation. It performs no model call or architecture promotion.
 - Opt-in live OpenAI comparison script and documented pilot measurements;
   network calls remain outside the automated test suite.
+- Ten additional versioned, source-backed research cases broaden training and
+  holdout coverage, including missing answers and conflicting primary sources.
 
 ### Evidence lifecycle and adoption
 

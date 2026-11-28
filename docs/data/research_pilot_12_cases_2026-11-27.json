@@ -1,0 +1,781 @@
+{
+  "model": "gpt-4o-mini",
+  "repetitions": 2,
+  "provider_calls": 72,
+  "runs": [
+    {
+      "case_id": "returns-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 183,
+      "output_tokens": 80,
+      "cost_microusd": 75,
+      "latency_ms": 2070
+    },
+    {
+      "case_id": "returns-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 331,
+      "output_tokens": 89,
+      "cost_microusd": 103,
+      "latency_ms": 2454
+    },
+    {
+      "case_id": "returns-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 331,
+      "output_tokens": 89,
+      "cost_microusd": 103,
+      "latency_ms": 2475
+    },
+    {
+      "case_id": "returns-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 183,
+      "output_tokens": 80,
+      "cost_microusd": 75,
+      "latency_ms": 1363
+    },
+    {
+      "case_id": "refunds-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "missing",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 191,
+      "output_tokens": 81,
+      "cost_microusd": 77,
+      "latency_ms": 1588
+    },
+    {
+      "case_id": "refunds-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "missing",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 347,
+      "output_tokens": 90,
+      "cost_microusd": 106,
+      "latency_ms": 2306
+    },
+    {
+      "case_id": "refunds-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "missing",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 347,
+      "output_tokens": 90,
+      "cost_microusd": 106,
+      "latency_ms": 2649
+    },
+    {
+      "case_id": "refunds-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "missing",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 191,
+      "output_tokens": 81,
+      "cost_microusd": 77,
+      "latency_ms": 1475
+    },
+    {
+      "case_id": "shipping-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 178,
+      "output_tokens": 77,
+      "cost_microusd": 73,
+      "latency_ms": 1459
+    },
+    {
+      "case_id": "shipping-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 324,
+      "output_tokens": 86,
+      "cost_microusd": 100,
+      "latency_ms": 2267
+    },
+    {
+      "case_id": "shipping-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 324,
+      "output_tokens": 86,
+      "cost_microusd": 100,
+      "latency_ms": 2446
+    },
+    {
+      "case_id": "shipping-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 178,
+      "output_tokens": 77,
+      "cost_microusd": 73,
+      "latency_ms": 1848
+    },
+    {
+      "case_id": "cancellations-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 183,
+      "output_tokens": 82,
+      "cost_microusd": 77,
+      "latency_ms": 2138
+    },
+    {
+      "case_id": "cancellations-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 329,
+      "output_tokens": 91,
+      "cost_microusd": 104,
+      "latency_ms": 2771
+    },
+    {
+      "case_id": "cancellations-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 329,
+      "output_tokens": 91,
+      "cost_microusd": 104,
+      "latency_ms": 2054
+    },
+    {
+      "case_id": "cancellations-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 183,
+      "output_tokens": 82,
+      "cost_microusd": 77,
+      "latency_ms": 1689
+    },
+    {
+      "case_id": "warranty-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 189,
+      "output_tokens": 86,
+      "cost_microusd": 80,
+      "latency_ms": 1767
+    },
+    {
+      "case_id": "warranty-r1",
+      "arm": "candidate",
+      "verified": false,
+      "issues": [
+        "false_unresolved"
+      ],
+      "claims": 1,
+      "unresolved": [
+        {
+          "question_id": "exclusion",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 338,
+      "output_tokens": 52,
+      "cost_microusd": 82,
+      "latency_ms": 1799
+    },
+    {
+      "case_id": "warranty-r2",
+      "arm": "candidate",
+      "verified": false,
+      "issues": [
+        "false_unresolved"
+      ],
+      "claims": 1,
+      "unresolved": [
+        {
+          "question_id": "exclusion",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 338,
+      "output_tokens": 52,
+      "cost_microusd": 82,
+      "latency_ms": 2083
+    },
+    {
+      "case_id": "warranty-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 189,
+      "output_tokens": 86,
+      "cost_microusd": 80,
+      "latency_ms": 1687
+    },
+    {
+      "case_id": "address_change-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 187,
+      "output_tokens": 86,
+      "cost_microusd": 80,
+      "latency_ms": 1666
+    },
+    {
+      "case_id": "address_change-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 335,
+      "output_tokens": 95,
+      "cost_microusd": 107,
+      "latency_ms": 2654
+    },
+    {
+      "case_id": "address_change-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 335,
+      "output_tokens": 95,
+      "cost_microusd": 107,
+      "latency_ms": 2071
+    },
+    {
+      "case_id": "address_change-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 187,
+      "output_tokens": 86,
+      "cost_microusd": 80,
+      "latency_ms": 1491
+    },
+    {
+      "case_id": "loyalty-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 191,
+      "output_tokens": 90,
+      "cost_microusd": 83,
+      "latency_ms": 1632
+    },
+    {
+      "case_id": "loyalty-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 338,
+      "output_tokens": 99,
+      "cost_microusd": 110,
+      "latency_ms": 2572
+    },
+    {
+      "case_id": "loyalty-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 338,
+      "output_tokens": 99,
+      "cost_microusd": 110,
+      "latency_ms": 2727
+    },
+    {
+      "case_id": "loyalty-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 191,
+      "output_tokens": 90,
+      "cost_microusd": 83,
+      "latency_ms": 1843
+    },
+    {
+      "case_id": "partial_refund-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 185,
+      "output_tokens": 84,
+      "cost_microusd": 78,
+      "latency_ms": 1750
+    },
+    {
+      "case_id": "partial_refund-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 332,
+      "output_tokens": 93,
+      "cost_microusd": 106,
+      "latency_ms": 2329
+    },
+    {
+      "case_id": "partial_refund-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 332,
+      "output_tokens": 93,
+      "cost_microusd": 106,
+      "latency_ms": 2391
+    },
+    {
+      "case_id": "partial_refund-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 185,
+      "output_tokens": 84,
+      "cost_microusd": 78,
+      "latency_ms": 1616
+    },
+    {
+      "case_id": "gift_cards-r1",
+      "arm": "baseline",
+      "verified": false,
+      "issues": [
+        "false_unresolved"
+      ],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "cash",
+          "reason": "no_matching_primary_source"
+        },
+        {
+          "question_id": "balance_transfer",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 189,
+      "output_tokens": 7,
+      "cost_microusd": 33,
+      "latency_ms": 829
+    },
+    {
+      "case_id": "gift_cards-r1",
+      "arm": "candidate",
+      "verified": false,
+      "issues": [
+        "false_unresolved"
+      ],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "cash",
+          "reason": "no_matching_primary_source"
+        },
+        {
+          "question_id": "balance_transfer",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 337,
+      "output_tokens": 11,
+      "cost_microusd": 57,
+      "latency_ms": 1325
+    },
+    {
+      "case_id": "gift_cards-r2",
+      "arm": "candidate",
+      "verified": false,
+      "issues": [
+        "false_unresolved"
+      ],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "cash",
+          "reason": "no_matching_primary_source"
+        },
+        {
+          "question_id": "balance_transfer",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 337,
+      "output_tokens": 11,
+      "cost_microusd": 57,
+      "latency_ms": 1195
+    },
+    {
+      "case_id": "gift_cards-r2",
+      "arm": "baseline",
+      "verified": false,
+      "issues": [
+        "false_unresolved"
+      ],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "cash",
+          "reason": "no_matching_primary_source"
+        },
+        {
+          "question_id": "balance_transfer",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 189,
+      "output_tokens": 7,
+      "cost_microusd": 33,
+      "latency_ms": 673
+    },
+    {
+      "case_id": "fraud-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "chargeback",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 196,
+      "output_tokens": 86,
+      "cost_microusd": 81,
+      "latency_ms": 1483
+    },
+    {
+      "case_id": "fraud-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "chargeback",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 352,
+      "output_tokens": 95,
+      "cost_microusd": 110,
+      "latency_ms": 2214
+    },
+    {
+      "case_id": "fraud-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "chargeback",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 352,
+      "output_tokens": 95,
+      "cost_microusd": 110,
+      "latency_ms": 2202
+    },
+    {
+      "case_id": "fraud-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [
+        {
+          "question_id": "chargeback",
+          "reason": "no_matching_primary_source"
+        }
+      ],
+      "input_tokens": 196,
+      "output_tokens": 86,
+      "cost_microusd": 81,
+      "latency_ms": 1763
+    },
+    {
+      "case_id": "inventory-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 189,
+      "output_tokens": 85,
+      "cost_microusd": 79,
+      "latency_ms": 1479
+    },
+    {
+      "case_id": "inventory-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 339,
+      "output_tokens": 94,
+      "cost_microusd": 107,
+      "latency_ms": 2233
+    },
+    {
+      "case_id": "inventory-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 339,
+      "output_tokens": 94,
+      "cost_microusd": 107,
+      "latency_ms": 2447
+    },
+    {
+      "case_id": "inventory-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 2,
+      "unresolved": [],
+      "input_tokens": 189,
+      "output_tokens": 85,
+      "cost_microusd": 79,
+      "latency_ms": 1741
+    },
+    {
+      "case_id": "priority_conflict-r1",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "delivery_promise",
+          "reason": "conflicting_sources"
+        }
+      ],
+      "input_tokens": 178,
+      "output_tokens": 87,
+      "cost_microusd": 79,
+      "latency_ms": 1667
+    },
+    {
+      "case_id": "priority_conflict-r1",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "delivery_promise",
+          "reason": "conflicting_sources"
+        }
+      ],
+      "input_tokens": 318,
+      "output_tokens": 96,
+      "cost_microusd": 105,
+      "latency_ms": 2199
+    },
+    {
+      "case_id": "priority_conflict-r2",
+      "arm": "candidate",
+      "verified": true,
+      "issues": [],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "delivery_promise",
+          "reason": "conflicting_sources"
+        }
+      ],
+      "input_tokens": 318,
+      "output_tokens": 96,
+      "cost_microusd": 105,
+      "latency_ms": 2363
+    },
+    {
+      "case_id": "priority_conflict-r2",
+      "arm": "baseline",
+      "verified": true,
+      "issues": [],
+      "claims": 0,
+      "unresolved": [
+        {
+          "question_id": "delivery_promise",
+          "reason": "conflicting_sources"
+        }
+      ],
+      "input_tokens": 178,
+      "output_tokens": 87,
+      "cost_microusd": 79,
+      "latency_ms": 1438
+    }
+  ],
+  "evaluation": {
+    "authorizes": false,
+    "auto_promoted": false,
+    "causal": false,
+    "comparable": true,
+    "contract_digest": "c7cb60e44161b9bf6975ac3665a313540675d5a02ed64a3b9f612b12117f412a",
+    "id": "live-research-pilot",
+    "observations_digest": "fe436289d52a15ff754a069cea7c06c3035e29e76c09eb17fdbe35be80d9ffa1",
+    "phases": {
+      "holdout": {
+        "arms": {
+          "baseline": {
+            "cases": 12,
+            "cost_per_verified_microusd": 86,
+            "safety_failures": 2,
+            "total_cost_microusd": 854,
+            "total_human_seconds": 0,
+            "total_latency_ms": 17502,
+            "total_tokens": 3116,
+            "verified": 10
+          },
+          "candidate": {
+            "cases": 12,
+            "cost_per_verified_microusd": 119,
+            "safety_failures": 2,
+            "total_cost_microusd": 1182,
+            "total_human_seconds": 0,
+            "total_latency_ms": 25853,
+            "total_tokens": 5008,
+            "verified": 10
+          }
+        },
+        "candidate_regressions": [],
+        "case_count": 12,
+        "delta": {
+          "cost_microusd": 328,
+          "human_seconds": 0,
+          "latency_ms": 8351,
+          "verified": 0
+        }
+      },
+      "training": {
+        "arms": {
+          "baseline": {
+            "cases": 12,
+            "cost_per_verified_microusd": 78,
+            "safety_failures": 0,
+            "total_cost_microusd": 936,
+            "total_human_seconds": 0,
+            "total_latency_ms": 20653,
+            "total_tokens": 3224,
+            "verified": 12
+          },
+          "candidate": {
+            "cases": 12,
+            "cost_per_verified_microusd": 122,
+            "safety_failures": 2,
+            "total_cost_microusd": 1212,
+            "total_human_seconds": 0,
+            "total_latency_ms": 28373,
+            "total_tokens": 5014,
+            "verified": 10
+          }
+        },
+        "candidate_regressions": [
+          "warranty-r1",
+          "warranty-r2"
+        ],
+        "case_count": 12,
+        "delta": {
+          "cost_microusd": 276,
+          "human_seconds": 0,
+          "latency_ms": 7720,
+          "verified": -2
+        }
+      }
+    },
+    "schema": "agentkit.business_value_evaluation.v1",
+    "version": "1"
+  }
+}

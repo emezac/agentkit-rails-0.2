@@ -2,6 +2,7 @@
 
 require "spec_helper"
 require_relative "../../examples/research_workflow"
+require_relative "../../examples/research_workflow_live"
 
 RSpec.describe ResearchWorkflowExample do
   let(:context) { Agentkit::Context.new(tenant_key: "demo", principal: "researcher") }
@@ -14,12 +15,19 @@ RSpec.describe ResearchWorkflowExample do
     evaluation = result.fetch("evaluation")
     expect(evaluation).to include("comparable" => true, "causal" => false,
       "authorizes" => false, "auto_promoted" => false)
-    expect(evaluation.dig("phases", "training", "arms", "baseline", "verified")).to eq(1)
-    expect(evaluation.dig("phases", "holdout", "arms", "candidate", "verified")).to eq(1)
+    expect(described_class::CASES.size).to eq(12)
+    expect(evaluation.dig("phases", "training", "arms", "baseline", "verified")).to eq(6)
+    expect(evaluation.dig("phases", "training", "arms", "candidate", "verified")).to eq(6)
+    expect(evaluation.dig("phases", "holdout", "arms", "baseline", "verified")).to eq(6)
+    expect(evaluation.dig("phases", "holdout", "arms", "candidate", "verified")).to eq(6)
     expect(result.dig("reports", "refunds", "candidate", "unresolved"))
       .to eq([{ "question_id" => "missing", "reason" => "no_matching_primary_source" }])
     expect(result.dig("reports", "returns", "baseline", "claims"))
       .to eq(result.dig("reports", "returns", "candidate", "claims"))
+    expect(result.dig("reports", "priority_conflict", "candidate", "unresolved"))
+      .to eq([{ "question_id" => "delivery_promise", "reason" => "conflicting_sources" }])
+    expect(result.dig("reports", "gift_cards", "baseline", "unresolved"))
+      .to eq([{ "question_id" => "balance_transfer", "reason" => "no_matching_primary_source" }])
   end
 
   it "rejects invented citations, stale versions and false unresolved items" do
@@ -94,5 +102,15 @@ RSpec.describe ResearchWorkflowExample do
     concealed = report.merge("claims" => [claims.first], "unresolved" => [])
     expect(independent.verify(report: concealed, case_contract: bound,
       context: verifier_context).fetch("issues")).to include("conflicting_sources")
+  end
+
+  it "counts malformed model output as a failed research attempt with measured usage" do
+    Agentkit::ModelRouter.register(:research_live, model: "fake", price_in: 1, price_out: 1)
+    Agentkit::LLM::Adapters::Fake.respond_with_turns(content: "not JSON", input_tokens: 10, output_tokens: 2)
+    track = { "questions" => case_contract.fetch("questions"), "source_ids" => ["returns-v2"] }
+    result = LiveResearchComparison::Track.new(context: context).call(track)
+    expect(result.fetch("claims")).to be_empty
+    expect(result.fetch("protocol_errors")).to eq(["invalid_json"])
+    expect(result).to include("input_tokens" => 10, "output_tokens" => 2)
   end
 end

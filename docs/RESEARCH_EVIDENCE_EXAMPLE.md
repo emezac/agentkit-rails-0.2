@@ -1,8 +1,13 @@
 # Verifiable research example
 
 Run the offline example with `ruby -Ilib examples/research_workflow.rb`. It
-requires no model, network, database or migration. The fixture contains two
-policy-research cases, one for training and one for holdout. Each case uses the
+requires no model, network, database or migration. The fixture contains twelve
+synthetic policy-research cases, six for training and six for holdout. Ten were
+added after the initial two-case pilot: shipping, cancellations, warranty,
+address changes, loyalty points, partial refunds, gift cards, fraud review,
+inventory and contradictory priority-delivery promises. Gift cards and fraud
+review include questions without an answer; the priority case includes two
+conflicting primary sources. Each case uses the
 same questions and source IDs in both arms:
 
 - `SingleResearch` uses one researcher over the whole source set.

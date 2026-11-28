@@ -17,7 +17,47 @@ module ResearchWorkflowExample
     { "id" => "refunds-v3", "tenant" => "demo", "reference" => "policy/refunds",
       "version" => "3", "kind" => "primary", "content" => "Approved refunds are issued within five business days." },
     { "id" => "damage-v1", "tenant" => "demo", "reference" => "policy/damage",
-      "version" => "1", "kind" => "primary", "content" => "Damaged items require manual review." }
+      "version" => "1", "kind" => "primary", "content" => "Damaged items require manual review." },
+    { "id" => "shipping-v1", "tenant" => "demo", "reference" => "policy/shipping",
+      "version" => "1", "kind" => "primary", "content" => "Orders ship within two business days." },
+    { "id" => "tracking-v1", "tenant" => "demo", "reference" => "policy/tracking",
+      "version" => "1", "kind" => "primary", "content" => "Tracking links are emailed after dispatch." },
+    { "id" => "cancel-v1", "tenant" => "demo", "reference" => "policy/cancellation",
+      "version" => "1", "kind" => "primary", "content" => "Orders can be canceled before warehouse pick." },
+    { "id" => "cancel-exception-v1", "tenant" => "demo", "reference" => "policy/cancellation-exception",
+      "version" => "1", "kind" => "primary", "content" => "After warehouse pick, cancellation requires support approval." },
+    { "id" => "warranty-v1", "tenant" => "demo", "reference" => "policy/warranty",
+      "version" => "1", "kind" => "primary", "content" => "Electronics include a twelve month warranty." },
+    { "id" => "warranty-exclusion-v1", "tenant" => "demo", "reference" => "policy/warranty-exclusions",
+      "version" => "1", "kind" => "primary", "content" => "Accidental damage is excluded from the standard warranty." },
+    { "id" => "address-v1", "tenant" => "demo", "reference" => "policy/address",
+      "version" => "1", "kind" => "primary", "content" => "Delivery addresses can be changed before label creation." },
+    { "id" => "address-carrier-v1", "tenant" => "demo", "reference" => "policy/address-carrier",
+      "version" => "1", "kind" => "primary", "content" => "After label creation, the carrier handles address corrections." },
+    { "id" => "loyalty-v1", "tenant" => "demo", "reference" => "policy/loyalty",
+      "version" => "1", "kind" => "primary", "content" => "Loyalty points expire after 365 days." },
+    { "id" => "loyalty-returns-v1", "tenant" => "demo", "reference" => "policy/loyalty-returns",
+      "version" => "1", "kind" => "primary", "content" => "Returns reverse the points earned on the returned item." },
+    { "id" => "partial-refund-v1", "tenant" => "demo", "reference" => "policy/partial-refund",
+      "version" => "1", "kind" => "primary", "content" => "Partial refunds require an item-level adjustment." },
+    { "id" => "partial-shipping-v1", "tenant" => "demo", "reference" => "policy/partial-shipping",
+      "version" => "1", "kind" => "primary", "content" => "Shipping charges remain unchanged on partial refunds." },
+    { "id" => "gift-cash-v1", "tenant" => "demo", "reference" => "policy/gift-cash",
+      "version" => "1", "kind" => "primary", "content" => "Gift cards cannot be redeemed for cash." },
+    { "id" => "gift-expiry-v1", "tenant" => "demo", "reference" => "policy/gift-expiry",
+      "version" => "1", "kind" => "primary", "content" => "Unused gift card balances remain valid for 24 months." },
+    { "id" => "fraud-review-v1", "tenant" => "demo", "reference" => "policy/fraud-review",
+      "version" => "1", "kind" => "primary", "content" => "High-risk orders require manual review before fulfillment." },
+    { "id" => "declined-payment-v1", "tenant" => "demo", "reference" => "policy/declined-payment",
+      "version" => "1", "kind" => "primary", "content" => "A declined payment never creates a fulfilled order." },
+    { "id" => "stock-reservation-v1", "tenant" => "demo", "reference" => "policy/stock-reservation",
+      "version" => "1", "kind" => "primary", "content" => "Reserved stock is released after fifteen minutes without payment." },
+    { "id" => "backorders-v1", "tenant" => "demo", "reference" => "policy/backorders",
+      "version" => "1", "kind" => "primary", "content" => "Backorders are disabled for limited releases." },
+    { "id" => "priority-a-v1", "tenant" => "demo", "reference" => "policy/priority-a",
+      "version" => "1", "kind" => "primary", "content" => "Priority delivery is promised within one business day." },
+    { "id" => "priority-b-v1", "tenant" => "demo", "reference" => "policy/priority-b",
+      "version" => "1", "kind" => "primary", "content" => "Priority delivery is promised within two business days." }
   ])
 
   CASES = H.deep_freeze([
@@ -27,7 +67,37 @@ module ResearchWorkflowExample
     { "id" => "refunds", "phase" => "holdout", "source_ids" => %w[refunds-v3 damage-v1],
       "questions" => [{ "id" => "timing", "needle" => "five business days" },
                        { "id" => "damage", "needle" => "manual review" },
-                       { "id" => "missing", "needle" => "international returns" }] }
+                       { "id" => "missing", "needle" => "international returns" }] },
+    { "id" => "shipping", "phase" => "training", "source_ids" => %w[shipping-v1 tracking-v1],
+      "questions" => [{ "id" => "dispatch", "needle" => "two business days" },
+                       { "id" => "tracking", "needle" => "after dispatch" }] },
+    { "id" => "cancellations", "phase" => "training", "source_ids" => %w[cancel-v1 cancel-exception-v1],
+      "questions" => [{ "id" => "ordinary", "needle" => "before warehouse pick" },
+                       { "id" => "exception", "needle" => "support approval" }] },
+    { "id" => "warranty", "phase" => "training", "source_ids" => %w[warranty-v1 warranty-exclusion-v1],
+      "questions" => [{ "id" => "duration", "needle" => "twelve month warranty" },
+                       { "id" => "exclusion", "needle" => "Accidental damage" }] },
+    { "id" => "address_change", "phase" => "training", "source_ids" => %w[address-v1 address-carrier-v1],
+      "questions" => [{ "id" => "before_label", "needle" => "before label creation" },
+                       { "id" => "after_label", "needle" => "carrier handles" }] },
+    { "id" => "loyalty", "phase" => "training", "source_ids" => %w[loyalty-v1 loyalty-returns-v1],
+      "questions" => [{ "id" => "expiry", "needle" => "365 days" },
+                       { "id" => "reversal", "needle" => "reverse the points" }] },
+    { "id" => "partial_refund", "phase" => "holdout", "source_ids" => %w[partial-refund-v1 partial-shipping-v1],
+      "questions" => [{ "id" => "adjustment", "needle" => "item-level adjustment" },
+                       { "id" => "shipping", "needle" => "remain unchanged" }] },
+    { "id" => "gift_cards", "phase" => "holdout", "source_ids" => %w[gift-cash-v1 gift-expiry-v1],
+      "questions" => [{ "id" => "cash", "needle" => "redeemed for cash" },
+                       { "id" => "balance_transfer", "needle" => "balance transfers" }] },
+    { "id" => "fraud", "phase" => "holdout", "source_ids" => %w[fraud-review-v1 declined-payment-v1],
+      "questions" => [{ "id" => "review", "needle" => "manual review" },
+                       { "id" => "decline", "needle" => "never creates" },
+                       { "id" => "chargeback", "needle" => "chargeback" }] },
+    { "id" => "inventory", "phase" => "holdout", "source_ids" => %w[stock-reservation-v1 backorders-v1],
+      "questions" => [{ "id" => "release", "needle" => "fifteen minutes" },
+                       { "id" => "backorders", "needle" => "Backorders are disabled" }] },
+    { "id" => "priority_conflict", "phase" => "holdout", "source_ids" => %w[priority-a-v1 priority-b-v1],
+      "questions" => [{ "id" => "delivery_promise", "needle" => "Priority delivery is promised" }] }
   ])
 
   # The host owns source authorization and immutable versions. No model-supplied
@@ -64,17 +134,16 @@ module ResearchWorkflowExample
     end
 
     def call(track)
-      track.fetch("questions").filter_map do |question|
-        source = track.fetch("source_ids").filter_map do |id|
+      track.fetch("questions").flat_map do |question|
+        track.fetch("source_ids").filter_map do |id|
           candidate = @repository.fetch(id, context: @context)
           candidate if candidate.fetch("content").downcase.include?(question.fetch("needle").downcase)
-        end.first
-        next unless source
-
-        { "question_id" => question.fetch("id"), "text" => source.fetch("content"),
-          "source_id" => source.fetch("id"), "source_reference" => source.fetch("reference"),
-          "source_version" => source.fetch("version"),
-          "source_digest" => K.digest(source.fetch("content")), "quote" => source.fetch("content") }
+        end.map do |source|
+          { "question_id" => question.fetch("id"), "text" => source.fetch("content"),
+            "source_id" => source.fetch("id"), "source_reference" => source.fetch("reference"),
+            "source_version" => source.fetch("version"),
+            "source_digest" => K.digest(source.fetch("content")), "quote" => source.fetch("content") }
+        end
       end
     end
   end
